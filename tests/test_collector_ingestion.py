@@ -15,6 +15,7 @@ from test_collector_adapters import DOCTOR, DOCTOR_TEXT, STATUS
 from gargoyl.collector import collect
 from gargoyl.collector_history import EncryptedHistory, OutboundHTTPS
 from gargoyl.collector_runtime import CollectorRuntime
+from gargoyl.dashboard.runtime import EvidenceViewer
 from gargoyl.ingestion import EvidenceStore, IngestionService, Principal
 from gargoyl.ingestion_http import make_ingestion_server
 from gargoyl.security import (
@@ -103,6 +104,47 @@ class CollectorIngestionTests(unittest.TestCase):
             for path in directory.iterdir():
                 for forbidden in (b"synthetic-private-model", b"Synthetic Chip", b'"doctor_state"'):
                     self.assertNotIn(forbidden, path.read_bytes())
+
+    def test_parser_to_tls_store_to_live_viewer(self):
+        absent = "00000000-0000-4000-8000-000000000002"
+        viewer = EvidenceViewer(self.store, [IDENTITY.host_id, absent],
+                                clock=lambda: self.wall)
+        thread = threading.Thread(target=viewer.serve_forever,
+                                  kwargs={"poll_interval": .01})
+        thread.start()
+
+        def stop_viewer():
+            viewer.shutdown()
+            thread.join(timeout=2)
+            viewer.server_close()
+            self.assertFalse(thread.is_alive())
+
+        self.addCleanup(stop_viewer)
+
+        def page():
+            connection = http.client.HTTPConnection("127.0.0.1", viewer.server_port, timeout=2)
+            try:
+                connection.request("GET", "/")
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                return response.read().decode()
+            finally:
+                connection.close()
+
+        self.assertIn("No report", page())
+        self.capture()
+        self.assertEqual(self.runtime.deliver_tick(), "sent")
+        rendered = page()
+        for expected in ("daemon_state", "<td>running</td>", "doctor_state",
+                         "<td>passed</td>", absent, "missing_collector_heartbeat",
+                         'content="30"'):
+            self.assertIn(expected, rendered)
+        self.assertNotIn("synthetic-private-model", rendered)
+        self.assertNotIn("Synthetic Chip", rendered)
+        self.wall = "2026-01-01T00:01:01Z"
+        aged = page()
+        self.assertIn("collector_heartbeat_not_current", aged)
+        self.assertIn("stale (reported: observed)", aged)
 
     def test_lost_response_replay_deduplicates_after_durable_acceptance(self):
         snapshot = self.capture()
