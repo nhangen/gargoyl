@@ -40,13 +40,16 @@ identity, revalidates immediately before POST, rejects redirects and treats only
 200/201/204 as acknowledgements. The receiver contract must make these statuses
 mean durable acceptance, enforce certificate-to-host binding and revocation, and
 deduplicate snapshots. It must not use 202 as durable acknowledgement. No response
-body or exception text is collected. Tests mock network I/O; they do not prove a
-live mTLS handshake. A missing or expired collector heartbeat is an incident via
+body or exception text is collected. Unit tests mock network I/O; integration
+tests also establish actual localhost mTLS handshakes with ephemeral synthetic
+certificates and the foundation durable receiver. Neither demonstrates production
+transport or real-host acceptance. A missing or expired collector heartbeat is an incident via
 collector.heartbeat_incident, even when other metrics appear healthy.
 
-Outstanding integration: actual Darkbloom/macOS read-only source adapters, host
-service scheduling, secure key/certificate enrollment and storage, receiver
-implementation, crash/power-loss testing on the target filesystem, and explicit
+Outstanding integration: live Darkbloom/macOS acquisition and remaining source
+adapters, host service scheduling, secure key/certificate enrollment and storage,
+production receiver deployment and operations, crash/power-loss testing on the
+target filesystem, and explicit
 three-host validation. Do not close issue #2 based on synthetic library tests.
 
 Run from the worktree:
