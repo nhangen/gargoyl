@@ -1,0 +1,107 @@
+import copy
+import subprocess
+import sys
+import unittest
+
+from gargoyl.dashboard import build_dashboard, render_dashboard
+from gargoyl.telemetry import PolicyError
+
+HOST = '00000000-0000-4000-8000-000000000001'
+NOW = '2026-01-01T00:00:00Z'
+
+
+def snapshot(metric='daemon_state', value='running', source='daemon', state='observed', at=NOW, ttl=300):
+    return {'schema_version': 1, 'host_id': HOST, 'collected_at': at,
+            'fields': {metric: {'value': value, 'source': source, 'timestamp': at,
+                              'freshness_seconds': ttl, 'state': state, 'sensitivity': 'safe'}}}
+
+
+def project(data, now=NOW):
+    return build_dashboard(data, [HOST], now)['hosts'][0]
+
+
+class DashboardTests(unittest.TestCase):
+    def test_missing_host_and_fields_are_unknown(self):
+        host = project([])
+        self.assertIn('missing_collector_heartbeat', host['incidents'])
+        self.assertTrue(all(c['state'] == 'unknown' for c in host['comparisons']))
+        page = render_dashboard([], [HOST], NOW)
+        self.assertIn('No report', page)
+        self.assertIn('unknown', page)
+
+    def test_mismatch_immediate_and_at_five_minutes(self):
+        data = [snapshot(), snapshot(value='stopped', source='coordinator')]
+        for now in (NOW, '2026-01-01T00:05:00Z'):
+            host = project(data, now)
+            self.assertEqual(host['comparisons'][0]['state'], 'mismatch')
+            self.assertEqual(len(host['comparisons'][0]['evidence']), 2)
+        self.assertEqual(project(data, '2026-01-01T00:05:01Z')['comparisons'][0]['state'], 'unknown')
+
+    def test_states_and_future_collection(self):
+        for state in ('unknown', 'blocked'):
+            self.assertEqual(project([snapshot(value=None, state=state)])['latest']['daemon_state'][0]['state'], state)
+        data = snapshot()
+        self.assertEqual(project([data], '2026-01-01T00:05:01Z')['latest']['daemon_state'][0]['state'], 'stale')
+        data['collected_at'] = '2026-01-01T00:01:00Z'
+        self.assertEqual(project([data])['latest']['daemon_state'][0]['state'], 'unknown')
+
+    def test_heartbeat_value_and_elapsed_time_both_count(self):
+        data = [snapshot('heartbeat_age_seconds', 290, 'collector')]
+        self.assertNotIn('collector_heartbeat_not_current', project(data)['incidents'])
+        self.assertIn('collector_heartbeat_not_current', project(data, '2026-01-01T00:00:11Z')['incidents'])
+        self.assertIn('collector_heartbeat_not_current', project([snapshot('heartbeat_age_seconds', None, 'collector', 'blocked')])['incidents'])
+
+    def test_out_of_order_and_conflicting_reports(self):
+        old = snapshot(value='stopped')
+        new = snapshot(at='2026-01-01T00:01:00Z')
+        for data in ([old,new], [new,old]):
+            self.assertEqual(project(data, '2026-01-01T00:01:00Z')['latest']['daemon_state'][0]['value'], 'running')
+        conflicting = [snapshot(), snapshot(value='stopped')]
+        self.assertEqual(project(conflicting)['latest']['daemon_state'][0]['state'], 'unknown')
+
+    def test_usage_and_earnings_remain_distinct(self):
+        data = [snapshot('requests_total', 42), snapshot('tokens_total', 100),
+                snapshot('confirmed_paid_microunits', 7, 'console')]
+        page = render_dashboard(data, [HOST], NOW)
+        self.assertIn('Local request / token history', page)
+        self.assertIn('currency and independent payment verification are not established', page)
+        self.assertNotIn('confirmed_paid_microunits', page.split('Local request / token history')[1].split('Console-reported')[0])
+        self.assertEqual(project(data[:2])['latest']['confirmed_paid_microunits'], [])
+
+    def test_complete_validation_before_render_and_no_mutation(self):
+        data = snapshot(); original = copy.deepcopy(data)
+        render_dashboard([data], [HOST], NOW)
+        self.assertEqual(data, original)
+        data['fields']['prompt'] = 'synthetic-secret-marker'
+        with self.assertRaises(PolicyError): render_dashboard([data], [HOST], NOW)
+
+    def test_ui_has_all_required_evidence_and_provenance(self):
+        page = render_dashboard([snapshot(), snapshot('error_code','timeout','doctor')], [HOST], NOW)
+        for text in ('routing_eligible', 'attestation_state', 'model_state', 'memory_headroom_bytes',
+                     'competing_runtimes', 'Source timestamp', 'Collection / freshness', 'timeout', NOW):
+            self.assertIn(text, page)
+        self.assertNotIn('<button', page)
+
+    def test_degraded_host_evidence_is_not_hidden(self):
+        cases = [('attestation_state', 'expired', 'doctor'),
+                 ('memory_headroom_bytes', 0, 'host'),
+                 ('competing_runtimes', 2, 'host'),
+                 ('model_state', 'failed', 'daemon'),
+                 ('routing_eligible', 'ineligible', 'coordinator')]
+        data = [snapshot(metric, value, source) for metric, value, source in cases]
+        host = project(data)
+        for metric, value, source in cases:
+            self.assertEqual(host['latest'][metric][0]['value'], value)
+            self.assertEqual(host['latest'][metric][0]['source'], source)
+        page = render_dashboard(data, [HOST], NOW)
+        for text in ('expired', 'failed', 'ineligible'):
+            self.assertIn(text, page)
+
+    def test_cli_empty_fleet_and_invalid_clock(self):
+        command = [sys.executable, '-m', 'gargoyl.dashboard', '--host', HOST, '--now']
+        good = subprocess.run(command + [NOW], capture_output=True, text=True)
+        self.assertEqual(good.returncode, 0)
+        self.assertIn('missing_collector_heartbeat', good.stdout)
+        bad = subprocess.run(command + ['invalid'], capture_output=True, text=True)
+        self.assertEqual(bad.returncode, 2)
+        self.assertEqual(bad.stdout, '')
