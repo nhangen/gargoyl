@@ -5,6 +5,7 @@ import sqlite3
 import ssl
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -239,6 +240,62 @@ class HTTPSIngestionTests(unittest.TestCase):
                 response = client.recv(4096)
                 self.assertNotIn(b" 204 ", response)
         self.assertEqual(self.store.snapshots(now=NOW), [])
+
+    def assert_drip_deadline_and_recovery(self, prefix):
+        started = threading.Event()
+        finished = threading.Event()
+        stop = threading.Event()
+        errors = []
+
+        def drip():
+            try:
+                with socket.create_connection(
+                    ("localhost", self.port), timeout=2
+                ) as raw:
+                    with self.context().wrap_socket(
+                        raw, server_hostname="localhost"
+                    ) as client:
+                        client.sendall(prefix)
+                        started.set()
+                        end = time.monotonic() + 3
+                        while time.monotonic() < end and not stop.wait(0.04):
+                            try:
+                                client.sendall(b" ")
+                            except OSError:
+                                break
+            except BaseException as error:
+                errors.append(error)
+                started.set()
+            finally:
+                finished.set()
+
+        dripper = threading.Thread(target=drip)
+        dripper.start()
+        try:
+            self.assertTrue(started.wait(2))
+            self.assertFalse(errors)
+            start = time.monotonic()
+            # The serial listener must recover while the attacker is still
+            # prepared to drip for three seconds, well beyond its .5s deadline.
+            self.assertEqual(self.request(), (204, b""))
+            self.assertLess(time.monotonic() - start, 1.5)
+            self.assertTrue(finished.wait(1))
+            self.assertEqual(self.store.snapshots(now=NOW), [snapshot()])
+        finally:
+            stop.set()
+            dripper.join(timeout=2)
+            self.assertFalse(dripper.is_alive())
+
+    def test_absolute_header_deadline_and_recovery(self):
+        self.assert_drip_deadline_and_recovery(
+            b"POST /v1/snapshots HTTP/1.1\r\nHost: localhost\r\nX-Drip: "
+        )
+
+    def test_absolute_body_deadline_and_recovery(self):
+        self.assert_drip_deadline_and_recovery(
+            b"POST /v1/snapshots HTTP/1.1\r\nHost: localhost\r\n"
+            b"Content-Type: application/json\r\nContent-Length: 65536\r\n\r\n{"
+        )
 
     def test_persistence_failure_returns_503(self):
         with sqlite3.connect(self.root / "receiver" / "evidence.sqlite3") as db:

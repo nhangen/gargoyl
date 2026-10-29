@@ -1,6 +1,7 @@
 import hashlib
 import sqlite3
 import tempfile
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -137,6 +138,81 @@ class EvidenceTests(unittest.TestCase):
             store.accept(data, now=LATER)
         self.assertNotIn("synthetic-marker", str(caught.exception))
         self.assertEqual(store.snapshots(now=LATER), [snapshot()])
+
+    def test_commit_failure_rolls_back_insertion_and_retention(self):
+        self.policy = RetentionPolicy(max_age_seconds=60, max_records=1)
+        store = self.store()
+        store.accept(snapshot(), now=NOW)
+        self.mutate("CREATE TABLE commit_parent (id INTEGER PRIMARY KEY)")
+        self.mutate(
+            "CREATE TABLE commit_child (parent INTEGER REFERENCES commit_parent(id) DEFERRABLE INITIALLY DEFERRED)"
+        )
+        self.mutate(
+            "CREATE TRIGGER deferred_commit_failure AFTER INSERT ON evidence BEGIN INSERT INTO commit_child VALUES (1); END"
+        )
+        store._db.execute("PRAGMA foreign_keys = ON")
+        statements = []
+        store._db.set_trace_callback(statements.append)
+        data = snapshot()
+        data["collected_at"] = LATER
+        try:
+            with self.assertRaises(EvidenceWriteError):
+                store.accept(data, now=LATER)
+        finally:
+            store._db.set_trace_callback(None)
+        # A deferred FK fails at actual COMMIT, after INSERT and pruning succeed.
+        self.assertIn("COMMIT", statements)
+        self.assertIn("ROLLBACK", statements)
+        self.assertTrue(
+            any(
+                statement.startswith("DELETE FROM evidence") for statement in statements
+            )
+        )
+        self.assertEqual(store.snapshots(now=LATER), [snapshot()])
+        with sqlite3.connect(self.directory / "evidence.sqlite3") as db:
+            self.assertEqual(
+                db.execute("SELECT count(*) FROM commit_child").fetchone()[0], 0
+            )
+        self.mutate("DROP TRIGGER deferred_commit_failure")
+        self.assertTrue(store.accept(data, now=LATER))
+        self.assertEqual(store.snapshots(now=LATER), [data])
+
+    def test_concurrent_distinct_insertion_pruning_and_complete_reads(self):
+        store = self.store()
+        first, second = snapshot(), snapshot()
+        second["fields"]["daemon_state"]["freshness_seconds"] = 61
+        store.accept(first, now=NOW)
+        store.accept(second, now=NOW)
+        start = threading.Barrier(4)
+
+        def workload(worker):
+            start.wait(timeout=5)
+            views = []
+            for step in range(20):
+                if worker < 2:
+                    data = snapshot()
+                    data["fields"]["daemon_state"]["freshness_seconds"] = (
+                        100 + worker * 20 + step
+                    )
+                    self.assertTrue(store.accept(data, now=NOW))
+                views.append(store.snapshots(now=NOW))
+            return views
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            all_views = list(pool.map(workload, range(4)))
+        for views in all_views:
+            for view in views:
+                self.assertEqual(len(view), 2)
+                self.assertEqual(len({encode_snapshot(item) for item in view}), 2)
+                for item in view:
+                    self.assertEqual(item["host_id"], self.identity.host_id)
+                    self.assertEqual(item["collected_at"], NOW)
+                    self.assertIn(
+                        item["fields"]["daemon_state"]["freshness_seconds"],
+                        {60, 61, *range(100, 140)},
+                    )
+        store.close()
+        self.assertEqual(len(self.store().snapshots(now=NOW)), 2)
 
     def test_privacy_validation_before_persistence(self):
         store = self.store()

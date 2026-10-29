@@ -110,10 +110,12 @@ make_ingestion_server(
 Returns an unstarted `HTTPServer`-compatible server. The caller owns
 `serve_forever`, `shutdown` and `server_close`. Only localhost binding is allowed;
 this is a bounded local integration server, not public fleet hosting. TLS >=1.2,
-explicit CA trust and required client certificates are enforced before HTTP. Each
-socket has a configured finite inactivity timeout (0..10 seconds, exclusive of 0).
-Requests are processed serially; this slice does not promise resistance to a local
-slow-client denial of service.
+explicit CA trust and required client certificates are enforced before HTTP. TLS handshakes have the configured finite timeout (0..10 seconds, exclusive of 0).
+After a verified handshake, one absolute monotonic deadline with that same budget
+covers the HTTP request line, headers and body together. A client dripping bytes
+cannot reset it. Expiry closes the request without acceptance; response writes
+have a separate bounded timeout. Requests remain serial, so repeated connections
+and production availability are outside this local integration guarantee.
 
 - `POST /v1/snapshots`, exactly one Content-Length and Content-Type application/json.
 - One v1 payload, at most 65536 bytes. Transfer/content encodings and Expect are rejected.
@@ -143,8 +145,10 @@ Receiver tests generate short-lived synthetic keys/certificates under temporary
 directories and establish actual local TLS handshakes. They cover required client
 certificates, trust/hostname checks, fingerprint/host/source authorization, strict
 framing, persistence failures, duplicate delivery, encrypted collector-to-receiver
-history and dashboard heartbeat aging, restart, corruption, concurrent access,
-retention and conflicting/future evidence. No real prompts, logs, host identifiers,
+history and dashboard heartbeat aging, restart, corruption, concurrent distinct insertion/pruning and complete reads,
+actual deferred-constraint COMMIT failure with rollback, retention and
+conflicting/future evidence. Header/body drip regressions verify deadline expiry
+and recovery for the next authenticated request. No real prompts, logs, host identifiers,
 credentials or customer data are used. No production credential store is changed.
 Live source execution, certificate/key lifecycle, real host transport, production
 availability, process-level repair separation, power-loss testing and the three-host
