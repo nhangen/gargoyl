@@ -4,12 +4,17 @@ Adapters supply normalized observations, never raw command output. Missing evide
 is unknown. Persistence and delivery must use foundation security adapters; this
 module deliberately has no plaintext fallback or production entry point.
 """
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 from gargoyl.telemetry import (
-    PolicyError, SCHEMA_VERSION, effective_state, encode_snapshot,
-    host_id, timestamp, validate_snapshot,
+    SCHEMA_VERSION,
+    PolicyError,
+    effective_state,
+    encode_snapshot,
+    host_id,
+    timestamp,
+    validate_snapshot,
 )
 
 SOURCES = {

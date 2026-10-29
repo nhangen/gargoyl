@@ -1,11 +1,16 @@
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from gargoyl.collector import RetrySchedule, collect
 from gargoyl.collector_history import EncryptedHistory, OutboundHTTPS, deliver_pending
-from gargoyl.security import CollectionIdentity, RetentionPolicy, SpoolCipher, TransportConfig
+from gargoyl.security import (
+    CollectionIdentity,
+    RetentionPolicy,
+    SpoolCipher,
+    TransportConfig,
+)
 from gargoyl.telemetry import PolicyError
 
 IDENTITY = CollectionIdentity("00000000-0000-4000-8000-000000000001")
@@ -44,12 +49,46 @@ class HistoryTests(unittest.TestCase):
         expired = self.history("2026-01-01T00:02:00Z")
         self.assertEqual(expired.pending("2026-01-01T00:02:00Z"), [])
 
+    def test_clock_rollback_preserves_restart_pending_and_append(self):
+        rollback = "2026-01-01T00:00:09Z"
+        for action in ("restart", "pending", "append"):
+            with self.subTest(action=action):
+                self.path = Path(self.temp.name) / action
+                history = self.history(LATER)
+                future = collect(IDENTITY.host_id, LATER, {})
+                history.append(future, LATER)
+                original = history.db.execute("SELECT payload FROM history").fetchone()[0]
+                if action == "restart":
+                    history.close()
+                    history = self.history(rollback)
+                elif action == "append":
+                    history.append(collect(IDENTITY.host_id, rollback, {}), rollback)
+                pending = history.pending(rollback)
+                self.assertNotIn(future, [item for _, item in pending])
+                ciphertexts = [row[0] for row in history.db.execute("SELECT payload FROM history")]
+                self.assertIn(original, ciphertexts)
+                self.assertIn(future, [item for _, item in history.pending(LATER)])
+
+    def test_quarantine_respects_count_and_age_limits(self):
+        history = self.history()
+        history.append(collect(IDENTITY.host_id, NOW, {}), NOW)
+        history.append(collect(IDENTITY.host_id, LATER, {}), LATER)
+        newest_time = "2026-01-01T00:00:20Z"
+        history.append(collect(IDENTITY.host_id, newest_time, {}), NOW)
+        self.assertEqual(history.pending(NOW), [])
+        self.assertEqual(history.db.execute("SELECT count(*) FROM history").fetchone()[0], 2)
+        self.assertEqual([item["collected_at"] for _, item in history.pending(newest_time)],
+                         [LATER, newest_time])
+        self.assertEqual(history.pending("2026-01-01T00:02:00Z"), [])
+        self.assertEqual(history.db.execute("SELECT count(*) FROM history").fetchone()[0], 0)
+
     def test_reject_before_persistence(self):
         history = self.history()
         for key in ("prompt", "completion", "credentials", "raw_logs", "customer_id", "ip_address"):
             snapshot = collect(IDENTITY.host_id, NOW, {})
             snapshot[key] = "synthetic-marker"
-            with self.assertRaises(PolicyError): history.append(snapshot, NOW)
+            with self.assertRaises(PolicyError):
+                history.append(snapshot, NOW)
         self.assertEqual(history.pending(NOW), [])
         self.assertNotIn(b"synthetic-marker", (self.path / "history.sqlite3").read_bytes())
 
@@ -57,18 +96,21 @@ class HistoryTests(unittest.TestCase):
         history = self.history()
         history.append(collect(IDENTITY.host_id, NOW, {}), NOW)
         history.close()
-        with self.assertRaises(PolicyError): self.history(cipher=SpoolCipher(IDENTITY, b"y" * 32))
+        with self.assertRaises(PolicyError):
+            self.history(cipher=SpoolCipher(IDENTITY, b"y" * 32))
         history = self.history()
         history.db.execute("UPDATE history SET payload = ?", (b"GSP1" + b"z" * 40,))
         history.db.commit()
-        with self.assertRaises(PolicyError): history.pending(NOW)
+        with self.assertRaises(PolicyError):
+            history.pending(NOW)
 
     def test_transaction_rollback_preserves_history(self):
         history = self.history()
         snapshot = collect(IDENTITY.host_id, NOW, {})
         history.append(snapshot, NOW)
         history.db.execute("CREATE TRIGGER fail_write BEFORE INSERT ON history BEGIN SELECT RAISE(ABORT, 'synthetic disk failure'); END")
-        with self.assertRaises(Exception): history.append(snapshot, NOW)
+        with self.assertRaises(Exception):
+            history.append(snapshot, NOW)
         self.assertEqual(len(history.pending(NOW)), 1)
 
     def test_outage_collection_and_acknowledged_history(self):
@@ -91,10 +133,12 @@ class HistoryTests(unittest.TestCase):
     def test_private_directory_and_symlink(self):
         self.path.mkdir(mode=0o755)
         self.path.chmod(0o755)
-        with self.assertRaises(PermissionError): self.history()
+        with self.assertRaises(PermissionError):
+            self.history()
         self.path.chmod(0o700)
         (self.path / "history.sqlite3").symlink_to(self.path / "other")
-        with self.assertRaises(OSError): self.history()
+        with self.assertRaises(OSError):
+            self.history()
 
 
 class TransportTests(unittest.TestCase):
@@ -109,12 +153,14 @@ class TransportTests(unittest.TestCase):
             self.assertIs(connection.call_args.kwargs["context"], context.return_value)
             calls = connection.call_count
             snapshot["raw_logs"] = "synthetic-marker"
-            with self.assertRaises(PolicyError): sender.send(snapshot)
+            with self.assertRaises(PolicyError):
+                sender.send(snapshot)
             self.assertEqual(connection.call_count, calls)
             self.assertEqual(connection.return_value.close.call_count, 6)
 
     def test_missing_credentials_prevent_network(self):
         config = TransportConfig("https://example.invalid", "missing-ca", "missing-cert", "missing-key")
         with patch("gargoyl.collector_history.http.client.HTTPSConnection") as connection:
-            with self.assertRaises(OSError): OutboundHTTPS(config, IDENTITY)
+            with self.assertRaises(OSError):
+                OutboundHTTPS(config, IDENTITY)
             connection.assert_not_called()

@@ -1,7 +1,13 @@
 import copy
 import unittest
 
-from gargoyl.collector import SOURCES, RetrySchedule, boundary_payload, collect, heartbeat_incident
+from gargoyl.collector import (
+    SOURCES,
+    RetrySchedule,
+    boundary_payload,
+    collect,
+    heartbeat_incident,
+)
 from gargoyl.telemetry import PolicyError, decode_snapshot
 
 IDENTITY = "00000000-0000-4000-8000-000000000001"
@@ -54,7 +60,8 @@ class CollectorTests(unittest.TestCase):
         snapshot = collect(IDENTITY, NOW, {}, errors=["timeout", "unavailable"])
         self.assertEqual(snapshot["fields"]["error_code"]["value"], "unavailable")
         for errors in (["timeout"] * 33, ["synthetic-marker"], [dict(raw="synthetic-marker")], iter(["timeout"])):
-            with self.assertRaises(PolicyError): collect(IDENTITY, NOW, {}, errors=errors)
+            with self.assertRaises(PolicyError):
+                collect(IDENTITY, NOW, {}, errors=errors)
 
     def test_revalidate_each_boundary_and_identity(self):
         snapshot = collect(IDENTITY, NOW, {})
@@ -65,7 +72,8 @@ class CollectorTests(unittest.TestCase):
             data = copy.deepcopy(snapshot)
             target = data if level == "root" else data["fields"] if level == "fields" else data["fields"]["daemon_state"]
             target["raw_logs"] = "synthetic-marker"
-            with self.assertRaises(PolicyError): boundary_payload(data, IDENTITY)
+            with self.assertRaises(PolicyError):
+                boundary_payload(data, IDENTITY)
 
     def test_heartbeat_incidents(self):
         snapshot = collect(IDENTITY, NOW, {})
@@ -80,7 +88,8 @@ class CollectorTests(unittest.TestCase):
 
     def test_invalid_ttl(self):
         for ttl in (0, True, 86401):
-            with self.assertRaises(PolicyError): collect(IDENTITY, NOW, {}, ttl=ttl)
+            with self.assertRaises(PolicyError):
+                collect(IDENTITY, NOW, {}, ttl=ttl)
 
 
 class RetryTests(unittest.TestCase):
@@ -104,9 +113,12 @@ class RetryTests(unittest.TestCase):
 
     def test_invalid_bounds_and_clock(self):
         for bounds in ((0, 1), (2, 1), (True, 1), (1, float("inf"))):
-            with self.assertRaises(ValueError): RetrySchedule(*bounds)
+            with self.assertRaises(ValueError):
+                RetrySchedule(*bounds)
         for now in (-1, True, float("nan"), float("inf")):
-            with self.assertRaises(ValueError): RetrySchedule().failed(now)
+            with self.assertRaises(ValueError):
+                RetrySchedule().failed(now)
         retry = RetrySchedule()
         retry.ready(10)
-        with self.assertRaises(ValueError): retry.ready(9)
+        with self.assertRaises(ValueError):
+            retry.ready(9)

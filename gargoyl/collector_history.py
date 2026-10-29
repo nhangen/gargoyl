@@ -6,17 +6,16 @@ the previous or next complete history; only encrypted snapshots reach SQLite.
 Delivery is at-least-once: a crash after server acceptance can replay a snapshot.
 The receiver must deduplicate. No deployment or credential provisioning is provided.
 """
-from collections import Counter
-from contextlib import contextmanager
 import http.client
 import os
-from pathlib import Path
 import sqlite3
 import stat
+from contextlib import contextmanager
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from gargoyl.security import export_batch, prepare_transmission
-from gargoyl.telemetry import PolicyError, decode_snapshot, encode_snapshot
+from gargoyl.telemetry import PolicyError, decode_snapshot, timestamp
 
 
 class EncryptedHistory:
@@ -61,17 +60,20 @@ class EncryptedHistory:
         rows = self.db.execute("SELECT id, payload, sent FROM history ORDER BY id").fetchmany(10002)
         if len(rows) > 10001:
             raise PolicyError("spool exceeds record bound")
-        snapshots = [self.cipher.open(payload) for _, payload, _ in rows]
-        keep = Counter(encode_snapshot(item) for item in self.policy.select(snapshots, now))
-        retained = []
-        for row, item in reversed(list(zip(rows, snapshots))):
-            key = encode_snapshot(item)
-            if keep[key]:
-                keep[key] -= 1
-                retained.append((row[0], item, row[2]))
-            else:
-                self.db.execute("DELETE FROM history WHERE id = ?", (row[0],))
-        return list(reversed(retained))
+        current = timestamp(now)
+        # Authentication/validation precedes retention decisions for every row.
+        decoded = [(key, self.cipher.open(payload), sent) for key, payload, sent in rows]
+        # Storage age has only a lower cutoff. A future-relative record can be
+        # evidence of clock rollback, so quarantine it rather than deleting it.
+        eligible = [row for row in decoded
+                    if (current - timestamp(row[1]["collected_at"])).total_seconds()
+                    <= self.policy.max_age_seconds]
+        newest = sorted(eligible, key=lambda row: (timestamp(row[1]["collected_at"]), row[0]))
+        keep = {row[0] for row in newest[-self.policy.max_records:]}
+        for key, _, _ in decoded:
+            if key not in keep:
+                self.db.execute("DELETE FROM history WHERE id = ?", (key,))
+        return [row for row in decoded if row[0] in keep]
 
     def append(self, snapshot, now):
         encrypted = self.cipher.seal(snapshot)  # validation before any disk mutation
@@ -83,7 +85,10 @@ class EncryptedHistory:
     def pending(self, now):
         with self._transaction():
             rows = self._prune(now)
-            return [(key, item) for key, item, sent in rows if not sent]
+            # Export eligibility is narrower than retention: future-relative
+            # records remain encrypted but cannot be sent until time catches up.
+            return [(key, item) for key, item, sent in rows
+                    if not sent and timestamp(item["collected_at"]) <= timestamp(now)]
 
     def acknowledge(self, record_id):
         with self._transaction():

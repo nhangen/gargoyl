@@ -14,7 +14,13 @@ RetentionPolicy to `collector_history.EncryptedHistory(directory, cipher, policy
 now)`. Use a private application-owned directory under a trusted parent. The
 single-writer SQLite history contains encrypted payloads and local sequence/ack
 metadata only. Startup, append and pending reads enforce age/count retention in
-transactions. Failed writes roll back; corrupt ciphertext and wrong keys fail
+transactions. Storage retention removes records older than the age limit and
+keeps only the newest max_records, counting future-relative records within that
+same cap. A clock rollback quarantines authenticated future-relative ciphertext;
+it does not delete it merely because it is not yet exportable. Pending/export
+withholds such records until the wall clock catches up. Normal age/count eviction
+still applies, so quarantine does not provide unlimited storage. Failed writes
+roll back; corrupt ciphertext and wrong keys fail
 closed. No key or plaintext snapshot is written by this library. Pruning is not
 a guarantee of forensic secure erasure; expired ciphertext may remain in backups
 or filesystem snapshots. The store must have a single collector owner; no
@@ -46,5 +52,6 @@ three-host validation. Do not close issue #2 based on synthetic library tests.
 Run from the worktree:
 
     python -m venv --system-site-packages /workspace/collector-venv
-    /workspace/collector-venv/bin/python -m pip install -e .
+    /workspace/collector-venv/bin/python -m pip install -e ".[dev]"
+    /workspace/collector-venv/bin/python -m ruff check .
     /workspace/collector-venv/bin/python -m unittest discover -s tests -v
