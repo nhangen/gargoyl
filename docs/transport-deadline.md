@@ -75,9 +75,9 @@ Focused fake sockets test shared phase budgets and header bounds without dependi
 on OS buffer sizes. No real upstream acquisition command or host asset is used.
 
 Run `python -m ruff check .` and `python -m unittest discover -s tests -v`.
-Three preexisting tests patch the old HTTPSConnection implementation boundary and
-need migration: two TransportTests in test_collector_history.py and the lost-response
-replay case in test_collector_ingestion.py. They are outside this lane's assigned
-test files and are preserved pending coordination. Acquisition/foreground end-to-end
+The existing transport tests now exercise the socket/TLS boundary rather than the
+removed HTTPSConnection adapter. The lost-ack integration case still performs real
+mTLS and durable acceptance before injecting loss, then proves retained pending
+history and deduplicated successful replay. Acquisition/foreground end-to-end
 acceptance awaits their pinned contracts and implementation. Production identity,
 DNS lifecycle, live host installation, and pilot acceptance remain separate work.
