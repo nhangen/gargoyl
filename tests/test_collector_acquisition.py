@@ -163,7 +163,10 @@ class AcquisitionTests(unittest.TestCase):
             timer.join()
 
     def test_config_validation_never_launches(self):
-        cases = ({"total_timeout_seconds": True}, {"total_timeout_seconds": float("inf")},
+        cases = ({"total_timeout_seconds": 10**1000},
+                 {"cleanup_grace_seconds": 10**1000},
+                 {"max_output_bytes": 10**1000},
+                 {"total_timeout_seconds": True}, {"total_timeout_seconds": float("inf")},
                  {"total_timeout_seconds": 31}, {"cleanup_grace_seconds": 0},
                  {"cleanup_grace_seconds": .8}, {"max_output_bytes": True},
                  {"max_output_bytes": 65537}, {"environment": {"BAD=KEY": "secret"}},
