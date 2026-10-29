@@ -67,8 +67,12 @@ observations, never captured prose. Invalid text returns empty readings and
 `invalid_state`; invalid kind, timestamp or TTL raises a safe policy error.
 Status maps only the running/stopped process observation: its serving label is
 log-derived and does not establish model residency. Doctor requires the eight
-ordered checks, consistent passed count and matching footer; duplicate, missing,
-contradictory, unsupported or control-character output fails closed. The two
+ordered checks, consistent passed count and matching footer marker. Missing or
+truncated check/summary evidence, duplicate or contradictory checks, unsupported
+formats and control-character output fail closed. For a failed report, the
+`Issues to fix:` marker is required but the following advice may be incomplete
+or absent: advice supplies no telemetry evidence and cannot turn failure into
+success. The two
 non-macOS skips count as passed exactly as the pinned producer does. Punctuation
 or version formats outside the supported grammar require a reviewed adapter
 change, not a fallback parser. Numbered repair advice is discarded, never acted on.
