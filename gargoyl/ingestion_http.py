@@ -5,12 +5,35 @@ single-request-at-a-time server intentionally binds only to localhost. Applicati
 hosting, certificate lifecycle and production availability are separate work.
 """
 
+import io
 import math
 import re
 import ssl
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from gargoyl.telemetry import MAX_PAYLOAD_BYTES, PolicyError
+
+
+class _DeadlineReader(io.RawIOBase):
+    """One absolute deadline for HTTP headers and body after the TLS handshake."""
+
+    def __init__(self, connection, timeout):
+        self.connection = connection
+        self.deadline = time.monotonic() + timeout
+
+    def readable(self):
+        return True
+
+    def remaining(self):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("request deadline exceeded")
+        return remaining
+
+    def readinto(self, buffer):
+        self.connection.settimeout(self.remaining())
+        return self.connection.recv_into(buffer)
 
 
 class _Receiver(HTTPServer):
@@ -68,10 +91,18 @@ def make_ingestion_server(
     context.load_cert_chain(certificate_file, private_key_file)
 
     class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            super().setup()
+            self.rfile.close()
+            self._deadline_reader = _DeadlineReader(self.connection, timeout)
+            self.rfile = io.BufferedReader(self._deadline_reader)
+
         def log_message(self, format, *args):
             pass
 
         def _reply(self, status):
+            # Restore a bounded response timeout after the read deadline shrank it.
+            self.connection.settimeout(timeout)
             self.close_connection = True
             self.send_response_only(status)
             self.send_header("Content-Length", "0")
@@ -104,6 +135,7 @@ def make_ingestion_server(
                 self._reply(413)
                 return
             payload = self.rfile.read(size)
+            self._deadline_reader.remaining()
             if len(payload) != size:
                 self._reply(400)
                 return
