@@ -14,7 +14,7 @@ def build_dashboard(snapshots, expected_hosts, now=None):
     Call on each collection and at least once per minute as time passes. The caller
     owns ingestion/refresh scheduling. No network, filesystem, or repair side effects.
     """
-    now = now or datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).isoformat() if now is None else now
     current = timestamp(now)
     hosts = {host_id(item) for item in expected_hosts}
     validated = [validate_snapshot(item) for item in snapshots]
@@ -41,7 +41,7 @@ def build_dashboard(snapshots, expected_hosts, now=None):
                 # Contradictory reports with the same source timestamp cannot win by order.
                 chosen = max(candidates, key=lambda item: timestamp(item["collected_at"])).copy()
                 if len({(item["value"], item["state"], item["freshness_seconds"]) for item in candidates}) > 1:
-                    chosen.update(state="unknown", value=None)
+                    chosen.update(state="unknown", value=None, conflicting_observations=[item.copy() for item in candidates])
                 latest[metric].append(chosen)
             items.sort(key=lambda item: (timestamp(item["timestamp"]), item["source"]))
         incidents = []
@@ -55,8 +55,12 @@ def build_dashboard(snapshots, expected_hosts, now=None):
             local = [item for item in latest[metric] if item["source"] in LOCAL]
             remote = [item for item in latest[metric] if item["source"] == "coordinator"]
             state = "unknown"
-            if local and remote and all(item["state"] == "observed" for item in local + remote):
-                state = "mismatch" if len({item["value"] for item in local + remote}) > 1 else "agreement"
+            fresh_local = [item for item in local if item["state"] == "observed"]
+            fresh_remote = [item for item in remote if item["state"] == "observed"]
+            if any(left["value"] != right["value"] for left in fresh_local for right in fresh_remote):
+                state = "mismatch"
+            elif local and remote and all(item["state"] == "observed" for item in local + remote):
+                state = "agreement"
             comparisons.append({"metric": metric, "state": state, "evidence": local + remote})
             if state == "mismatch":
                 incidents.append(metric + "_mismatch")
@@ -93,7 +97,15 @@ def render_dashboard(snapshots, expected_hosts, now=None):
         parts.append('<h3>Local / coordinator comparisons</h3><ul>' + ''.join(f'<li>{e(item["metric"])}: {e(item["state"])}</li>' for item in host['comparisons']) + '</ul>')
         parts.append('<h3>Availability, routing and host evidence</h3><div class="scroll">')
         parts.append(table(''.join(rows(metric, items) for metric, items in host['latest'].items() if metric not in {'requests_total','tokens_total','confirmed_paid_microunits'})))
-        parts.append('</div><h3>Local request / token history</h3><p>Cumulative observations; no inferred deltas, billing or earnings.</p><div class="scroll">')
+        parts.append('</div>')
+        for metric, items in host['latest'].items():
+            for item in items:
+                if 'conflicting_observations' in item:
+                    parts.append(f'<details open><summary>{e(metric)}: unknown — conflicting observations</summary>')
+                    parts.append('<p>Reports from the same source at the same observation timestamp disagree in value, state or freshness. No report is selected as authoritative. Original evidence follows.</p><div class="scroll">')
+                    parts.append(table(rows(metric, item['conflicting_observations'])))
+                    parts.append('</div></details>')
+        parts.append('<h3>Local request / token history</h3><p>Cumulative observations; no inferred deltas, billing or earnings.</p><div class="scroll">')
         parts.append(table(''.join(rows(metric, [item for item in host['history'][metric] if item['source'] in LOCAL]) for metric in ('requests_total','tokens_total'))))
         parts.append('</div><h3>Coordinator / console usage evidence</h3><div class="scroll">')
         parts.append(table(''.join(rows(metric, [item for item in host['history'][metric] if item['source'] in {'coordinator','console'}]) for metric in ('requests_total','tokens_total'))))

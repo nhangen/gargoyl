@@ -15,19 +15,24 @@ python -m gargoyl.dashboard --host 00000000-0000-4000-8000-000000000001 \
 Open the HTML in a browser. An expected host without reports has unknown values and
 a missing-heartbeat incident. Expected inventory is essential: a host absent from
 both inventory and reports cannot be discovered. CLI errors emit no partial report.
+An explicitly empty `--now` is invalid; only omission selects the current clock.
 Snapshots are limited to 64 KiB each and input values cannot supply arbitrary HTML.
 
 `build_dashboard(snapshots, expected_hosts, now)` returns a detached projection;
 `render_dashboard(...)` returns HTML. Keep sources separate and preserve source and
 collection timestamps, read-time state, and TTL for every displayed observation.
 The newest source timestamp wins per metric/source regardless of arrival order;
-contradictory observations at the same timestamp become unknown. Future collection
+contradictory observations at the same timestamp become unknown. The view displays
+the original conflicting values, source and observation/collection timestamps with
+an explicit explanation; no conflicting report becomes authoritative. Future collection
 times become unknown. History contains the supplied observations only; callers own
 bounded retention, authenticated ingestion, and encrypted storage.
 
 Fresh local/coordinator daemon, routing, attestation and model observations are
 compared immediately on every invocation. Missing, blocked, stale or conflicting
-counterparts cannot establish agreement. Invoke after each collection and at least
+counterparts cannot establish agreement. A fresh observed local/coordinator pair
+that disagrees still establishes a mismatch when other local sources are stale,
+unknown or blocked. Invoke after each collection and at least
 once per minute to meet the five-minute detection target and refresh stale states.
 The static HTML is explicitly an as-of report: it does not fetch or auto-refresh.
 Live scheduling and collector wiring are outstanding integration work, so synthetic

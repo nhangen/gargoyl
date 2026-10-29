@@ -37,6 +37,43 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(len(host['comparisons'][0]['evidence']), 2)
         self.assertEqual(project(data, '2026-01-01T00:05:01Z')['comparisons'][0]['state'], 'unknown')
 
+    def test_unavailable_ancillary_sources_do_not_hide_mismatch(self):
+        for source in ('doctor', 'launchd', 'host', 'collector'):
+            for state in ('stale', 'unknown', 'blocked'):
+                with self.subTest(source=source, state=state):
+                    ancillary = snapshot(source=source, state=state,
+                                         value='running' if state == 'stale' else None)
+                    data = [snapshot(), snapshot(value='stopped', source='coordinator'), ancillary]
+                    host = project(data)
+                    self.assertEqual(host['comparisons'][0]['state'], 'mismatch')
+                    self.assertIn('daemon_state_mismatch', host['incidents'])
+                    self.assertIn('daemon_state: mismatch', render_dashboard(data, [HOST], NOW))
+                    data[1] = snapshot(source='coordinator')
+                    self.assertEqual(project(data)['comparisons'][0]['state'], 'unknown')
+        data = [snapshot(), snapshot(source='doctor'), snapshot(value='stopped', source='host'),
+                snapshot(source='coordinator')]
+        self.assertEqual(project(data)['comparisons'][0]['state'], 'mismatch')
+        self.assertEqual(project([snapshot(), snapshot(source='coordinator')])['comparisons'][0]['state'], 'agreement')
+
+    def test_conflicting_original_evidence_is_rendered(self):
+        first = snapshot()
+        second = snapshot(value='stopped')
+        first['collected_at'] = '2026-01-01T00:00:01Z'
+        second['collected_at'] = '2026-01-01T00:00:02Z'
+        now = '2026-01-01T00:00:03Z'
+        for data in ([first, second], [second, first]):
+            host = project(data, now)
+            self.assertEqual(host['latest']['daemon_state'][0]['state'], 'unknown')
+            self.assertIsNone(host['latest']['daemon_state'][0]['value'])
+            page = render_dashboard(data, [HOST], now)
+            conflict = page.split('<details open>')[1].split('</details>')[0]
+            self.assertIn('unknown — conflicting observations', conflict)
+            self.assertIn('No report is selected as authoritative', conflict)
+            for value, collected in [('running', first['collected_at']), ('stopped', second['collected_at'])]:
+                self.assertIn(f'<td>{value}</td><td>daemon</td><td>{NOW}</td><td>{collected}', conflict)
+        # A conflicting local source cannot claim agreement with the coordinator.
+        self.assertEqual(project([first, second, snapshot(source='coordinator')], now)['comparisons'][0]['state'], 'unknown')
+
     def test_states_and_future_collection(self):
         for state in ('unknown', 'blocked'):
             self.assertEqual(project([snapshot(value=None, state=state)])['latest']['daemon_state'][0]['state'], state)
@@ -102,6 +139,7 @@ class DashboardTests(unittest.TestCase):
         good = subprocess.run(command + [NOW], capture_output=True, text=True)
         self.assertEqual(good.returncode, 0)
         self.assertIn('missing_collector_heartbeat', good.stdout)
-        bad = subprocess.run(command + ['invalid'], capture_output=True, text=True)
-        self.assertEqual(bad.returncode, 2)
-        self.assertEqual(bad.stdout, '')
+        for clock in ('invalid', ''):
+            bad = subprocess.run(command + [clock], capture_output=True, text=True)
+            self.assertEqual(bad.returncode, 2)
+            self.assertEqual(bad.stdout, '')
