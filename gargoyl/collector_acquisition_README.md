@@ -28,6 +28,8 @@ total_timeout_seconds=5.0, cleanup_grace_seconds=1.0, max_output_bytes=65536)`
 requires absolute executable/cwd strings and a copied explicit environment mapping.
 Budgets are finite numbers (not booleans): `0 < grace < total <= 30` seconds and
 `1 <= max_output_bytes <= 65536`. Default successful observations have TTL 60.
+The read-only `total_timeout_seconds` property exposes the same validated total
+budget used by execution and cleanup, for foreground composition checks.
 Invalid configuration or prelaunch clock values raise generic `PolicyError`.
 Trusted clock callbacks must return promptly; this is not a hard real-time system.
 

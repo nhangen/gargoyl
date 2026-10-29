@@ -94,6 +94,13 @@ class AcquisitionTests(unittest.TestCase):
         self.assertNotIn("synthetic-secret", repr(result))
         self.assertNotIn(str(self.root), repr(result))
 
+    def test_total_budget_is_read_only_validated_configuration(self):
+        acquirer = self.acquirer(total_timeout_seconds=2, cleanup_grace_seconds=.5)
+        self.assertEqual(acquirer.total_timeout_seconds, 2)
+        with self.assertRaises(AttributeError):
+            acquirer.total_timeout_seconds = 99
+        self.assertEqual(acquirer.total_timeout_seconds, 2)
+
     def test_fixed_arguments_explicit_environment_and_private_result(self):
         with patch.dict(os.environ, {"SYNTHETIC_PARENT_SECRET": "synthetic-secret"}):
             result = self.acquirer("args").acquire(STATUS, stop_event=self.stop)
