@@ -13,8 +13,11 @@ An observation has exactly `value`, `source`, `timestamp`, `freshness_seconds`,
 `state`, `sensitivity`. Source is daemon/doctor/launchd/host/coordinator/console/collector;
 state is observed/stale/unknown/blocked; unknown and blocked require null values.
 Sensitivity must be safe. UTC timestamps are timezone aware and cannot exceed collected_at. Every timestamp
-input is limited to 32 characters (including offset/fraction); longer representations
-are rejected without echoing input. Common Z and +00:00 microsecond forms are supported.
+input is limited to 32 ASCII characters. The exact accepted grammar is
+`YYYY-MM-DDTHH:MM:SS[.ffffff](Z|+00:00)`, with 1–6 fractional digits when present.
+Calendar dates/times must also be valid. Only literal uppercase T and Z and ASCII
+digits are accepted; whitespace, arbitrary separators, surrogates, nonzero offsets
+and excessive fractional precision are rejected as safe `PolicyError` messages.
 TTL is 1..86400 seconds. Metric enums and numeric bounds are defined in `METRICS`.
 No model name, hostname, customer identifier, arbitrary string, error text, raw command
 output, or address is allowed. Identity is an assigned opaque UUID, never a hostname hash.

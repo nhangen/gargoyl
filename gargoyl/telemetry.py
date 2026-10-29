@@ -1,12 +1,17 @@
 """Version 1 wire contract. Validation fails closed without echoing input."""
 
 import json
+import re
 from datetime import datetime
 from uuid import UUID
 
 SCHEMA_VERSION = 1
 MAX_PAYLOAD_BYTES = 65536
 MAX_TIMESTAMP_CHARACTERS = 32
+_TIMESTAMP_PATTERN = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?(?:Z|\+00:00)"
+)
 SOURCES = {"daemon", "doctor", "launchd", "host", "coordinator", "console", "collector"}
 STATES = {"observed", "stale", "unknown", "blocked"}
 # Each metric is a fixed enum or bounded numeric aggregate; never arbitrary text.
@@ -48,7 +53,11 @@ def _require(ok):
 
 
 def timestamp(value):
-    _require(type(value) is str and len(value) <= MAX_TIMESTAMP_CHARACTERS)
+    _require(
+        type(value) is str
+        and len(value) <= MAX_TIMESTAMP_CHARACTERS
+        and _TIMESTAMP_PATTERN.fullmatch(value) is not None
+    )
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         _require(parsed.tzinfo is not None and parsed.utcoffset().total_seconds() == 0)

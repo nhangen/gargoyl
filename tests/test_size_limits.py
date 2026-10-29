@@ -76,7 +76,7 @@ class SizeLimitTests(unittest.TestCase):
         for value in (
             "2026-01-01T00:00:00Z",
             "2026-01-01T00:00:00.000000+00:00",
-            "2026-01-01T00:00:00." + "0" * 11 + "Z",
+            "2026-01-01T00:00:00.000000Z",
         ):
             data = snapshot()
             data["collected_at"] = value
@@ -113,3 +113,31 @@ class SizeLimitTests(unittest.TestCase):
         with patch("gargoyl.telemetry.MAX_PAYLOAD_BYTES", size - 1):
             for operation in self.outbound_operations():
                 self.assert_safe_rejection(operation, data)
+
+    def test_timestamp_grammar_rejects_malformed_inputs_safely(self):
+        values = (
+            "2026-01-01\ud80000:00:00Z",
+            "2026-01-01 00:00:00Z",
+            "2026-01-01X00:00:00Z",
+            "2026-01-01T00:00:00.0000000Z",
+            "2026-01-01T00:00:00,123Z",
+            "2026-01-01T00:00:00+01:00",
+            "20260101T000000Z",
+            "2026-02-30T00:00:00Z",
+            "2026-01-01T00:00:00Z\n",
+        )
+        for location in ("collected_at", "timestamp"):
+            for value in values:
+                with self.subTest(location=location, value=repr(value)):
+                    data = snapshot()
+                    if location == "collected_at":
+                        data[location] = value
+                    else:
+                        data["fields"]["daemon_state"][location] = value
+                    for operation in self.outbound_operations():
+                        self.assert_safe_rejection(operation, data)
+                    raw = json.dumps(data).encode()
+                    self.assert_safe_rejection(decode_snapshot, raw)
+                    self.assert_safe_rejection(
+                        self.cipher.open, self.encrypted_raw(raw)
+                    )
