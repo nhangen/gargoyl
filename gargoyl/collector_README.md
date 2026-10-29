@@ -101,8 +101,12 @@ identical snapshots for acknowledgement-loss replay. Its certificate principal
 must authorize the host and every emitted metric/source pair, including unknown
 placeholders from `collector.SOURCES` and collector heartbeat, skew and error
 fields. An authorized source parser does not grant receiver authority. Integration
-with the foundation ingestion implementation and real local TLS is checked after
-its pinned handoff; current runtime tests use a synthetic transport double.
+with the foundation ingestion implementation is exercised by
+`tests/test_collector_ingestion.py` through actual localhost mTLS using ephemeral
+synthetic certificates and spool keys. Tests cover durable restart, dropped
+response/replay deduplication, missing placeholder grants, receiver write failure
+and listener outage. Listener threads stop and join before the receiver closes.
+These local integration checks do not establish live host or production readiness.
 
 The runtime does not yet acquire launchd, model residency, pressure, attestation,
 usage, routing or independent coordinator observations. The two text parsers must
