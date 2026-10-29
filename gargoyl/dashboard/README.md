@@ -65,12 +65,13 @@ read across configured hosts, raising on storage/authentication/corruption failu
 The viewer never reads collector pending queues or acknowledges deliveries. Supply
 expected opaque host IDs separately so unreported hosts remain visible.
 
-Construct the reader and viewer and call `viewer.serve_forever()` in the reader's
-owning thread; `handle_request()` supports an externally driven event loop. The
-viewer starts no worker thread. An embedding runtime must schedule writes in a
-compatible owner thread or use the store's documented concurrency mechanism. The
-caller closes both objects; the viewer does not provision keys/certificates or
-open a store itself. The existing file-to-HTML CLI remains available.
+The foundation `EvidenceStore` supports ingestion and viewer threads sharing one
+instance through an internal transaction lock. The caller drives
+`viewer.serve_forever()` or `handle_request()` and owns listener threads; the viewer
+starts no worker thread. Stop and join all listeners before closing the shared
+store. Other structural readers must obey their own thread-safety contract. The
+viewer does not provision keys/certificates or open a store itself. The existing
+file-to-HTML CLI remains available.
 
 Use `http://127.0.0.1:<viewer.server_port>/` on the same machine. GET and HEAD are
 read-only. Other paths/methods, unexpected Host headers and cross-origin Origin
@@ -94,6 +95,11 @@ claiming a real fleet latency guarantee from the refresh interval alone.
 
 Runtime tests use real local HTTP requests with synthetic structural readers and
 injected clocks. They establish on-request updates and the configured refresh bound,
-not live host integration or a browser's actual scheduling. Integration with the
-foundation EvidenceStore and durable ingestion awaits its pinned implementation.
+not live host integration or a browser's actual scheduling. `tests/test_dashboard_integration.py` additionally uses ephemeral synthetic PKI
+and actual local mTLS ingestion into EvidenceStore, then HTTP viewer requests. It
+covers durable restart/readback, duplicate replay, conflicting/future/stale evidence,
+missing expected hosts, and real ciphertext corruption followed by restored-fixture
+recovery. Corruption recovery is test fixture restoration, not an operator repair API.
+These checks integrate foundation commit `34a8b41597f2a6cc72d4f7a49733927d75abfd18`;
+they do not demonstrate live host acceptance or browser refresh scheduling.
 All existing usage-window/currency/payment verification limitations still apply.

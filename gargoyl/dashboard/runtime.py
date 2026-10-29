@@ -1,6 +1,6 @@
 """Loopback-only, read-only HTTP viewer for a structurally supplied evidence store.
 
-Construct and serve in the store's owning thread. No background thread, credential
+Use the reader's documented thread-safety contract. No background thread, credential
 provisioning, TLS termination, ingestion endpoint, or repair action is provided.
 """
 import io
@@ -41,7 +41,8 @@ class EvidenceViewer(HTTPServer):
 
     reader.snapshots(now=utc_string) must return bounded, consistent detached v1
     snapshots or raise on any read failure. expected_hosts is independent inventory.
-    The caller drives serve_forever/handle_request and closes viewer and reader.
+    The caller drives serve_forever/handle_request, stops/joins listener threads,
+    then closes viewer and reader. EvidenceStore permits locked cross-thread reads.
     """
 
     allow_reuse_address = False
