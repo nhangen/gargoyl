@@ -5,7 +5,8 @@ v1 snapshots. There is no host access, repair execution, server, credential hand
 or plaintext spool adapter. Validate all complete snapshots before use.
 
 ```sh
-python -m pip install -e .
+python -m pip install -e ".[dev]"
+python -m ruff check .
 python -m unittest discover -s tests -v
 python -m gargoyl.dashboard --host 00000000-0000-4000-8000-000000000001 \
   --now 2026-01-01T00:00:00Z > /tmp/gargoyl-dashboard.html
@@ -24,7 +25,8 @@ collection timestamps, read-time state, and TTL for every displayed observation.
 The newest source timestamp wins per metric/source regardless of arrival order;
 contradictory observations at the same timestamp become unknown. The view displays
 the original conflicting values, source and observation/collection timestamps with
-an explicit explanation; no conflicting report becomes authoritative. Future collection
+their original reported states and TTL, and an explicit explanation; no conflicting
+report becomes authoritative. Displayed states also show read-time freshness. Future collection
 times become unknown. History contains the supplied observations only; callers own
 bounded retention, authenticated ingestion, and encrypted storage.
 
@@ -32,7 +34,7 @@ Fresh local/coordinator daemon, routing, attestation and model observations are
 compared immediately on every invocation. Missing, blocked, stale or conflicting
 counterparts cannot establish agreement. A fresh observed local/coordinator pair
 that disagrees still establishes a mismatch when other local sources are stale,
-unknown or blocked. Invoke after each collection and at least
+unknown, blocked, future-dated or internally conflicting. Invoke after each collection and at least
 once per minute to meet the five-minute detection target and refresh stale states.
 The static HTML is explicitly an as-of report: it does not fetch or auto-refresh.
 Live scheduling and collector wiring are outstanding integration work, so synthetic

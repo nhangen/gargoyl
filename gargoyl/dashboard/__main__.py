@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from gargoyl.dashboard import render_dashboard
-from gargoyl.telemetry import PolicyError, decode_snapshot
+from gargoyl.telemetry import MAX_PAYLOAD_BYTES, PolicyError, decode_snapshot
 
 
 def main():
@@ -17,7 +17,7 @@ def main():
         snapshots = []
         for filename in args.snapshots:
             with Path(filename).open('rb') as stream:
-                snapshots.append(decode_snapshot(stream.read(65537)))
+                snapshots.append(decode_snapshot(stream.read(MAX_PAYLOAD_BYTES + 1)))
         page = render_dashboard(snapshots, args.host, args.now)
     except (PolicyError, OSError):
         print('Dashboard input unavailable or rejected; no report generated.', file=sys.stderr)

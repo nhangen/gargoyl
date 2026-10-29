@@ -2,7 +2,13 @@
 from datetime import datetime, timezone
 from html import escape
 
-from gargoyl.telemetry import METRICS, effective_state, host_id, timestamp, validate_snapshot
+from gargoyl.telemetry import (
+    METRICS,
+    effective_state,
+    host_id,
+    timestamp,
+    validate_snapshot,
+)
 
 LOCAL = {"daemon", "doctor", "launchd", "host", "collector"}
 CORRELATED = ("daemon_state", "routing_eligible", "attestation_state", "model_state")
@@ -26,7 +32,7 @@ def build_dashboard(snapshots, expected_hosts, now=None):
             if snapshot["host_id"] != identity:
                 continue
             for metric, field in snapshot["fields"].items():
-                item = dict(field, collected_at=snapshot["collected_at"])
+                item = dict(field, collected_at=snapshot["collected_at"], reported_state=field["state"])
                 item["state"] = effective_state(field, now)
                 if timestamp(snapshot["collected_at"]) > current:
                     item["state"] = "unknown"
@@ -40,7 +46,7 @@ def build_dashboard(snapshots, expected_hosts, now=None):
                 candidates = [item for item in candidates if timestamp(item["timestamp"]) == newest]
                 # Contradictory reports with the same source timestamp cannot win by order.
                 chosen = max(candidates, key=lambda item: timestamp(item["collected_at"])).copy()
-                if len({(item["value"], item["state"], item["freshness_seconds"]) for item in candidates}) > 1:
+                if len({(item["value"], item["reported_state"], item["freshness_seconds"]) for item in candidates}) > 1:
                     chosen.update(state="unknown", value=None, conflicting_observations=[item.copy() for item in candidates])
                 latest[metric].append(chosen)
             items.sort(key=lambda item: (timestamp(item["timestamp"]), item["source"]))
@@ -77,7 +83,7 @@ def render_dashboard(snapshots, expected_hosts, now=None):
     def rows(metric, items):
         if not items:
             return f'<tr><th>{e(metric)}</th><td>unknown</td><td colspan="4">No report</td></tr>'
-        return ''.join(f'<tr><th>{e(metric)}</th><td>{e(item["state"])}</td>'
+        return ''.join(f'<tr><th>{e(metric)}</th><td>{e(item["state"])} (reported: {e(item["reported_state"])})</td>'
                        f'<td>{e(item["value"] if item["value"] is not None else "—")}</td>'
                        f'<td>{e(item["source"])}</td><td>{e(item["timestamp"])}</td>'
                        f'<td>{e(item["collected_at"])}; TTL {e(item["freshness_seconds"])}s</td></tr>' for item in items)

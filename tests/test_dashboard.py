@@ -2,6 +2,7 @@ import copy
 import subprocess
 import sys
 import unittest
+from itertools import permutations
 
 from gargoyl.dashboard import build_dashboard, render_dashboard
 from gargoyl.telemetry import PolicyError
@@ -55,9 +56,28 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(project(data)['comparisons'][0]['state'], 'mismatch')
         self.assertEqual(project([snapshot(), snapshot(source='coordinator')])['comparisons'][0]['state'], 'agreement')
 
+    def test_mismatch_with_future_or_conflicting_auxiliary_for_all_metrics(self):
+        metrics = [('daemon_state', 'running', 'stopped'),
+                   ('routing_eligible', 'eligible', 'ineligible'),
+                   ('attestation_state', 'valid', 'expired'),
+                   ('model_state', 'resident', 'absent')]
+        for metric, local_value, remote_value in metrics:
+            pair = [snapshot(metric, local_value, 'daemon'),
+                    snapshot(metric, remote_value, 'coordinator')]
+            future = snapshot(metric, local_value, 'doctor', at='2026-01-01T00:01:00Z')
+            conflict = [snapshot(metric, local_value, 'doctor'),
+                        snapshot(metric, remote_value, 'doctor')]
+            for kind, auxiliary in [('future', [future]), ('conflict', conflict)]:
+                for data in permutations(pair + auxiliary):
+                    with self.subTest(metric=metric, auxiliary=kind, sources=[d['fields'][metric]['source'] for d in data]):
+                        host = project(data)
+                        comparison = next(c for c in host['comparisons'] if c['metric'] == metric)
+                        self.assertEqual(comparison['state'], 'mismatch')
+                        self.assertIn(metric + '_mismatch', host['incidents'])
+
     def test_conflicting_original_evidence_is_rendered(self):
         first = snapshot()
-        second = snapshot(value='stopped')
+        second = snapshot(value='stopped', state='stale', ttl=120)
         first['collected_at'] = '2026-01-01T00:00:01Z'
         second['collected_at'] = '2026-01-01T00:00:02Z'
         now = '2026-01-01T00:00:03Z'
@@ -69,6 +89,10 @@ class DashboardTests(unittest.TestCase):
             conflict = page.split('<details open>')[1].split('</details>')[0]
             self.assertIn('unknown — conflicting observations', conflict)
             self.assertIn('No report is selected as authoritative', conflict)
+            self.assertIn('observed (reported: observed)', conflict)
+            self.assertIn('stale (reported: stale)', conflict)
+            self.assertIn('TTL 300s', conflict)
+            self.assertIn('TTL 120s', conflict)
             for value, collected in [('running', first['collected_at']), ('stopped', second['collected_at'])]:
                 self.assertIn(f'<td>{value}</td><td>daemon</td><td>{NOW}</td><td>{collected}', conflict)
         # A conflicting local source cannot claim agreement with the coordinator.
@@ -96,6 +120,15 @@ class DashboardTests(unittest.TestCase):
         conflicting = [snapshot(), snapshot(value='stopped')]
         self.assertEqual(project(conflicting)['latest']['daemon_state'][0]['state'], 'unknown')
 
+    def test_conflict_evidence_rejects_html_injection(self):
+        for key in ('value', 'source', 'timestamp', 'state', 'freshness_seconds'):
+            data = snapshot(value='stopped')
+            data['fields']['daemon_state'][key] = '<script>alert("synthetic")</script>'
+            with self.subTest(key=key), self.assertRaises(PolicyError):
+                render_dashboard([snapshot(), data], [HOST], NOW)
+        with self.assertRaises(PolicyError):
+            render_dashboard([snapshot()], [HOST], '<script>synthetic</script>')
+
     def test_usage_and_earnings_remain_distinct(self):
         data = [snapshot('requests_total', 42), snapshot('tokens_total', 100),
                 snapshot('confirmed_paid_microunits', 7, 'console')]
@@ -106,11 +139,13 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(project(data[:2])['latest']['confirmed_paid_microunits'], [])
 
     def test_complete_validation_before_render_and_no_mutation(self):
-        data = snapshot(); original = copy.deepcopy(data)
+        data = snapshot()
+        original = copy.deepcopy(data)
         render_dashboard([data], [HOST], NOW)
         self.assertEqual(data, original)
         data['fields']['prompt'] = 'synthetic-secret-marker'
-        with self.assertRaises(PolicyError): render_dashboard([data], [HOST], NOW)
+        with self.assertRaises(PolicyError):
+            render_dashboard([data], [HOST], NOW)
 
     def test_ui_has_all_required_evidence_and_provenance(self):
         page = render_dashboard([snapshot(), snapshot('error_code','timeout','doctor')], [HOST], NOW)
