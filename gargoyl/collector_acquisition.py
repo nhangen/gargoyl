@@ -32,7 +32,8 @@ class AcquisitionResult:
 
 
 def _number(value):
-    return type(value) in (int, float) and math.isfinite(value)
+    # Integers are finite without a float conversion; callers apply range bounds.
+    return type(value) is int or (type(value) is float and math.isfinite(value))
 
 
 def _path(value):

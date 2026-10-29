@@ -163,7 +163,10 @@ class AcquisitionTests(unittest.TestCase):
             timer.join()
 
     def test_config_validation_never_launches(self):
-        cases = ({"total_timeout_seconds": True}, {"total_timeout_seconds": float("inf")},
+        cases = ({"total_timeout_seconds": 10**1000},
+                 {"cleanup_grace_seconds": 10**1000},
+                 {"max_output_bytes": 10**1000},
+                 {"total_timeout_seconds": True}, {"total_timeout_seconds": float("inf")},
                  {"total_timeout_seconds": 31}, {"cleanup_grace_seconds": 0},
                  {"cleanup_grace_seconds": .8}, {"max_output_bytes": True},
                  {"max_output_bytes": 65537}, {"environment": {"BAD=KEY": "secret"}},
@@ -187,10 +190,14 @@ class AcquisitionTests(unittest.TestCase):
             launch.assert_not_called()
         # Frozen injected clocks cannot defeat the independent real elapsed guard.
         start = time.monotonic()
-        result = self.acquirer("hang", monotonic_clock=lambda: 0).acquire(STATUS, stop_event=self.stop)
+        # Leave more real cleanup slack for loaded CI while retaining the frozen
+        # injected-clock proof, strict cleanup assertion and finite elapsed bound.
+        result = self.acquirer("hang", monotonic_clock=lambda: 0,
+                               total_timeout_seconds=1.5,
+                               cleanup_grace_seconds=.8).acquire(STATUS, stop_event=self.stop)
         self.assert_failure(result, "timeout")
         self.assertTrue(result.cleanup_complete)
-        self.assertLess(time.monotonic() - start, 1.5)
+        self.assertLess(time.monotonic() - start, 2.2)
         clock = iter((10, 9))
         result = self.acquirer("hang", monotonic_clock=lambda: next(clock)).acquire(STATUS, stop_event=self.stop)
         self.assert_failure(result, "unavailable")

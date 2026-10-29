@@ -196,6 +196,28 @@ class TransportDeadlineTests(unittest.TestCase):
             self.assertAlmostEqual(channel.settimeout.call_args_list[1].args[0], 0.3)
             channel.close.assert_called_once()
 
+    def test_complete_headers_final_byte_after_deadline_never_acknowledged(self):
+        sender = OutboundHTTPS(self.config(443), self.identity)
+        response = b'HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n'
+        current = [0.5]
+        received = bytearray()
+        channel = Mock()
+
+        def receive(count):
+            self.assertEqual(count, 1)
+            byte = response[len(received):len(received) + 1]
+            received.extend(byte)
+            if len(received) == len(response):
+                current[0] = 1.01
+            return byte
+
+        channel.recv.side_effect = receive
+        with patch('gargoyl.collector_history.time.monotonic', side_effect=lambda: current[0]):
+            with self.assertRaisesRegex(TimeoutError, '^outbound deadline exceeded$'):
+                sender._acknowledged(channel, deadline=1.0)
+        self.assertEqual(bytes(received), response)
+        self.assertEqual(channel.recv.call_count, len(response))
+
     def test_timeout_retains_history_then_collection_and_delivery_resume(self):
         history = EncryptedHistory(self.root / 'history', SpoolCipher(self.identity, os.urandom(32)), RetentionPolicy(), NOW)
         self.addCleanup(history.close)
