@@ -26,8 +26,9 @@ def _require(ok):
 
 
 def _positive_budget(value):
-    _require(type(value) in (int, float) and math.isfinite(value) and value > 0)
-    return value
+    # Check integer magnitude before conversion: math.isfinite(10**400) raises.
+    _require(type(value) in (int, float) and 0 < value <= sys.float_info.max)
+    return float(value)
 
 
 @dataclass(frozen=True)
@@ -47,8 +48,8 @@ class ForegroundConfig:
         _require(len(set(self.sources)) == len(self.sources))
         _require(
             type(self.interval_seconds) in (int, float)
-            and math.isfinite(self.interval_seconds)
             and 1 <= self.interval_seconds <= 60
+            and math.isfinite(self.interval_seconds)
         )
 
     @classmethod
@@ -279,7 +280,7 @@ def run_configured(
     finally:
         try:
             history.close()
-        except Exception:
+        except (Exception, KeyboardInterrupt):
             result = ForegroundOutcome(
                 "incomplete_shutdown",
                 "history_close_failed",

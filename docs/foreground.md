@@ -34,7 +34,7 @@ python -m gargoyl.foreground --check-config settings.json
 
 This reads at most 4096 bytes, rejects duplicate keys, invalid UTF-8, extra fields
 and invalid values, and exits 0 for valid configuration or 2 for invalid/unavailable
-input. Output is fixed text. It does not echo configuration, load credentials,
+input, including integers too large for floating-point conversion. Output is fixed text. It does not echo configuration, load credentials,
 open a spool, construct a runtime, acquire observations, or connect to a service.
 There is intentionally no operational command-line credential loader.
 
@@ -118,7 +118,8 @@ cleanup and is reported as incomplete shutdown.
 Collection/storage errors stop the loop with `collection_failed`; delivery state
 errors stop with `delivery_state_failed`. Ordinary network failure is the runtime's
 `retry`, not a scheduler failure. History construction or close failure is explicit;
-close failure produces incomplete shutdown. Operators must not automatically retry
+close failure, including KeyboardInterrupt during owned-history cleanup, produces
+incomplete shutdown. Operators must not automatically retry
 an incomplete shutdown as though producer cleanup had succeeded.
 
 ## Verification and remaining scope

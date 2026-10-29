@@ -203,6 +203,20 @@ class ForegroundTests(unittest.TestCase):
                 self.assertEqual(result.reason, reason)
                 self.assertNotIn("synthetic-private-detail", repr(result))
 
+    def test_huge_dependency_budgets_raise_policy_errors_before_work(self):
+        for target in (self.acquisition, self.runtime.transport):
+            original = target.total_timeout_seconds
+            target.total_timeout_seconds = 10**400
+            with self.assertRaises(PolicyError) as caught:
+                self.run_loop()
+            self.assertEqual(
+                str(caught.exception),
+                "invalid foreground configuration or dependencies",
+            )
+            target.total_timeout_seconds = original
+        self.assertEqual(self.acquisition.calls, [])
+        self.assertEqual(self.runtime.collected, [])
+
     def test_acquisition_results_pass_through_without_redating(self):
         result = SimpleNamespace(
             source_kind=STATUS,
@@ -303,6 +317,26 @@ class ConfigurationTests(unittest.TestCase):
             with self.assertRaises(PolicyError) as caught:
                 ForegroundConfig.from_mapping(data)
             self.assertNotIn("synthetic-private", str(caught.exception))
+
+    def test_huge_integer_configuration_and_cli_are_rejected_safely(self):
+        data = self.mapping()
+        data["interval_seconds"] = 10**400
+        payload = json.dumps(data)
+        self.assertLess(len(payload), 4096)
+        with self.assertRaises(PolicyError) as caught:
+            ForegroundConfig.from_mapping(data)
+        self.assertEqual(
+            str(caught.exception), "invalid foreground configuration or dependencies"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text(payload)
+            output = io.StringIO()
+            with contextlib.redirect_stderr(output):
+                self.assertEqual(main(["--check-config", str(path)]), 2)
+            self.assertEqual(
+                output.getvalue(), "Foreground configuration unavailable or invalid.\n"
+            )
 
     def test_validation_only_cli_never_constructs_runtime_or_echoes_input(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -417,6 +451,19 @@ class CompositionTests(unittest.TestCase):
             result = run_configured(self.config, **self.arguments)
             self.assertEqual(result.status, "incomplete_shutdown")
             self.assertEqual(result.reason, "history_close_failed")
+
+    def test_keyboard_interrupt_during_owned_close_reports_incomplete_shutdown(self):
+        with (
+            patch(
+                "gargoyl.foreground.CollectorRuntime", return_value=Runtime(self.clock)
+            ),
+            patch("gargoyl.foreground.EncryptedHistory") as history,
+        ):
+            history.return_value.close.side_effect = KeyboardInterrupt()
+            result = run_configured(self.config, **self.arguments)
+            self.assertEqual(result.status, "incomplete_shutdown")
+            self.assertEqual(result.reason, "history_close_failed")
+            history.return_value.close.assert_called_once()
 
     def test_composition_closes_real_encrypted_history(self):
         with tempfile.TemporaryDirectory() as directory:
