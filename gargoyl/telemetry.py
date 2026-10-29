@@ -1,9 +1,12 @@
 """Version 1 wire contract. Validation fails closed without echoing input."""
+
 import json
 from datetime import datetime
 from uuid import UUID
 
 SCHEMA_VERSION = 1
+MAX_PAYLOAD_BYTES = 65536
+MAX_TIMESTAMP_CHARACTERS = 32
 SOURCES = {"daemon", "doctor", "launchd", "host", "coordinator", "console", "collector"}
 STATES = {"observed", "stale", "unknown", "blocked"}
 # Each metric is a fixed enum or bounded numeric aggregate; never arbitrary text.
@@ -17,13 +20,23 @@ METRICS = {
     "coordinator_reachable": {"reachable", "unreachable"},
     "routing_eligible": {"eligible", "ineligible"},
     "attestation_state": {"valid", "expired", "missing"},
-    "error_code": {"none", "timeout", "unavailable", "invalid_state", "permission_denied"},
+    "error_code": {
+        "none",
+        "timeout",
+        "unavailable",
+        "invalid_state",
+        "permission_denied",
+    },
     "competing_runtimes": "count",
-    "requests_total": "count", "tokens_total": "count",
-    "memory_headroom_bytes": "count", "attestation_age_seconds": "count",
-    "heartbeat_age_seconds": "count", "clock_skew_seconds": "signed",
+    "requests_total": "count",
+    "tokens_total": "count",
+    "memory_headroom_bytes": "count",
+    "attestation_age_seconds": "count",
+    "heartbeat_age_seconds": "count",
+    "clock_skew_seconds": "signed",
     "confirmed_paid_microunits": "count",
 }
+
 
 class PolicyError(ValueError):
     """Safe-to-log error: rejected data is never included."""
@@ -35,7 +48,7 @@ def _require(ok):
 
 
 def timestamp(value):
-    _require(type(value) is str)
+    _require(type(value) is str and len(value) <= MAX_TIMESTAMP_CHARACTERS)
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         _require(parsed.tzinfo is not None and parsed.utcoffset().total_seconds() == 0)
@@ -54,15 +67,31 @@ def host_id(value):
 
 def validate_snapshot(snapshot):
     """Return a detached allowlisted copy suitable for encrypted storage/export."""
-    _require(type(snapshot) is dict and set(snapshot) == {"schema_version", "host_id", "collected_at", "fields"})
-    _require(type(snapshot["schema_version"]) is int and snapshot["schema_version"] == SCHEMA_VERSION)
+    _require(
+        type(snapshot) is dict
+        and set(snapshot) == {"schema_version", "host_id", "collected_at", "fields"}
+    )
+    _require(
+        type(snapshot["schema_version"]) is int
+        and snapshot["schema_version"] == SCHEMA_VERSION
+    )
     host_id(snapshot["host_id"])
     collected = timestamp(snapshot["collected_at"])
     fields = snapshot["fields"]
     _require(type(fields) is dict and 0 < len(fields) <= len(METRICS))
     for name, field in fields.items():
         _require(name in METRICS and type(field) is dict)
-        _require(set(field) == {"value", "source", "timestamp", "freshness_seconds", "state", "sensitivity"})
+        _require(
+            set(field)
+            == {
+                "value",
+                "source",
+                "timestamp",
+                "freshness_seconds",
+                "state",
+                "sensitivity",
+            }
+        )
         _require(type(field["source"]) is str and field["source"] in SOURCES)
         _require(type(field["state"]) is str and field["state"] in STATES)
         _require(field["sensitivity"] == "safe")
@@ -79,22 +108,32 @@ def validate_snapshot(snapshot):
             _require(rule == "signed" or value >= 0)
         if name == "confirmed_paid_microunits":
             _require(field["source"] == "console")
-    return json.loads(json.dumps(snapshot, allow_nan=False))
+    return json.loads(_serialize(snapshot))
+
+
+def _serialize(snapshot):
+    payload = json.dumps(
+        snapshot, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    _require(len(payload) <= MAX_PAYLOAD_BYTES)
+    return payload
 
 
 def encode_snapshot(snapshot):
-    return json.dumps(validate_snapshot(snapshot), sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    return _serialize(validate_snapshot(snapshot))
 
 
 def decode_snapshot(payload):
     try:
+
         def unique(pairs):
             result = {}
             for key, value in pairs:
                 _require(key not in result)
                 result[key] = value
             return result
-        _require(type(payload) is bytes and len(payload) <= 65536)
+
+        _require(type(payload) is bytes and len(payload) <= MAX_PAYLOAD_BYTES)
         return validate_snapshot(json.loads(payload, object_pairs_hook=unique))
     except (ValueError, UnicodeError, RecursionError):
         raise PolicyError("invalid telemetry payload") from None
