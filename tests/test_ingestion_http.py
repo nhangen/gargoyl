@@ -186,7 +186,6 @@ class HTTPSIngestionTests(unittest.TestCase):
     def test_invalid_payload_routes_methods_and_framing_never_ack(self):
         cases = (
             ({"payload": b'{"raw_logs":"synthetic-marker"}'}, 400),
-            ({"payload": b"x" * (MAX_PAYLOAD_BYTES + 1)}, 413),
             ({"path": "/elsewhere"}, 404),
             ({"method": "GET"}, 405),
             ({"headers": {"Content-Type": "text/plain"}}, 400),
@@ -213,6 +212,29 @@ class HTTPSIngestionTests(unittest.TestCase):
             with self.subTest(arguments=arguments.keys(), expected=expected):
                 self.assertEqual(self.request(**arguments), (expected, b""))
         self.assertEqual(self.store.snapshots(now=NOW), [])
+
+    def test_oversized_length_rejected_before_body(self):
+        # Send only headers: a full body write can race the deliberate early
+        # close and raise BrokenPipeError before http.client reads the 413.
+        with socket.create_connection(("localhost", self.port), timeout=2) as raw:
+            with self.context().wrap_socket(raw, server_hostname="localhost") as client:
+                client.sendall(
+                    b"POST /v1/snapshots HTTP/1.1\r\nHost: localhost\r\n"
+                    b"Content-Type: application/json\r\nContent-Length: "
+                    + str(MAX_PAYLOAD_BYTES + 1).encode("ascii")
+                    + b"\r\n\r\n"
+                )
+                response = http.client.HTTPResponse(client)
+                try:
+                    response.begin()
+                    self.assertEqual(response.status, 413)
+                    self.assertEqual(response.getheader("Content-Length"), "0")
+                    self.assertEqual(response.getheader("Connection"), "close")
+                    self.assertEqual(response.read(), b"")
+                finally:
+                    response.close()
+        self.assertEqual(self.store.snapshots(now=NOW), [])
+        self.assertEqual(self.request(), (204, b""))
 
     def test_duplicate_length_and_truncated_body_rejected(self):
         for headers, body in (
