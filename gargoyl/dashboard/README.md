@@ -100,6 +100,6 @@ and actual local mTLS ingestion into EvidenceStore, then HTTP viewer requests. I
 covers durable restart/readback, duplicate replay, conflicting/future/stale evidence,
 missing expected hosts, and real ciphertext corruption followed by restored-fixture
 recovery. Corruption recovery is test fixture restoration, not an operator repair API.
-These checks integrate foundation commit `79f0a2db75a38843ef9077be48521cf7dbe2042f`;
+These checks integrate foundation via main commit `6eca704b615a87743cbc74edc2de19d4cb084d57`;
 they do not demonstrate live host acceptance or browser refresh scheduling.
 All existing usage-window/currency/payment verification limitations still apply.
