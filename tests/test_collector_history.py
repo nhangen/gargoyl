@@ -144,23 +144,30 @@ class HistoryTests(unittest.TestCase):
 class TransportTests(unittest.TestCase):
     def test_tls_context_redirects_and_revalidation(self):
         config = TransportConfig("https://example.invalid/telemetry", "ca", "cert", "key")
-        with patch.object(TransportConfig, "ssl_context", return_value=object()) as context, patch("gargoyl.collector_history.http.client.HTTPSConnection") as connection:
-            sender = OutboundHTTPS(config, IDENTITY)
+        with patch.object(TransportConfig, "ssl_context") as context, patch("gargoyl.collector_history.socket.socket") as connection:
+            sender = OutboundHTTPS(config, IDENTITY, connect_address="127.0.0.1")
+            channel = context.return_value.wrap_socket.return_value
             snapshot = collect(IDENTITY.host_id, NOW, {})
             for status, expected in ((200, True), (201, True), (204, True), (202, False), (302, False), (500, False)):
-                connection.return_value.getresponse.return_value.status = status
+                response = f"HTTP/1.1 {status} Result\r\nContent-Length: 0\r\n\r\n".encode()
+                channel.recv.side_effect = [bytes([byte]) for byte in response]
                 self.assertEqual(sender.send(snapshot), expected)
-            self.assertIs(connection.call_args.kwargs["context"], context.return_value)
+            context.assert_called_once_with()
+            context.return_value.wrap_socket.assert_called_with(
+                connection.return_value, server_hostname="example.invalid", do_handshake_on_connect=False)
+            connection.return_value.connect.assert_called_with(("127.0.0.1", 443))
+            self.assertIn(b"Host: example.invalid\r\n", channel.sendall.call_args.args[0])
+            self.assertEqual(channel.do_handshake.call_count, 6)
             calls = connection.call_count
             snapshot["raw_logs"] = "synthetic-marker"
             with self.assertRaises(PolicyError):
                 sender.send(snapshot)
             self.assertEqual(connection.call_count, calls)
-            self.assertEqual(connection.return_value.close.call_count, 6)
+            self.assertEqual(channel.close.call_count, 6)
 
     def test_missing_credentials_prevent_network(self):
         config = TransportConfig("https://example.invalid", "missing-ca", "missing-cert", "missing-key")
-        with patch("gargoyl.collector_history.http.client.HTTPSConnection") as connection:
+        with patch("gargoyl.collector_history.socket.socket") as connection:
             with self.assertRaises(OSError):
-                OutboundHTTPS(config, IDENTITY)
+                OutboundHTTPS(config, IDENTITY, connect_address="127.0.0.1")
             connection.assert_not_called()
