@@ -135,8 +135,13 @@ Scheduler tests use deterministic clocks and supplied fakes to cover owner-threa
 calls, cadence/overruns, independent delivery retries, cancellation boundaries,
 unchanged acquisition timestamps, incomplete cleanup, safe failures and borrowed
 resource ownership. Lifecycle tests also construct and close real encrypted local
-history in temporary directories. Actual acquisition/transport integration is
-validated separately against pinned dependency commits; fake behavior alone does
-not prove producer containment or network deadlines. No live host commands,
+history in temporary directories. Composed integration tests use locally authored
+synthetic executable processes, real encrypted collector/receiver storage, and
+actual loopback mutual TLS. They cover observation-start preservation, future
+observations after clock rollback, independent good-source survival of a timeout,
+retained pending evidence after transport timeout and durable replay, cancellation
+with process reaping, and skipped scheduler slots using a controlled scheduler
+clock while process/network deadlines remain real. Fake behavior alone does not
+prove producer containment or network deadlines. No live host commands,
 production credentials, service installation, permissions, DNS or access policy
 are changed. Epics remain open for live-host and production acceptance.
