@@ -112,6 +112,11 @@ class BoundedAcquirer:
         self._lock = threading.Lock()
         self._halted = False
 
+    @property
+    def total_timeout_seconds(self):
+        """Validated execution-plus-cleanup budget for foreground composition."""
+        return self._total
+
     def _wall(self):
         try:
             value = self._wall_clock()
