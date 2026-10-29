@@ -1,8 +1,8 @@
 # Fleet evidence dashboard
 
 This read-only Python projection and self-contained HTML renderer consume foundation
-v1 snapshots. There is no host access, repair execution, server, credential handling,
-or plaintext spool adapter. Validate all complete snapshots before use.
+v1 snapshots. The optional loopback viewer below reads a supplied evidence store.
+There is no host access, repair execution, credential handling, or plaintext spool adapter. Validate all complete snapshots before use.
 
 ```sh
 python -m pip install -e ".[dev]"
@@ -54,3 +54,42 @@ The contract lacks request windows, currency and settlement receipts: comparison
 of usage totals and independent payment verification remain unavailable. Console
 provenance alone is not proof of payment. No synthetic fixture establishes live
 fleet integration or verified earnings.
+
+
+## Loopback evidence viewer
+
+`gargoyl.dashboard.runtime.EvidenceViewer(reader, expected_hosts, *, clock=utc_now,
+port=0, refresh_seconds=30)` binds only numeric IPv4 `127.0.0.1`. `reader` implements
+`snapshots(*, now) -> list[dict]`: a bounded, transactionally consistent detached
+read across configured hosts, raising on storage/authentication/corruption failure.
+The viewer never reads collector pending queues or acknowledges deliveries. Supply
+expected opaque host IDs separately so unreported hosts remain visible.
+
+Construct the reader and viewer and call `viewer.serve_forever()` in the reader's
+owning thread; `handle_request()` supports an externally driven event loop. The
+viewer starts no worker thread. An embedding runtime must schedule writes in a
+compatible owner thread or use the store's documented concurrency mechanism. The
+caller closes both objects; the viewer does not provision keys/certificates or
+open a store itself. The existing file-to-HTML CLI remains available.
+
+Use `http://127.0.0.1:<viewer.server_port>/` on the same machine. GET and HEAD are
+read-only. Other paths/methods, unexpected Host headers and cross-origin Origin
+headers are rejected before reading evidence. Responses forbid caching and framing,
+load no external resources or scripts, and suppress request/exception logs. This
+is a local operator viewer, not authentication between local OS users. No remote
+binding, reverse proxy, production deployment or browser access changes are included.
+
+Each request obtains a fresh clock and store read, validates all evidence, and
+recomputes freshness/conflicts. HTML requests refresh every 30 seconds by default,
+configurable only within 1–60 seconds. If storage or evaluation fails the response
+is HTTP 503 with an explicit unknown/unavailable state and automatic retry; no
+previous healthy report or partial fleet is served. A failed HTTP connection may
+leave the browser showing its previous page: its evaluation timestamp remains the
+as-of boundary. Browser suspension, network failure and scheduling delays prevent
+claiming a real fleet latency guarantee from the refresh interval alone.
+
+Runtime tests use real local HTTP requests with synthetic structural readers and
+injected clocks. They establish on-request updates and the configured refresh bound,
+not live host integration or a browser's actual scheduling. Integration with the
+foundation EvidenceStore and durable ingestion awaits its pinned implementation.
+All existing usage-window/currency/payment verification limitations still apply.
