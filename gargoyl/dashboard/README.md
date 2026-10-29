@@ -1,8 +1,8 @@
 # Fleet evidence dashboard
 
 This read-only Python projection and self-contained HTML renderer consume foundation
-v1 snapshots. There is no host access, repair execution, server, credential handling,
-or plaintext spool adapter. Validate all complete snapshots before use.
+v1 snapshots. The optional loopback viewer below reads a supplied evidence store.
+There is no host access, repair execution, credential handling, or plaintext spool adapter. Validate all complete snapshots before use.
 
 ```sh
 python -m pip install -e ".[dev]"
@@ -54,3 +54,52 @@ The contract lacks request windows, currency and settlement receipts: comparison
 of usage totals and independent payment verification remain unavailable. Console
 provenance alone is not proof of payment. No synthetic fixture establishes live
 fleet integration or verified earnings.
+
+
+## Loopback evidence viewer
+
+`gargoyl.dashboard.runtime.EvidenceViewer(reader, expected_hosts, *, clock=utc_now,
+port=0, refresh_seconds=30)` binds only numeric IPv4 `127.0.0.1`. `reader` implements
+`snapshots(*, now) -> list[dict]`: a bounded, transactionally consistent detached
+read across configured hosts, raising on storage/authentication/corruption failure.
+The viewer never reads collector pending queues or acknowledges deliveries. Supply
+expected opaque host IDs separately so unreported hosts remain visible.
+
+The foundation `EvidenceStore` supports ingestion and viewer threads sharing one
+instance through an internal transaction lock. The caller drives
+`viewer.serve_forever()` or `handle_request()` and owns listener threads; the viewer
+starts no worker thread. Stop and join all listeners before closing the shared
+store. Other structural readers must obey their own thread-safety contract. The
+viewer does not provision keys/certificates or open a store itself. The existing
+file-to-HTML CLI remains available.
+
+Use `http://127.0.0.1:<viewer.server_port>/` on the same machine. GET and HEAD are
+read-only. Other paths/methods, unexpected Host headers and cross-origin Origin
+headers are rejected before reading evidence. Header reads have a five-second
+absolute deadline from handler setup, so continued byte delivery cannot reset it.
+The synchronous viewer still serves one request at a time; store evaluation has
+no forced timeout and must use the store's bounded read contract. Response writes
+have a five-second socket inactivity timeout. Responses forbid caching and framing,
+load no external resources or scripts, and suppress request/exception logs. This
+is a local operator viewer, not authentication between local OS users. No remote
+binding, reverse proxy, production deployment or browser access changes are included.
+
+Each request obtains a fresh clock and store read, validates all evidence, and
+recomputes freshness/conflicts. HTML requests refresh every 30 seconds by default,
+configurable only within 1–60 seconds. If storage or evaluation fails the response
+is HTTP 503 with an explicit unknown/unavailable state and automatic retry; no
+previous healthy report or partial fleet is served. A failed HTTP connection may
+leave the browser showing its previous page: its evaluation timestamp remains the
+as-of boundary. Browser suspension, network failure and scheduling delays prevent
+claiming a real fleet latency guarantee from the refresh interval alone.
+
+Runtime tests use real local HTTP requests with synthetic structural readers and
+injected clocks. They establish on-request updates and the configured refresh bound,
+not live host integration or a browser's actual scheduling. `tests/test_dashboard_integration.py` additionally uses ephemeral synthetic PKI
+and actual local mTLS ingestion into EvidenceStore, then HTTP viewer requests. It
+covers durable restart/readback, duplicate replay, conflicting/future/stale evidence,
+missing expected hosts, and real ciphertext corruption followed by restored-fixture
+recovery. Corruption recovery is test fixture restoration, not an operator repair API.
+These checks integrate foundation via main commit `6eca704b615a87743cbc74edc2de19d4cb084d57`;
+they do not demonstrate live host acceptance or browser refresh scheduling.
+All existing usage-window/currency/payment verification limitations still apply.
