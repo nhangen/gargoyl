@@ -1,4 +1,3 @@
-import copy
 import unittest
 from gargoyl.telemetry import PolicyError, validate_snapshot, encode_snapshot, decode_snapshot, effective_state
 
@@ -40,3 +39,26 @@ class ContractTests(unittest.TestCase):
     def test_duplicate_keys_and_size(self):
         for raw in (b'{"schema_version":1,"schema_version":1}', b' ' * 65537):
             with self.assertRaises(PolicyError): decode_snapshot(raw)
+
+    def test_version_host_future_and_numeric_bounds(self):
+        for key, value in (("schema_version", True), ("schema_version", 2), ("host_id", "synthetic-host-label")):
+            data = snapshot(); data[key] = value
+            with self.assertRaises(PolicyError): validate_snapshot(data)
+        data = snapshot(); data['fields']['daemon_state']['timestamp'] = '2026-01-02T00:00:00Z'
+        with self.assertRaises(PolicyError): validate_snapshot(data)
+        for value in (True, -1, 2**53, float('nan'), '12'):
+            data = snapshot(); field = data['fields'].pop('daemon_state')
+            field['value'] = value; data['fields']['requests_total'] = field
+            with self.assertRaises(PolicyError): validate_snapshot(data)
+
+    def test_unknown_and_earnings_provenance(self):
+        data = snapshot(); field = data['fields']['daemon_state']
+        field['state'] = 'unknown'
+        with self.assertRaises(PolicyError): validate_snapshot(data)
+        field['value'] = None
+        validate_snapshot(data)
+        field = data['fields'].pop('daemon_state'); data['fields']['confirmed_paid_microunits'] = field
+        field.update(value=1, state='observed')
+        with self.assertRaises(PolicyError): validate_snapshot(data)
+        field['source'] = 'console'
+        validate_snapshot(data)

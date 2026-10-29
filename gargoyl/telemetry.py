@@ -1,7 +1,6 @@
 """Version 1 wire contract. Validation fails closed without echoing input."""
 import json
-import math
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 SCHEMA_VERSION = 1

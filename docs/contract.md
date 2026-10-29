@@ -36,3 +36,35 @@ TLS client certificate transport configuration and deny-by-default capability ch
 Collector integration must not use plaintext fallback while awaiting a configured key.
 Production enrollment, credential storage, revocation, transport server and host validation
 are separate integration work. No fixture demonstrates production provisioning.
+
+## Security adapter interfaces
+
+- `CollectionIdentity(host_id).authorize(action, target)` permits only
+  `telemetry:write` for that host. This is a local guard, not a remote credential.
+- `SpoolCipher(identity, key: bytes)` requires a separately provisioned 32-byte key.
+  `seal(snapshot) -> bytes`, `open(ciphertext) -> dict` use AES-256-GCM with a random
+  96-bit nonce and authenticated host/version context. Format: `GSP1` + 12-byte nonce
+  + ciphertext/tag. Validation runs before encryption and after authenticated decryption.
+- `RetentionPolicy(max_age_seconds=86400, max_records=1000).select(snapshots, now)`
+  validates all input and keeps newest nonfuture records within age/count limits.
+  Maximum configurable retention: seven days and 10,000 records. Collector must prune
+  encrypted files atomically on startup and write, including while offline. This helper
+  does not delete files or guarantee secure disk erasure.
+- `export_batch(snapshots, now, policy=None) -> list[bytes]` applies the same validation
+  and retention; there is no sensitive-data export override.
+- `TransportConfig(endpoint, ca_file, certificate_file, private_key_file).ssl_context()`
+  requires HTTPS, explicit CA, host client certificate/key, verified server hostname,
+  and TLS >=1.2. Missing trust/key files fail closed. A caller must use this context,
+  forbid redirects/downgrades, and avoid logging request data or credential paths.
+- `prepare_transmission(snapshot, identity) -> bytes` validates and binds the envelope
+  to the local identity. The receiver must independently bind the verified certificate
+  identity to the envelope, enforce revocation, and reject cross-host submissions.
+
+Collection and repair must run under separate OS/service identities and credentials;
+repair endpoints must never trust collection certificates. This package exports no
+repair executor, command runner, credential provisioner or privileged operation.
+Production certificate enrollment/revocation, secure OS key storage/rotation, receiver
+implementation, separate process permissions, retention enforcement in a real spool,
+and three-host deployment verification remain unmet integration acceptance work.
+Unit tests prove policy behavior and crypto tamper rejection using synthetic data;
+mocked TLS configuration is not evidence of a deployed mTLS handshake.
