@@ -6,10 +6,14 @@ the previous or next complete history; only encrypted snapshots reach SQLite.
 Delivery is at-least-once: a crash after server acceptance can replay a snapshot.
 The receiver must deduplicate. No deployment or credential provisioning is provided.
 """
-import http.client
+import ipaddress
+import math
 import os
+import re
+import socket
 import sqlite3
 import stat
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -98,25 +102,133 @@ class EncryptedHistory:
         self.db.close()
 
 
+MAX_RESPONSE_HEADER_BYTES = 32768
+MAX_RESPONSE_HEADERS = 100
+
+
 class OutboundHTTPS:
-    """POST bounded telemetry with foundation mTLS; redirects are failures."""
-    def __init__(self, config, identity):
+    """One synchronous mTLS POST with an absolute network deadline and no DNS.
+
+    Hostnames other than localhost require an explicit numeric connect_address.
+    TLS verification/SNI and HTTP Host always use the original endpoint hostname.
+    No worker threads/processes or response body reads are used.
+    """
+    def __init__(self, config, identity, *, total_timeout_seconds=10.0,
+                 connect_address=None):
+        if (type(total_timeout_seconds) not in (int, float)
+                or not math.isfinite(total_timeout_seconds)
+                or not 0 < total_timeout_seconds <= 30):
+            raise ValueError("invalid outbound deadline")
+        try:
+            url = urlsplit(config.endpoint)
+            hostname = url.hostname.encode('idna').decode('ascii')
+            port = 443 if url.port is None else url.port
+            target = url.path or '/'
+            if (url.scheme != 'https' or url.username or url.password or url.query
+                    or url.fragment or not hostname or not 1 <= port <= 65535
+                    or len(config.endpoint) > 8192
+                    or any(ord(c) < 33 or ord(c) > 126 for c in config.endpoint)
+                    or any(ord(c) < 33 or ord(c) > 126 for c in hostname + target)
+                    or '%' in hostname):
+                raise ValueError
+            try:
+                endpoint_ip = ipaddress.ip_address(hostname)
+            except ValueError:
+                endpoint_ip = None
+            if connect_address is None:
+                destination = (str(endpoint_ip) if endpoint_ip is not None
+                               else '127.0.0.1' if hostname == 'localhost' else None)
+            else:
+                if type(connect_address) is not str or '%' in connect_address:
+                    raise ValueError
+                destination = str(ipaddress.ip_address(connect_address))
+                if endpoint_ip is not None and destination != str(endpoint_ip):
+                    raise ValueError
+                if hostname == 'localhost' and not ipaddress.ip_address(destination).is_loopback:
+                    raise ValueError
+            address = ipaddress.ip_address(destination)
+        except (ValueError, AttributeError, UnicodeError, TypeError):
+            raise ValueError("outbound endpoint requires a valid numeric destination") from None
         self.identity = identity
-        self.context = config.ssl_context()  # fail closed before any network call
-        self.url = urlsplit(config.endpoint)
+        self.total_timeout_seconds = float(total_timeout_seconds)
+        self.hostname, self.port, self.target = hostname, port, target
+        self.destination = str(address)
+        self.family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+        authority = '[' + hostname + ']' if ':' in hostname else hostname
+        self.authority = authority + (':' + str(port) if port != 443 else '')
+        # All explicit configuration is validated before trust/key file access.
+        self.context = config.ssl_context()
+
+    @staticmethod
+    def _remaining(deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("outbound deadline exceeded")
+        return remaining
+
+    def _acknowledged(self, connection, deadline):
+        # Read only header bytes, never prefetch a body. Each byte gets the
+        # remaining total budget, so continuous delivery cannot extend it.
+        header = bytearray()
+        newlines = 0
+        while not header.endswith(b'\r\n\r\n'):
+            if len(header) >= MAX_RESPONSE_HEADER_BYTES:
+                return False
+            connection.settimeout(self._remaining(deadline))
+            byte = connection.recv(1)
+            if not byte:
+                return False
+            header.extend(byte)
+            newlines += byte == b'\n'
+            if newlines > MAX_RESPONSE_HEADERS + 2:
+                return False
+        self._remaining(deadline)
+        lines = bytes(header[:-4]).split(b'\r\n')
+        if not re.fullmatch(rb'HTTP/1\.[01] [0-9]{3}(?: [\x20-\x7e]*)?', lines[0]):
+            return False
+        fields = {}
+        for line in lines[1:]:
+            match = re.fullmatch(rb"([!#$%&'*+.^_`|~0-9A-Za-z-]+):[\t\x20-\x7e]*", line)
+            if not match:
+                return False
+            name, value = line.split(b':', 1)
+            fields.setdefault(name.lower(), []).append(value.strip())
+        lengths = fields.get(b'content-length', [])
+        if (b'transfer-encoding' in fields or len(lengths) > 1
+                or lengths and not re.fullmatch(rb'[0-9]{1,20}', lengths[0])):
+            return False
+        status = int(lines[0][9:12])
+        if status == 204 and lengths and int(lengths[0]) != 0:
+            return False
+        self._remaining(deadline)
+        return status in (200, 201, 204)
 
     def send(self, snapshot):
+        deadline = time.monotonic() + self.total_timeout_seconds
         payload = prepare_transmission(snapshot, self.identity)
-        connection = http.client.HTTPSConnection(self.url.hostname, self.url.port,
-                                                  context=self.context, timeout=10)
+        request = (f'POST {self.target} HTTP/1.1\r\nHost: {self.authority}\r\n'
+                   f'Content-Type: application/json\r\nContent-Length: {len(payload)}\r\n'
+                   'Connection: close\r\n\r\n').encode('ascii') + payload
+        connection = None
         try:
-            connection.request("POST", self.url.path or "/", body=payload,
-                               headers={"Content-Type": "application/json"})
-            response = connection.getresponse()
-            # 202 means accepted for later handling, not durable acknowledgement.
-            return response.status in (200, 201, 204)
+            connection = socket.socket(self.family, socket.SOCK_STREAM)
+            connection.settimeout(self._remaining(deadline))
+            connection.connect((self.destination, self.port))
+            connection.settimeout(self._remaining(deadline))
+            connection = self.context.wrap_socket(connection, server_hostname=self.hostname,
+                                                  do_handshake_on_connect=False)
+            connection.settimeout(self._remaining(deadline))
+            connection.do_handshake()
+            connection.settimeout(self._remaining(deadline))
+            connection.sendall(request)
+            return self._acknowledged(connection, deadline)
+        except TimeoutError:
+            raise TimeoutError("outbound deadline exceeded") from None
+        except OSError:
+            raise OSError("outbound transmission failed") from None
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
 
 def deliver_pending(history, transport, schedule, *, now, monotonic_now):
