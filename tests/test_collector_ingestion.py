@@ -148,15 +148,15 @@ class CollectorIngestionTests(unittest.TestCase):
 
     def test_lost_response_replay_deduplicates_after_durable_acceptance(self):
         snapshot = self.capture()
-        original = http.client.HTTPSConnection.getresponse
+        original = OutboundHTTPS._acknowledged
 
-        def lose_response(connection):
-            response = original(connection)  # real TLS/HTTP and durable receiver commit
-            self.assertEqual(response.status, 204)
-            response.close()
+        def lose_response(sender, connection, deadline):
+            # Complete actual TLS/HTTP and durable receiver commit before losing
+            # the acknowledgement at the sender boundary. No network path is mocked.
+            self.assertTrue(original(sender, connection, deadline))
             raise OSError("synthetic lost acknowledgement")
 
-        with patch.object(http.client.HTTPSConnection, "getresponse", lose_response):
+        with patch.object(OutboundHTTPS, "_acknowledged", lose_response):
             self.assertEqual(self.runtime.deliver_tick(), "retry")
         self.assertEqual(self.store.snapshots(now=NOW), [snapshot])
         self.assertEqual(len(self.history.pending(NOW)), 1)
