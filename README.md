@@ -1,6 +1,6 @@
-# Darkbloom Fleet Lens
+# Gargoyl
 
-Private-first monitoring for Darkbloom provider fleets.
+Private-first network health, usage monitoring, and guided repair for inference provider fleets. Darkbloom is the first integration.
 
 ## Goal
 
