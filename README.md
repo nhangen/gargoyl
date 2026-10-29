@@ -30,8 +30,9 @@ The GitHub epics define the implementation sequence: privacy and identity founda
 
 Python 3.11+; create and activate a virtual environment with
 `python -m venv .venv` and `source .venv/bin/activate`, install with
-`python -m pip install -e .`, then run
-`python -m unittest discover -s tests -v`. See [the v1 contract](docs/contract.md)
+`python -m pip install -e ".[dev]"`, then run
+`python -m ruff check .` and `python -m unittest discover -s tests -v`.
+PRs and pushes to main run both checks on Python 3.11 and 3.12 in GitHub Actions. See [the v1 contract](docs/contract.md)
 for schema, privacy rules, collector/dashboard integration and security boundaries.
 This repository currently provides validated telemetry and security adapters; no live
 host enrollment, collection, dashboard service or repair execution is implied.

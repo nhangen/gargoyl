@@ -1,11 +1,21 @@
 """Explicit security boundaries; no enrollment, command runner or repair API."""
+
 import os
 import ssl
 from dataclasses import dataclass
 from datetime import timedelta
 from urllib.parse import urlsplit
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from gargoyl.telemetry import PolicyError, host_id, encode_snapshot, decode_snapshot, timestamp
+
+from gargoyl.telemetry import (
+    MAX_PAYLOAD_BYTES,
+    PolicyError,
+    decode_snapshot,
+    encode_snapshot,
+    host_id,
+    timestamp,
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +36,7 @@ class SpoolCipher:
     Supply a provisioned 32-byte key from a separate secret store. Never persist
     the key beside ciphertext. Does not manage keys, files or retention itself.
     """
+
     def __init__(self, identity, key):
         if type(key) is not bytes or len(key) != 32:
             raise ValueError("a 32-byte spool key is required")
@@ -40,10 +51,16 @@ class SpoolCipher:
         return b"GSP1" + nonce + self._cipher.encrypt(nonce, payload, self._context)
 
     def open(self, encrypted):
-        if type(encrypted) is not bytes or not 32 <= len(encrypted) <= 65568 or encrypted[:4] != b"GSP1":
+        if (
+            type(encrypted) is not bytes
+            or not 32 <= len(encrypted) <= MAX_PAYLOAD_BYTES + 32
+            or encrypted[:4] != b"GSP1"
+        ):
             raise PolicyError("invalid encrypted spool record")
         try:
-            payload = self._cipher.decrypt(encrypted[4:16], encrypted[16:], self._context)
+            payload = self._cipher.decrypt(
+                encrypted[4:16], encrypted[16:], self._context
+            )
         except Exception:
             raise PolicyError("spool authentication failed") from None
         snapshot = decode_snapshot(payload)
@@ -57,7 +74,10 @@ class RetentionPolicy:
     max_records: int = 1000
 
     def __post_init__(self):
-        if type(self.max_age_seconds) is not int or not 1 <= self.max_age_seconds <= 604800:
+        if (
+            type(self.max_age_seconds) is not int
+            or not 1 <= self.max_age_seconds <= 604800
+        ):
             raise ValueError("retention age must be 1..604800 seconds")
         if type(self.max_records) is not int or not 1 <= self.max_records <= 10000:
             raise ValueError("retention count must be 1..10000")
@@ -71,13 +91,22 @@ class RetentionPolicy:
         current = timestamp(now)
         cutoff = current - timedelta(seconds=self.max_age_seconds)
         valid = [decode_snapshot(encode_snapshot(item)) for item in snapshots]
-        valid = [item for item in valid if cutoff <= timestamp(item["collected_at"]) <= current]
-        return sorted(valid, key=lambda item: timestamp(item["collected_at"]))[-self.max_records:]
+        valid = [
+            item
+            for item in valid
+            if cutoff <= timestamp(item["collected_at"]) <= current
+        ]
+        return sorted(valid, key=lambda item: timestamp(item["collected_at"]))[
+            -self.max_records :
+        ]
 
 
 def export_batch(snapshots, now, policy=None):
     """Explicit default-safe export; no sensitive-data override exists."""
-    return [encode_snapshot(item) for item in (policy or RetentionPolicy()).select(snapshots, now)]
+    return [
+        encode_snapshot(item)
+        for item in (policy or RetentionPolicy()).select(snapshots, now)
+    ]
 
 
 @dataclass(frozen=True)
@@ -89,10 +118,21 @@ class TransportConfig:
 
     def __post_init__(self):
         url = urlsplit(self.endpoint)
-        if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
-            raise ValueError("transport requires an HTTPS endpoint without credentials or query")
+        if (
+            url.scheme != "https"
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+        ):
+            raise ValueError(
+                "transport requires an HTTPS endpoint without credentials or query"
+            )
         if not all((self.ca_file, self.certificate_file, self.private_key_file)):
-            raise ValueError("explicit CA and per-host client certificate/key are required")
+            raise ValueError(
+                "explicit CA and per-host client certificate/key are required"
+            )
 
     def ssl_context(self):
         context = ssl.create_default_context(cafile=self.ca_file)

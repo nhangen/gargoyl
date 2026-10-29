@@ -1,7 +1,9 @@
 # Foundation contract v1
 
-Python >=3.11; package `gargoyl`; install `python -m pip install -e .`.
-Run `python -m unittest discover -s tests -v`. No host command is executed by the foundation.
+Python >=3.11; package `gargoyl`; create/activate a virtual environment and install
+`python -m pip install -e ".[dev]"`. Run `python -m ruff check .` (pinned Ruff 0.14.3)
+and `python -m unittest discover -s tests -v`. CI runs these on PRs and main pushes
+with Python 3.11 and 3.12. No host command is executed by the foundation.
 Collector owns `gargoyl/collector*`, dashboard owns `gargoyl/dashboard*` and their tests.
 Do not create a second scaffold. Import `gargoyl.telemetry`.
 
@@ -10,7 +12,12 @@ Wire object (JSON, UTF-8): exactly `schema_version: 1`, `host_id: <canonical UUI
 An observation has exactly `value`, `source`, `timestamp`, `freshness_seconds`,
 `state`, `sensitivity`. Source is daemon/doctor/launchd/host/coordinator/console/collector;
 state is observed/stale/unknown/blocked; unknown and blocked require null values.
-Sensitivity must be safe. UTC timestamps are timezone aware and cannot exceed collected_at.
+Sensitivity must be safe. UTC timestamps are timezone aware and cannot exceed collected_at. Every timestamp
+input is limited to 32 ASCII characters. The exact accepted grammar is
+`YYYY-MM-DDTHH:MM:SS[.ffffff](Z|+00:00)`, with 1–6 fractional digits when present.
+Calendar dates/times must also be valid. Only literal uppercase T and Z and ASCII
+digits are accepted; whitespace, arbitrary separators, surrogates, nonzero offsets
+and excessive fractional precision are rejected as safe `PolicyError` messages.
 TTL is 1..86400 seconds. Metric enums and numeric bounds are defined in `METRICS`.
 No model name, hostname, customer identifier, arbitrary string, error text, raw command
 output, or address is allowed. Identity is an assigned opaque UUID, never a hostname hash.
@@ -21,6 +28,10 @@ out of scope until an explicit currency contract is added.
 `validate_snapshot(dict)` returns a detached copy or raises safe `PolicyError`;
 `encode_snapshot(dict) -> bytes` validates at every export/persistence boundary;
 `decode_snapshot(bytes) -> dict` rejects oversized payloads and duplicate keys;
+`MAX_PAYLOAD_BYTES = 65536` is the shared UTF-8 serialized-size limit. Validation and
+encoding enforce it before outbound persistence/transmission, as does decoding on
+inbound bytes (including whitespace). Encrypted records add exactly 32 bytes of
+header/nonce/tag overhead, so their maximum is 65568 bytes.
 `effective_state(field, now_utc_string)` computes read-time staleness and future-clock unknown.
 Consumers must validate complete snapshots before reading fields. Missing fields mean
 unknown, never zero/healthy. Missing heartbeat is a consumer incident decision.
@@ -31,7 +42,7 @@ completions, credentials/API keys, raw logs, customer identifiers and IP address
 Reject unknown keys rather than attempt regex redaction. Validate before persistence and
 transmission. Extensions require a reviewed schema version; never add a generic details bag.
 
-Security adapters will live in `gargoyl.security`: host-bound authenticated encryption,
+Security adapters live in `gargoyl.security`: host-bound authenticated encryption,
 TLS client certificate transport configuration and deny-by-default capability checks.
 Collector integration must not use plaintext fallback while awaiting a configured key.
 Production enrollment, credential storage, revocation, transport server and host validation
@@ -68,3 +79,14 @@ implementation, separate process permissions, retention enforcement in a real sp
 and three-host deployment verification remain unmet integration acceptance work.
 Unit tests prove policy behavior and crypto tamper rejection using synthetic data;
 mocked TLS configuration is not evidence of a deployed mTLS handshake.
+
+
+## Size-limit regression verification
+
+`tests/test_size_limits.py` covers oversized fractions in both collected_at and field
+timestamps through validation, encoding/decoding, sealing/opening, retention/export,
+and transmission preparation, with safe errors. Supported 32-character timestamps
+round-trip. Inbound JSON at 65535/65536 bytes (using whitespace padding) and its
+authenticated ciphertext succeed; 65537-byte plaintext/65569-byte ciphertext fail.
+Because bounded v1 fields naturally serialize well below 64KiB, a lowered central
+limit tests exact outbound acceptance/rejection without expanding the schema.
