@@ -3,11 +3,33 @@
 Construct and serve in the store's owning thread. No background thread, credential
 provisioning, TLS termination, ingestion endpoint, or repair action is provided.
 """
+import io
+import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from gargoyl.dashboard import render_dashboard
 from gargoyl.telemetry import host_id, timestamp
+
+HEADER_DEADLINE_SECONDS = 5
+
+
+class _DeadlineReader(io.RawIOBase):
+    """Bound header reads by elapsed time, including clients that drip bytes."""
+
+    def __init__(self, connection):
+        self.connection = connection
+        self.deadline = time.monotonic() + HEADER_DEADLINE_SECONDS
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("request header deadline exceeded")
+        self.connection.settimeout(min(5, remaining))
+        return self.connection.recv_into(buffer)
 
 
 def utc_now():
@@ -51,6 +73,11 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = 'Gargoyl'
     sys_version = ''
 
+    def setup(self):
+        super().setup()
+        self.rfile.close()
+        self.rfile = io.BufferedReader(_DeadlineReader(self.connection))
+
     def log_message(self, format, *args):
         pass
 
@@ -85,6 +112,9 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path != '/':
             self.send_error(404)
             return
+        # Header reads may have shortened the socket timeout. Restore the bounded
+        # response-write timeout after parsing; no request body is consumed.
+        self.connection.settimeout(5)
         try:
             now = self.server.clock()
             timestamp(now)

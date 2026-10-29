@@ -74,7 +74,11 @@ open a store itself. The existing file-to-HTML CLI remains available.
 
 Use `http://127.0.0.1:<viewer.server_port>/` on the same machine. GET and HEAD are
 read-only. Other paths/methods, unexpected Host headers and cross-origin Origin
-headers are rejected before reading evidence. Responses forbid caching and framing,
+headers are rejected before reading evidence. Header reads have a five-second
+absolute deadline from handler setup, so continued byte delivery cannot reset it.
+The synchronous viewer still serves one request at a time; store evaluation has
+no forced timeout and must use the store's bounded read contract. Response writes
+have a five-second socket inactivity timeout. Responses forbid caching and framing,
 load no external resources or scripts, and suppress request/exception logs. This
 is a local operator viewer, not authentication between local OS users. No remote
 binding, reverse proxy, production deployment or browser access changes are included.

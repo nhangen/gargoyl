@@ -1,8 +1,11 @@
 import contextlib
 import http.client
 import io
+import socket
 import threading
+import time
 import unittest
+from unittest.mock import patch
 
 from test_dashboard import HOST, NOW, snapshot
 
@@ -118,6 +121,31 @@ class ViewerTests(unittest.TestCase):
             self.assertIn('<td>stopped</td>', page)
             self.assertIn('unknown (reported: observed)', page)
             self.assertIn('daemon_state: unknown', page)
+
+    def test_dripped_headers_hit_absolute_deadline(self):
+        reader = Reader()
+        with patch('gargoyl.dashboard.runtime.HEADER_DEADLINE_SECONDS', 0.15):
+            with EvidenceViewer(reader, [HOST], clock=lambda: NOW) as viewer:
+                worker = threading.Thread(target=viewer.handle_request)
+                worker.start()
+                with socket.create_connection(viewer.server_address, timeout=2) as client:
+                    client.sendall(b'GET / HTTP/1.1\r\nHost: ')
+                    # Keep every gap well below both the normal inactivity timeout
+                    # and the shortened absolute test deadline.
+                    for _ in range(20):
+                        if not worker.is_alive():
+                            break
+                        try:
+                            client.sendall(b'a')
+                        except OSError:
+                            break
+                        time.sleep(0.03)
+                    worker.join(timeout=0.5)
+                    self.assertFalse(worker.is_alive())
+                    self.assertEqual(client.recv(1024), b'')
+                self.assertEqual(reader.calls, [])
+                # A timed-out client does not prevent the next valid request.
+                self.assertEqual(self.request(viewer)[0], 200)
 
     def test_invalid_configuration_and_clock(self):
         for refresh in (0, 61, True, '30'):
