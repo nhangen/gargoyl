@@ -1,0 +1,569 @@
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  src: url("fonts/archivo-latin-variable.woff2") format("woff2-variations"), url("fonts/archivo-latin-variable.woff2") format("woff2");
+}
+
+:root {
+  --bg: #0c0e0d;
+  --bg-raised: #131615;
+  --stone: #1a1e1c;
+  --line: #262b29;
+  --line-strong: #353b38;
+  --text: #e7ebe8;
+  --text-muted: #9ba49f;
+  --text-faint: #8a948e;
+  --accent: #3ee67f;
+  --accent-hover: #5cf094;
+  --accent-ink: #06210f;
+  --accent-soft: rgba(62, 230, 127, 0.1);
+  --accent-select: rgba(62, 230, 127, 0.28);
+  --accent-edge: rgba(62, 230, 127, 0.55);
+  --amber: #e8b04b;
+  --amber-soft: rgba(232, 176, 75, 0.1);
+  --amber-edge: rgba(232, 176, 75, 0.45);
+  --gray-soft: rgba(155, 164, 159, 0.1);
+  --red: #f08a7a;
+  --red-soft: rgba(240, 138, 122, 0.1);
+  --mark-line: #48504c;
+  --header-bg: rgba(12, 14, 13, 0.82);
+  --highlight: rgba(255, 255, 255, 0.04);
+  --shadow: rgba(0, 0, 0, 0.7);
+
+  --display: "Archivo", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --radius: 10px;
+  --wrap: 1120px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--accent-select); color: var(--text); }
+
+a { color: inherit; text-underline-offset: 3px; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: 16px; top: -64px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  border-radius: 6px;
+  text-decoration: none;
+}
+.skip-link:focus { top: 8px; }
+
+.wrap {
+  width: 100%;
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 0 16px;
+}
+@media (min-width: 720px) { .wrap { padding: 0 32px; } }
+
+.icon { width: 16px; height: 16px; flex: none; }
+
+/* Header */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--header-bg);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  text-decoration: none;
+  font-family: var(--display);
+  font-stretch: 112%;
+  font-weight: 700;
+  font-size: 1.125rem;
+  letter-spacing: -0.01em;
+}
+.wordmark-mark { width: 24px; height: 24px; color: var(--text); }
+.mark-eyes { fill: var(--accent); }
+
+.header-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  text-decoration: none;
+  transition: color 0.2s, border-color 0.2s;
+}
+.header-link:hover { color: var(--text); border-color: var(--line-strong); }
+
+/* Hero */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+}
+
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: -1px -1px;
+  opacity: 0.45;
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 70% 30%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse 80% 70% at 70% 30%, #000 20%, transparent 75%);
+  pointer-events: none;
+}
+
+.hero-inner {
+  position: relative;
+  display: grid;
+  gap: 40px;
+  padding-top: 56px;
+  padding-bottom: 72px;
+}
+@media (min-width: 960px) {
+  .hero-inner {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: end;
+    gap: 56px;
+    padding-top: 48px;
+    padding-bottom: 112px;
+  }
+}
+
+h1 {
+  margin: 0;
+  max-width: 15ch;
+  font-family: var(--display);
+  font-size: clamp(2.375rem, 5.6vw, 3.875rem);
+  font-stretch: 108%;
+  font-weight: 760;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+h1 em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.lede {
+  max-width: 36ch;
+  margin: 24px 0 0;
+  color: var(--text-muted);
+  font-size: clamp(1.0625rem, 1.6vw, 1.1875rem);
+  line-height: 1.55;
+}
+
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 36px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  text-decoration: none;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 1px solid var(--accent);
+}
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+}
+.btn-ghost:hover { border-color: var(--text-faint); background: var(--bg-raised); }
+
+/* Placeholder link marker: build.py adds data-placeholder while a URL in links.json contains REPLACE_ME */
+
+[data-placeholder]::after {
+  content: "placeholder URL";
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px dashed var(--amber);
+  border-radius: 4px;
+  color: var(--amber);
+  font-family: var(--sans);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* Fleet panel, with the gargoyle peering over its top edge */
+
+.panel-wrap {
+  position: relative;
+  min-width: 0;
+  padding-top: 128px;
+}
+@media (min-width: 600px) { .panel-wrap { padding-top: 176px; } }
+@media (min-width: 960px) { .panel-wrap { padding-top: 228px; } }
+
+/* The sentinel: centred over the card, eyes clear of its top edge, body hidden behind it */
+.hero-mark {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 208px;
+  height: 208px;
+  transform: translateX(-50%);
+  color: var(--mark-line);
+  pointer-events: none;
+}
+.hero-mark path { vector-effect: non-scaling-stroke; }
+@media (min-width: 600px) { .hero-mark { width: 288px; height: 288px; } }
+@media (min-width: 960px) { .hero-mark { width: 376px; height: 376px; } }
+
+.panel {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  background: linear-gradient(180deg, var(--stone), var(--bg-raised));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 0 var(--highlight) inset, 0 24px 60px -24px var(--shadow);
+}
+.panel::before {
+  content: "";
+  position: absolute;
+  top: -1px; left: 24px; right: 24px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-edge), transparent);
+}
+
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+}
+.panel-mark { width: 18px; height: 18px; color: var(--text-faint); }
+
+.example-tag {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Rows stack: host, state and time on one line, the signal underneath */
+.fleet {
+  display: block;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.fleet tbody { display: block; }
+.fleet tbody tr {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  column-gap: 14px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.fleet tbody tr:last-child { border-bottom: 0; }
+.fleet th, .fleet td { padding: 0; text-align: left; font-weight: 400; }
+
+.host-id,
+.time {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+.time { justify-self: end; white-space: nowrap; color: var(--text); }
+.time-none { color: var(--text-muted); }
+.signal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+.signal code {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 420px) {
+  .fleet tbody tr { grid-template-columns: auto 1fr; column-gap: 10px; padding: 12px 16px; }
+  .time { grid-column: 1 / -1; justify-self: start; margin-top: 8px; font-size: 0.75rem; }
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  justify-self: start;
+  padding: 2px 9px 2px 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.state-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.state-observed { color: var(--accent); background: var(--accent-soft); }
+.state-stale { color: var(--amber); background: var(--amber-soft); }
+.state-unknown { color: var(--text-muted); background: var(--gray-soft); }
+.state-unknown .state-dot { background: transparent; border: 1px solid currentColor; }
+.state-blocked { color: var(--red); background: var(--red-soft); }
+.state-blocked .state-dot { border-radius: 1px; }
+
+.panel-foot {
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+/* Principles: ruled rows, heading beside its explanation */
+
+.principles { padding: 48px 0 64px; }
+@media (min-width: 960px) { .principles { padding: 64px 0 80px; } }
+
+.principle {
+  display: grid;
+  gap: 10px;
+  padding: 28px 0 32px;
+  border-top: 1px solid var(--line);
+}
+.principle:last-child { border-bottom: 1px solid var(--line); }
+@media (min-width: 860px) {
+  .principle {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 48px;
+    padding: 40px 0 44px;
+  }
+}
+.principle-text { display: grid; gap: 12px; align-content: start; min-width: 0; }
+
+/* Example artifacts beside each principle: show the argument, not just state it */
+.snippet {
+  min-width: 0;
+  margin: 8px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+@media (min-width: 860px) { .snippet { margin-top: 0; } }
+.snippet figcaption {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+.snippet pre {
+  margin: 0;
+  padding: 14px;
+  overflow-x: auto;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  tab-size: 2;
+}
+.snippet .k { color: var(--text-muted); }
+.snippet .v { color: var(--text); }
+.snippet .ok { color: var(--accent); }
+.snippet .warn { color: var(--amber); }
+.snippet .no { color: var(--red); }
+
+.principle h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(1.375rem, 2.4vw, 1.75rem);
+  font-stretch: 106%;
+  font-weight: 680;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.principle p {
+  max-width: 60ch;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 1.0625rem;
+}
+
+.badge {
+  padding: 2px 8px;
+  border: 1px solid var(--amber-edge);
+  border-radius: 4px;
+  color: var(--amber);
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* Status */
+
+.status { padding: 0 0 72px; }
+
+.status-inner {
+  display: grid;
+  gap: 20px;
+  align-items: center;
+}
+.status-inner > * { min-width: 0; }
+@media (min-width: 760px) {
+  .status-inner { grid-template-columns: auto 1fr auto; gap: 28px; }
+}
+
+.status-mark { width: 44px; height: 44px; color: var(--text-faint); }
+
+.status h2 {
+  margin: 0 0 4px;
+  font-family: var(--display);
+  font-size: 1.5rem;
+  font-stretch: 106%;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.status p { margin: 0; max-width: 60ch; color: var(--text-muted); }
+.status .btn { justify-self: start; }
+
+/* Footer */
+
+.site-footer { border-top: 1px solid var(--line); }
+
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding-top: 16px;
+  padding-bottom: 16px;
+  color: var(--text-faint);
+  font-size: 0.875rem;
+}
+.footer-inner p { margin: 0; }
+.footer-inner nav { display: flex; gap: 12px; margin-right: -8px; }
+.footer-inner nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 8px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.footer-inner nav a:hover { color: var(--text); text-decoration: underline; }
+
+/* The one motion moment: the gargoyle's eyes light, then blink now and then.
+   Without motion preference they are simply lit. */
+@media (prefers-reduced-motion: no-preference) {
+  .hero-mark .mark-eyes {
+    animation:
+      ignite 1.6s var(--ease-out) 0.4s both,
+      blink 9s ease-in-out 3s infinite;
+  }
+  @keyframes ignite {
+    from { opacity: 0.12; }
+    to { opacity: 1; }
+  }
+  @keyframes blink {
+    0%, 46%, 50%, 100% { opacity: 1; }
+    48% { opacity: 0.12; }
+  }
+}

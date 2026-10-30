@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gargoyl — Darkbloom fleet monitoring you can inspect</title>
+  <meta name="description" content="Gargoyl is an in-development project for privacy-first evidence on inference-provider fleets, starting with Darkbloom: per-field state for routing, model residency and verification, with confirm-each-host repairs in development.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0c0e0d">
+  <link rel="canonical" href="https://gargoyl.dev/">
+  <meta property="og:title" content="Gargoyl">
+  <meta property="og:description" content="Know what your Darkbloom fleet is really doing.">
+  <meta property="og:url" content="https://gargoyl.dev/">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://gargoyl.dev/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Gargoyl: Know what your Darkbloom fleet is really doing.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Gargoyl">
+  <meta name="twitter:description" content="Know what your Darkbloom fleet is really doing.">
+  <meta name="twitter:image" content="https://gargoyl.dev/og.png">
+  <meta name="twitter:creator" content="@nathan_hangen">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/archivo-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <svg width="0" height="0" class="sr-only" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="mark" viewBox="0 0 64 64">
+        <path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+        <path d="M21 31l8 3-8 1z M43 31l-8 3 8 1z" class="mark-eyes"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="wordmark" href="/" aria-label="Gargoyl home">
+        <svg class="wordmark-mark" aria-hidden="true"><use href="#mark"/></svg>
+        <span>gargoyl</span>
+      </a>
+      <a class="header-link" {{link:github}}>
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-grid" aria-hidden="true"></div>
+      <div class="wrap hero-inner">
+        <div class="hero-copy">
+          <h1 id="hero-title">Know what your Darkbloom fleet is <em>really</em> doing.</h1>
+          <p class="lede">Built to show which hosts are up but not routed, missing a model, or past verification, with evidence behind every state. Repairs you confirm host by host are in development.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" {{link:github}}>
+              View on GitHub
+              <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            <a class="btn btn-ghost" {{link:pilot}}>Join the Darkbloom pilot</a>
+          </div>
+        </div>
+
+        <div class="panel-wrap">
+          <svg class="hero-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+            <g fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round">
+              <path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z"/>
+              <path d="M12 8 18 26M52 8l-6 18M22 20l10 9 10-9M18 26l14 4 14-4M15 30l3-4M49 30l-3-4"/>
+              <path d="M32 30v26M23 44l9-5 9 5M32 39l-6-5M32 39l6-5M18 26l5 18M46 26l-5 18"/>
+            </g>
+            <path d="M21 31l8 3-8 1z M43 31l-8 3 8 1z" class="mark-eyes"/>
+          </svg>
+
+          <figure class="panel" aria-labelledby="panel-caption">
+            <div class="panel-head">
+              <div class="panel-title">
+                <svg class="panel-mark" aria-hidden="true"><use href="#mark"/></svg>
+                <span>fleet / evidence</span>
+              </div>
+              <span class="example-tag">Example data, not live</span>
+            </div>
+
+            <table class="fleet">
+              <caption id="panel-caption" class="sr-only">Illustrative per-field evidence for four example hosts. Not live data.</caption>
+              <thead class="sr-only">
+                <tr>
+                  <th scope="col">Host</th>
+                  <th scope="col">State</th>
+                  <th scope="col">Observed at (UTC)</th>
+                  <th scope="col">Field and evidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row"><span class="host-id">3f9a…c21e</span></th>
+                  <td><span class="state state-observed"><span class="state-dot" aria-hidden="true"></span>observed</span></td>
+                  <td class="time"><time datetime="2026-10-30T14:02:11Z">2026-10-30 <span>14:02:11Z</span></time></td>
+                  <td class="signal"><code>routing_eligible = eligible</code> <span>coordinator · within TTL</span></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="host-id">b07d…41a8</span></th>
+                  <td><span class="state state-stale"><span class="state-dot" aria-hidden="true"></span>stale</span></td>
+                  <td class="time"><time datetime="2026-10-30T13:19:47Z">2026-10-30 <span>13:19:47Z</span></time></td>
+                  <td class="signal"><code>model_state = resident</code> <span>daemon · 43m old, TTL 15m</span></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="host-id">e5c2…9f03</span></th>
+                  <td><span class="state state-unknown"><span class="state-dot" aria-hidden="true"></span>unknown</span></td>
+                  <td class="time time-none">no evidence</td>
+                  <td class="signal"><code>attestation_state</code> <span>no observation · not assumed valid</span></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="host-id">71aa…0b5d</span></th>
+                  <td><span class="state state-blocked"><span class="state-dot" aria-hidden="true"></span>blocked</span></td>
+                  <td class="time"><time datetime="2026-10-30T14:01:58Z">2026-10-30 <span>14:01:58Z</span></time></td>
+                  <td class="signal"><code>requests_total</code> <span>daemon · source blocked, value withheld</span></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <figcaption class="panel-foot">
+              Every field carries its own state. Missing or conflicting evidence becomes unknown, never rounded up.
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="principles" aria-labelledby="principles-title">
+      <div class="wrap">
+        <h2 id="principles-title" class="sr-only">Principles</h2>
+        <article class="principle">
+          <div class="principle-text">
+            <h3>Evidence over assumptions</h3>
+            <p>Every field carries its own source, timestamp, freshness window, and state: observed, stale, unknown, or blocked. Missing or conflicting evidence becomes unknown instead of being rounded up to “fine.”</p>
+          </div>
+          <figure class="snippet">
+            <figcaption>One field, as a host reports it (example)</figcaption>
+<pre tabindex="0" aria-label="Example field record"><code><span class="k">"model_state"</span>: {
+  <span class="k">"value"</span>: <span class="v">"resident"</span>,
+  <span class="k">"source"</span>: <span class="v">"daemon"</span>,
+  <span class="k">"timestamp"</span>: <span class="v">"2026-10-30T13:19:47Z"</span>,
+  <span class="k">"freshness_seconds"</span>: <span class="v">900</span>,
+  <span class="k">"state"</span>: <span class="warn">"stale"</span>,
+  <span class="k">"sensitivity"</span>: <span class="v">"safe"</span>
+}</code></pre>
+          </figure>
+        </article>
+        <article class="principle">
+          <div class="principle-text">
+            <h3>Privacy by design</h3>
+            <p>The telemetry schema rejects prompts, completions, credentials, raw logs, customer identifiers, IP addresses, hostnames, and model names, with no export override. Only allowlisted aggregate fields, keyed to an assigned opaque host ID, can leave a host.</p>
+          </div>
+          <figure class="snippet">
+            <figcaption>What a host may send (example)</figcaption>
+<pre tabindex="0" aria-label="Fields that may leave a host and data the schema rejects"><code><span class="ok">may leave the host</span>
+  <span class="k">host_id</span>          <span class="v">3f9a…c21e</span>
+  <span class="k">requests_total</span>   <span class="v">1284</span>
+  <span class="k">model_state</span>      <span class="v">resident</span>
+
+<span class="no">rejected by the schema</span>
+  <span class="k">prompts, completions</span>
+  <span class="k">credentials, raw logs</span>
+  <span class="k">IP addresses, hostnames</span>
+  <span class="k">model names</span></code></pre>
+          </figure>
+        </article>
+        <article class="principle">
+          <div class="principle-text">
+            <h3>Repairs under your control <span class="badge">In development</span></h3>
+            <p>Repairs come from a short list of approved actions. Each is checked before it runs, targets one host, and waits for your confirmation. Nothing runs on its own. Tested in simulation so far, not yet on live hosts.</p>
+          </div>
+          <figure class="snippet">
+            <figcaption>Sketch of the flow, simulated hosts only</figcaption>
+<pre tabindex="0" aria-label="Sketch of a planned repair confirmation"><code><span class="k">target</span>     <span class="v">b07d…41a8 only</span>
+<span class="k">evidence</span>   <span class="v">model_state</span> <span class="warn">stale</span><span class="v">, 43m</span>
+<span class="k">action</span>     <span class="v">from the approved list</span>
+<span class="k">preflight</span>  <span class="ok">checks passed</span>
+<span class="k">confirm</span>    <span class="v">Run on b07d…41a8? [y/N]</span></code></pre>
+          </figure>
+        </article>
+      </div>
+    </section>
+
+    <section class="status" aria-labelledby="status-title">
+      <div class="wrap status-inner">
+        <svg class="status-mark" aria-hidden="true"><use href="#mark"/></svg>
+        <div>
+          <h2 id="status-title">Actively being built.</h2>
+          <p>Darkbloom is the first integration. The telemetry schema, privacy checks, and evidence dashboard are in progress; host enrollment and validation on live hosts are still ahead.</p>
+        </div>
+        <a class="btn btn-ghost" {{link:github}}>Follow on GitHub</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <p>Built by Nathan Hangen</p>
+      <nav aria-label="Footer">
+        <a {{link:github}}>GitHub</a>
+        <a {{link:x}}>X</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
