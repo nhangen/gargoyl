@@ -56,7 +56,7 @@ Even successful reported outcomes cannot authorize another operation.
 
 ## Verification and limitations
 
-Foundation pin: `dc811aee5e7b7b34a0733a228e43f2d0a20eb84c` (PR #15).
+Foundation pin: `8050816f235a7073b5a14572f40189c7de86d1f7` (PR #15).
 
 Run `python -m ruff check .` and `python -m unittest discover -s tests -v`.
 `tests/test_repair_view.py` generates ephemeral signing keys and synthetic fixtures;
@@ -65,8 +65,20 @@ freshness, conflicting/future/unknown evidence, exact confirmation binding, tamp
 preview proofs, historical receipt display after catalog replacement/expiry, missing
 or interrupted claims, safe failure text and absence of actionable controls.
 
-Actual catalog-to-runtime-to-encrypted-audit-to-view acceptance awaits the executor
-lane's pinned handoff. No production key, real repair, upstream command, host install,
+`tests/test_repair_view_integration.py` composes catalog verification, explicit
+synthetic host/actor authorization, a test-only recording adapter, real encrypted
+RepairAuditStore claims/runtime completion, restart/readback and rendered history.
+Five tests cover successful attribution, started-claim uncertainty, denial/expiry/
+wrong bindings, actual SQLite finalize failure and no automatic replay execution.
+The adapter asserts that the durable claim is readable before recording a call.
+
+Runtime dependency: `45e929bd8fea9bdfa7bfde96941c916fc7c56f1d` (PR #18). The five
+composed tests passed before the strengthened foundation matrix was integrated.
+Current integration blocker: runtime's completion-size reservation uses
+outcome_unknown/preconditions_blocked/completion with cleanup_complete=False,
+which the strengthened shared validator rejects. Runtime owner must update its
+reservation using semantically valid data while preserving the complete size bound;
+presentation does not weaken validation or edit the other lane's runtime. No production key, real repair, upstream command, host install,
 credential/permission/access/DNS change or deployment is part of this implementation.
 Epic #4 remains open for authenticated click integration, actual host preflight and
 operations, and deployed separation from collector identities. No one-click repair
