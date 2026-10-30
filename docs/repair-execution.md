@@ -8,13 +8,17 @@ returns strict UTC text. `evidence(target_host)` supplies current telemetry.
 boundary: authenticate the actual user action and authorize its exact actor,
 host, operation, version and plan. Return None only on success; raise on denial.
 A caller-supplied boolean, confirmation object or collection identity is not proof.
-This slice supplies no production identity/click integration.
+OperatorAuthorization in `repair_operator.py` verifies explicitly supplied operator
+signatures and current scoped grants; see [operator-auth.md](operator-auth.md).
+No production enrollment or human-click proof is supplied.
 
 Catalog signatures/pins and confirmation binding are revalidated, and current
 preflight evidence/checks must match the confirmed plan. Evaluation time alone
 may advance. After the durable claim (which can wait on SQLite), runtime obtains
-current evidence again and rechecks time, confirmation and catalog immediately
-before invocation. Expiry or changed preflight leaves the claim consumed and stores
+current evidence again and rechecks time, confirmation and catalog. It then rechecks user authorization
+immediately before invocation, and validates time/expiry/catalog/preflight again
+after authorization returns so a slow authorizer cannot extend intent validity.
+Revocation during claim produces a durable claim-stage refusal with no invocation. Expiry or changed preflight leaves the claim consumed and stores
 a claim-stage refusal; slow authorization/evidence cannot extend intent validity.
 Missing disruptive-operation preconditions remain blocked. The
 shipped RefusingAdapter supports no operations and refuses before claiming.
