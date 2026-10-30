@@ -151,3 +151,20 @@ class CliTests(unittest.TestCase):
         value = json.loads(output)
         self.assertEqual(value['readings']['doctor_state']['value'], 'passed')
         self.assertNotIn('Synthetic Chip', output)
+
+    def test_current_daemon_sample_and_unsupported_dialect(self):
+        for text, code in (('Daemon: running (pid 12345, up 2h17m)', 0),
+                           ('Daemon: running', 1),
+                           ('Daemon: running (pid 12345, up 2h17m)\nStatus: ● Running', 1)):
+            stream = io.TextIOWrapper(io.BytesIO(text.encode()))
+            with patch('sys.stdin', stream):
+                actual, output, _ = self.run_main(['inspect', 'status', '--input', '-', '--observed-at', NOW])
+            self.assertEqual(actual, code)
+            value = json.loads(output)
+            if code == 0:
+                self.assertEqual(set(value['readings']), {'daemon_state'})
+                self.assertEqual(value['readings']['daemon_state']['value'], 'running')
+            else:
+                self.assertEqual(value['readings'], {})
+                self.assertEqual(value['errors'], ['invalid_state'])
+            self.assertNotIn('12345', output)
