@@ -1,7 +1,8 @@
 # Local command-line inspection and capture
 
-Run `python -m gargoyl --help`. The installed `gargoyl` console script is not part
-of this initial module-entry change. Existing `python -m gargoyl.dashboard` and
+Run `gargoyl --help` after installing the wheel with pip, or use the equivalent
+`python -m gargoyl --help`. The isolated lifecycle extractor does not create
+console-script shims; that path continues to use the module entry. Existing `python -m gargoyl.dashboard` and
 `python -m gargoyl.foreground --check-config ...` remain separate tools.
 
 Inspect already supplied output without executing anything:

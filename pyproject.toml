@@ -9,6 +9,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["cryptography>=46,<51"]
 
+[project.scripts]
+gargoyl = "gargoyl.cli:main"
+
 [project.optional-dependencies]
 dev = ["ruff==0.14.3"]
 release = ["setuptools==80.9.0", "wheel==0.45.1"]
