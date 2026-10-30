@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from gargoyl.release import (
@@ -37,6 +38,19 @@ def verify_console(target, parent):
     parsed = json.loads(invoke("inspect", "status", "--input", str(supplied),
                                "--observed-at", "2026-01-01T00:00:00Z"))
     assert parsed["readings"]["daemon_state"]["value"] == "running"
+    state_file = parent / "synthetic-state.json"
+    written = 1767225600
+    state_file.write_text(json.dumps(dict(schema=1, pid=12345, version="synthetic",
+        written_at=written, started_at=written-100, inference_active=False,
+        warm_models=["private-model"], stats=dict(requests_served=3, tokens_generated=17))))
+    state_file.chmod(0o600)
+    state = json.loads(invoke("inspect", "state", "--input", str(state_file),
+                              "--owner-uid", str(os.getuid())))
+    assert state["observed_at"] == datetime.fromtimestamp(written, timezone.utc).isoformat().replace("+00:00", "Z")
+    assert state["readings"]["requests_total"]["value"] == 3
+    assert state["readings"]["tokens_total"]["value"] == 17
+    assert "daemon_state" not in state["readings"]
+    assert "private-model" not in json.dumps(state)
     producer = parent / "synthetic-producer"
     producer.write_text(f"#!{sys.executable}\nimport sys\n"
                         "assert sys.argv[1:] == ['status']\nprint('Status: ○ Stopped')\n")
@@ -47,7 +61,7 @@ def verify_console(target, parent):
                                  "--cwd", str(parent), "--environment", str(environment)))
     assert captured["cleanup_complete"] is True
     assert captured["readings"]["daemon_state"]["value"] == "stopped"
-    print("installed console help, inspect and synthetic capture passed")
+    print("installed console help, text/state inspect and synthetic capture passed")
 
 
 def verify(wheel):

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from gargoyl.collector_acquisition import BoundedAcquirer
 from gargoyl.collector_adapters import MAX_SOURCE_BYTES, parse_observations
+from gargoyl.collector_state_file import read_daemon_state
 from gargoyl.telemetry import timestamp
 
 KINDS = {'status': 'darkbloom_status_text_v1', 'doctor': 'darkbloom_doctor_text_v1'}
@@ -71,9 +72,10 @@ def main(argv=None):
     parser = _Parser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     inspect = commands.add_parser('inspect', help='Parse supplied bytes; execute nothing.')
-    inspect.add_argument('source', choices=KINDS)
-    inspect.add_argument('--input', required=True, help='File or - for stdin; at most 64 KiB.')
-    inspect.add_argument('--observed-at', required=True, help='Actual UTC source observation time.')
+    inspect.add_argument('source', choices=(*KINDS, 'state'))
+    inspect.add_argument('--input', required=True, help='Text: file or stdin (-); state: absolute file path.')
+    inspect.add_argument('--observed-at', help='Required UTC source time for text; forbidden for state.')
+    inspect.add_argument('--owner-uid', type=int, help='Required expected owner UID for state; forbidden for text.')
     capture = commands.add_parser('capture', help='Explicitly execute one bounded local acquisition.',
         description='Upstream status/doctor may read keys/files and use the network. '
                     'This is not a sandbox, authenticated repair, or durable collection.')
@@ -84,8 +86,17 @@ def main(argv=None):
                          'No parent environment is inherited.')
     try:
         args = parser.parse_args(argv)
+        if args.command == 'inspect' and args.source == 'state':
+            if args.observed_at is not None or args.owner_uid is None:
+                raise ValueError('invalid state inspection arguments')
+            state_result = read_daemon_state(args.input, expected_owner_uid=args.owner_uid,
+                                             now=_utc_now(), ttl=60)
+            _emit('darkbloom_daemon_state_json_v1', state_result.observed_at, state_result.result)
+            return 1 if state_result.result.errors else 0
         kind = KINDS[args.source]
         if args.command == 'inspect':
+            if args.owner_uid is not None:
+                raise ValueError('invalid text inspection arguments')
             timestamp(args.observed_at)
             payload = _read(args.input)
             result = parse_observations(kind, payload, observed_at=args.observed_at)

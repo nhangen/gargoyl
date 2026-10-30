@@ -64,3 +64,39 @@ is emitted only to stdout; operators control any subsequent redirection/storage.
 Tests use only temporary files and self-authored synthetic executables, including
 real timeout and signal cleanup checks. They do not establish production source
 compatibility beyond the parser's supported formats or authorize live operation.
+
+## Inspect owner-local daemon state without executing commands
+
+```sh
+gargoyl inspect state --input /absolute/private-directory/daemon-state.json --owner-uid 1000
+```
+
+Supply the expected numeric owner UID explicitly; the value above is only an
+example. This mode never discovers a path, expands environment variables, reads
+stdin, launches a producer, or falls back to text capture. It calls the shared
+owner-local state adapter with a 64 KiB limit and 60-second freshness interval.
+See [state-file contract](daemon-state-json.md) for required schema and filesystem
+checks, including no symlinks, regular files and a private owner-matched directory.
+No actual daemon file is read by the test suite or artifact verifier.
+
+The source's JSON `written_at` supplies `observed_at` and field timestamps.
+`--observed-at` is rejected for this mode; the current clock is used only for
+validation and age evaluation, never to relabel old evidence as fresh. Valid empty
+results preserve their observation time. Stale observations retain their original
+time and `stale` state. Invalid/future envelopes and read failures emit null
+`observed_at`, empty readings and a fixed error, with exit 1. Invalid caller
+configuration returns exit 2 without JSON. Valid evidence, including stale or
+empty evidence, returns exit 0; this does not establish daemon liveness or health.
+
+The CLI result identifies `source_kind: darkbloom_daemon_state_json_v1`. Only
+normalized request/token totals and a resident-model claim when the source has a
+nonempty model selection are exposed. Raw model names, PIDs, identities and extra
+JSON fields are discarded. Empty models do not establish absence. There is no
+inference of routing, attestation, paid earnings or daemon liveness from file
+presence. Filesystem latency is not forcibly bounded. Existing text inspection
+and explicit capture remain available under their original modes.
+
+For separately authorized collector deployment, registry grants must include the
+`requests_total`/`daemon` and `tokens_total`/`daemon` pairs required by the expanded
+source allowlist, including unknown placeholders. This local inspection command
+does not migrate registries, load credentials or change live configuration.
