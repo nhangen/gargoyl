@@ -77,3 +77,14 @@ budget must remain `outcome_unknown`; cancellation does not roll back an accepte
 record. Started claims and uncertain outcomes must not trigger automatic retry.
 No disruptive operation, model load, reconciliation or installation is authorized
 by this report or checklist.
+
+## Local acceptance evidence for this slice
+
+`python -m unittest discover -s tests -p 'test_operator_report*.py' -v`
+executes 11 report tests. Nine use real signed read intents and temporary stores;
+the successful execution and finalize-failure cases also compose the actual
+operator authorization, repair runtime, bounded acquisition and status adapter.
+The only executable is a test-authored script printing synthetic status text.
+Ciphertext corruption is injected into the local SQLite stores and restored to
+verify unavailable output and subsequent recovery. No production key or host is
+involved. These checks do not satisfy the separate live-pilot acceptance criteria.
