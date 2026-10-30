@@ -53,7 +53,7 @@
               View on GitHub
               <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
-            <a class="btn btn-ghost" {{link:x}}>Follow the builder</a>
+            <a class="btn btn-ghost" {{link:pilot}}>Join the Darkbloom pilot</a>
           </div>
         </div>
 
@@ -126,16 +126,54 @@
       <div class="wrap">
         <h2 id="principles-title" class="sr-only">Principles</h2>
         <article class="principle">
-          <h3>Evidence over assumptions</h3>
-          <p>Every field carries its own source, timestamp, freshness window, and state: observed, stale, unknown, or blocked. Missing or conflicting evidence becomes unknown instead of being rounded up to “fine.”</p>
+          <div class="principle-text">
+            <h3>Evidence over assumptions</h3>
+            <p>Every field carries its own source, timestamp, freshness window, and state: observed, stale, unknown, or blocked. Missing or conflicting evidence becomes unknown instead of being rounded up to “fine.”</p>
+          </div>
+          <figure class="snippet">
+            <figcaption>One field, as a host reports it (example)</figcaption>
+<pre tabindex="0" aria-label="Example field record"><code><span class="k">"model_state"</span>: {
+  <span class="k">"value"</span>: <span class="v">"resident"</span>,
+  <span class="k">"source"</span>: <span class="v">"daemon"</span>,
+  <span class="k">"timestamp"</span>: <span class="v">"2026-10-30T13:19:47Z"</span>,
+  <span class="k">"freshness_seconds"</span>: <span class="v">900</span>,
+  <span class="k">"state"</span>: <span class="warn">"stale"</span>,
+  <span class="k">"sensitivity"</span>: <span class="v">"safe"</span>
+}</code></pre>
+          </figure>
         </article>
         <article class="principle">
-          <h3>Privacy by design</h3>
-          <p>The telemetry schema rejects prompts, completions, credentials, raw logs, customer identifiers, IP addresses, hostnames, and model names, with no export override. Only allowlisted aggregate fields, keyed to an assigned opaque host ID, can leave a host.</p>
+          <div class="principle-text">
+            <h3>Privacy by design</h3>
+            <p>The telemetry schema rejects prompts, completions, credentials, raw logs, customer identifiers, IP addresses, hostnames, and model names, with no export override. Only allowlisted aggregate fields, keyed to an assigned opaque host ID, can leave a host.</p>
+          </div>
+          <figure class="snippet">
+            <figcaption>What a host may send (example)</figcaption>
+<pre tabindex="0" aria-label="Fields that may leave a host and data the schema rejects"><code><span class="ok">may leave the host</span>
+  <span class="k">host_id</span>          <span class="v">3f9a…c21e</span>
+  <span class="k">requests_total</span>   <span class="v">1284</span>
+  <span class="k">model_state</span>      <span class="v">resident</span>
+
+<span class="no">rejected by the schema</span>
+  <span class="k">prompts, completions</span>
+  <span class="k">credentials, raw logs</span>
+  <span class="k">IP addresses, hostnames</span>
+  <span class="k">model names</span></code></pre>
+          </figure>
         </article>
         <article class="principle">
-          <h3>Repairs under your control <span class="badge">In development</span></h3>
-          <p>Planned repairs are a short list of approved actions. Each is checked before it runs, targets one host, and waits for your confirmation. Nothing runs on its own.</p>
+          <div class="principle-text">
+            <h3>Repairs under your control <span class="badge">In development</span></h3>
+            <p>Planned repairs are a short list of approved actions. Each is checked before it runs, targets one host, and waits for your confirmation. Nothing runs on its own.</p>
+          </div>
+          <figure class="snippet">
+            <figcaption>Sketch of the planned flow, not built yet</figcaption>
+<pre tabindex="0" aria-label="Sketch of a planned repair confirmation"><code><span class="k">target</span>     <span class="v">b07d…41a8 only</span>
+<span class="k">evidence</span>   <span class="v">model_state</span> <span class="warn">stale</span><span class="v">, 43m</span>
+<span class="k">action</span>     <span class="v">from the approved list</span>
+<span class="k">preflight</span>  <span class="ok">checks passed</span>
+<span class="k">confirm</span>    <span class="v">Run on b07d…41a8? [y/N]</span></code></pre>
+          </figure>
         </article>
       </div>
     </section>

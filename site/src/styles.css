@@ -422,13 +422,46 @@ h1 em {
   border-top: 1px solid var(--line);
 }
 .principle:last-child { border-bottom: 1px solid var(--line); }
-@media (min-width: 760px) {
+@media (min-width: 860px) {
   .principle {
-    grid-template-columns: 5fr 7fr;
-    gap: 40px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 48px;
     padding: 40px 0 44px;
   }
 }
+.principle-text { display: grid; gap: 12px; align-content: start; min-width: 0; }
+
+/* Example artifacts beside each principle: show the argument, not just state it */
+.snippet {
+  min-width: 0;
+  margin: 8px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+@media (min-width: 860px) { .snippet { margin-top: 0; } }
+.snippet figcaption {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+.snippet pre {
+  margin: 0;
+  padding: 14px;
+  overflow-x: auto;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  tab-size: 2;
+}
+.snippet .k { color: var(--text-muted); }
+.snippet .v { color: var(--text); }
+.snippet .ok { color: var(--accent); }
+.snippet .warn { color: var(--amber); }
+.snippet .no { color: var(--red); }
 
 .principle h3 {
   display: flex;
