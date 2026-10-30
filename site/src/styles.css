@@ -26,6 +26,9 @@
   --amber-soft: rgba(232, 176, 75, 0.1);
   --amber-edge: rgba(232, 176, 75, 0.45);
   --gray-soft: rgba(155, 164, 159, 0.1);
+  --red: #f08a7a;
+  --red-soft: rgba(240, 138, 122, 0.1);
+  --mark-line: #48504c;
   --header-bg: rgba(12, 14, 13, 0.82);
   --highlight: rgba(255, 255, 255, 0.04);
   --shadow: rgba(0, 0, 0, 0.7);
@@ -182,7 +185,7 @@ a { color: inherit; text-underline-offset: 3px; }
     grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
     align-items: end;
     gap: 56px;
-    padding-top: 88px;
+    padding-top: 48px;
     padding-bottom: 112px;
   }
 }
@@ -267,22 +270,25 @@ h1 em {
 .panel-wrap {
   position: relative;
   min-width: 0;
-  padding-top: 92px;
+  padding-top: 128px;
 }
-@media (min-width: 600px) { .panel-wrap { padding-top: 124px; } }
-@media (min-width: 960px) { .panel-wrap { padding-top: 168px; } }
+@media (min-width: 600px) { .panel-wrap { padding-top: 176px; } }
+@media (min-width: 960px) { .panel-wrap { padding-top: 228px; } }
 
+/* The sentinel: centred over the card, eyes clear of its top edge, body hidden behind it */
 .hero-mark {
   position: absolute;
-  top: -6px;
-  right: 8px;
-  width: 168px;
-  height: 168px;
-  color: var(--line-strong);
+  top: 0;
+  left: 50%;
+  width: 208px;
+  height: 208px;
+  transform: translateX(-50%);
+  color: var(--mark-line);
   pointer-events: none;
 }
-@media (min-width: 600px) { .hero-mark { top: -10px; right: 24px; width: 232px; height: 232px; } }
-@media (min-width: 960px) { .hero-mark { top: -16px; right: 16px; width: 312px; height: 312px; } }
+.hero-mark path { vector-effect: non-scaling-stroke; }
+@media (min-width: 600px) { .hero-mark { width: 288px; height: 288px; } }
+@media (min-width: 960px) { .hero-mark { width: 376px; height: 376px; } }
 
 .panel {
   position: relative;
@@ -358,9 +364,17 @@ h1 em {
 .time { justify-self: end; white-space: nowrap; color: var(--text); }
 .time-none { color: var(--text-muted); }
 .signal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
   grid-column: 1 / -1;
-  margin-top: 6px;
+  margin-top: 8px;
   color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+.signal code {
+  color: var(--text);
+  font-family: var(--mono);
   font-size: 0.8125rem;
 }
 
@@ -381,10 +395,12 @@ h1 em {
   font-weight: 500;
 }
 .state-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.state-healthy { color: var(--accent); background: var(--accent-soft); }
+.state-observed { color: var(--accent); background: var(--accent-soft); }
 .state-stale { color: var(--amber); background: var(--amber-soft); }
 .state-unknown { color: var(--text-muted); background: var(--gray-soft); }
 .state-unknown .state-dot { background: transparent; border: 1px solid currentColor; }
+.state-blocked { color: var(--red); background: var(--red-soft); }
+.state-blocked .state-dot { border-radius: 1px; }
 
 .panel-foot {
   padding: 12px 18px;
@@ -396,8 +412,8 @@ h1 em {
 
 /* Principles: ruled rows, heading beside its explanation */
 
-.principles { padding: 72px 0 88px; }
-@media (min-width: 960px) { .principles { padding: 104px 0 120px; } }
+.principles { padding: 48px 0 64px; }
+@media (min-width: 960px) { .principles { padding: 64px 0 80px; } }
 
 .principle {
   display: grid;
@@ -448,7 +464,7 @@ h1 em {
 
 /* Status */
 
-.status { padding: 0 0 96px; }
+.status { padding: 0 0 72px; }
 
 .status-inner {
   display: grid;

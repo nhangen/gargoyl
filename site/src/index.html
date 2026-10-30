@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Gargoyl — Darkbloom fleet monitoring you can inspect</title>
-  <meta name="description" content="Gargoyl is an in-development project for privacy-conscious monitoring of inference-provider fleets, starting with Darkbloom: inspectable health evidence, stale and conflicting signal detection, and controlled repair workflows.">
+  <meta name="description" content="Gargoyl is an in-development project for privacy-first evidence on inference-provider fleets, starting with Darkbloom: per-field state for routing, model residency and verification, with confirm-each-host repairs on the roadmap.">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0c0e0d">
   <link rel="canonical" href="https://gargoyl.dev/">
@@ -47,7 +47,7 @@
       <div class="wrap hero-inner">
         <div class="hero-copy">
           <h1 id="hero-title">Know what your Darkbloom fleet is <em>really</em> doing.</h1>
-          <p class="lede">Privacy-conscious monitoring, evidence you can inspect, and controlled repairs, starting with Darkbloom providers.</p>
+          <p class="lede">Built to show which hosts are up but not routed, missing a model, or past verification, with evidence behind every state. Repairs you confirm host by host are on the roadmap.</p>
           <div class="cta-row">
             <a class="btn btn-primary" {{link:github}}>
               View on GitHub
@@ -59,7 +59,7 @@
 
         <div class="panel-wrap">
           <svg class="hero-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-            <g fill="none" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round">
+            <g fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round">
               <path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z"/>
               <path d="M12 8 18 26M52 8l-6 18M22 20l10 9 10-9M18 26l14 4 14-4M15 30l3-4M49 30l-3-4"/>
               <path d="M32 30v26M23 44l9-5 9 5M32 39l-6-5M32 39l6-5M18 26l5 18M46 26l-5 18"/>
@@ -77,39 +77,45 @@
             </div>
 
             <table class="fleet">
-              <caption id="panel-caption" class="sr-only">Illustrative fleet-health view with three example hosts. Not live data.</caption>
+              <caption id="panel-caption" class="sr-only">Illustrative per-field evidence for four example hosts. Not live data.</caption>
               <thead class="sr-only">
                 <tr>
                   <th scope="col">Host</th>
                   <th scope="col">State</th>
-                  <th scope="col">Last evidence (UTC)</th>
-                  <th scope="col">Signal</th>
+                  <th scope="col">Observed at (UTC)</th>
+                  <th scope="col">Field and evidence</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <th scope="row"><span class="host-id">3f9a…c21e</span></th>
-                  <td><span class="state state-healthy"><span class="state-dot" aria-hidden="true"></span>healthy</span></td>
+                  <td><span class="state state-observed"><span class="state-dot" aria-hidden="true"></span>observed</span></td>
                   <td class="time"><time datetime="2026-10-30T14:02:11Z">2026-10-30 <span>14:02:11Z</span></time></td>
-                  <td class="signal">heartbeat 12s · within TTL</td>
+                  <td class="signal"><code>routing_eligible = eligible</code> <span>coordinator · within TTL</span></td>
                 </tr>
                 <tr>
                   <th scope="row"><span class="host-id">b07d…41a8</span></th>
                   <td><span class="state state-stale"><span class="state-dot" aria-hidden="true"></span>stale</span></td>
                   <td class="time"><time datetime="2026-10-30T13:19:47Z">2026-10-30 <span>13:19:47Z</span></time></td>
-                  <td class="signal">43m old · TTL 15m exceeded</td>
+                  <td class="signal"><code>model_state = resident</code> <span>daemon · 43m old, TTL 15m</span></td>
                 </tr>
                 <tr>
                   <th scope="row"><span class="host-id">e5c2…9f03</span></th>
                   <td><span class="state state-unknown"><span class="state-dot" aria-hidden="true"></span>unknown</span></td>
                   <td class="time time-none">no evidence</td>
-                  <td class="signal">no observation · not assumed healthy</td>
+                  <td class="signal"><code>attestation_state</code> <span>no observation · not assumed valid</span></td>
+                </tr>
+                <tr>
+                  <th scope="row"><span class="host-id">71aa…0b5d</span></th>
+                  <td><span class="state state-blocked"><span class="state-dot" aria-hidden="true"></span>blocked</span></td>
+                  <td class="time"><time datetime="2026-10-30T14:01:58Z">2026-10-30 <span>14:01:58Z</span></time></td>
+                  <td class="signal"><code>requests_total</code> <span>daemon · source blocked, value withheld</span></td>
                 </tr>
               </tbody>
             </table>
 
             <figcaption class="panel-foot">
-              Hosts shown by opaque ID. Missing evidence is reported as unknown, never as healthy.
+              Every field carries its own state. Missing or conflicting evidence becomes unknown, never rounded up.
             </figcaption>
           </figure>
         </div>
@@ -121,15 +127,15 @@
         <h2 id="principles-title" class="sr-only">Principles</h2>
         <article class="principle">
           <h3>Evidence over assumptions</h3>
-          <p>Every observation carries its source, timestamp, and freshness window. Stale, conflicting, or missing signals are labeled as such instead of being rounded up to “fine.”</p>
+          <p>Every field carries its own source, timestamp, freshness window, and state: observed, stale, unknown, or blocked. Missing or conflicting evidence becomes unknown instead of being rounded up to “fine.”</p>
         </article>
         <article class="principle">
           <h3>Privacy by design</h3>
-          <p>Prompts, completions, credentials, raw logs, and addresses stay on the host by default. Only allowlisted aggregate observations, tied to opaque host IDs, are meant to leave it.</p>
+          <p>The telemetry schema rejects prompts, completions, credentials, raw logs, customer identifiers, IP addresses, hostnames, and model names, with no export override. Only allowlisted aggregate fields, keyed to an assigned opaque host ID, can leave a host.</p>
         </article>
         <article class="principle">
           <h3>Repairs under your control <span class="badge">In development</span></h3>
-          <p>Repair workflows are being designed as allowlisted, preflighted runbooks that target one host and wait for your confirmation. Nothing runs autonomously.</p>
+          <p>Planned repairs are a short list of approved actions. Each is checked before it runs, targets one host, and waits for your confirmation. Nothing runs on its own.</p>
         </article>
       </div>
     </section>
@@ -139,7 +145,7 @@
         <svg class="status-mark" aria-hidden="true"><use href="#mark"/></svg>
         <div>
           <h2 id="status-title">Actively being built.</h2>
-          <p>Darkbloom is the first integration. Follow development on GitHub. Core telemetry and security pieces are in progress; validation against live hosts is still ahead.</p>
+          <p>Darkbloom is the first integration. The telemetry schema, privacy checks, and evidence dashboard are in progress; host enrollment and validation on live hosts are still ahead.</p>
         </div>
         <a class="btn btn-ghost" {{link:github}}>Follow on GitHub</a>
       </div>
