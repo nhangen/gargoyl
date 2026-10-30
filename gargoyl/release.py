@@ -23,6 +23,7 @@ MAX_WHEEL_BYTES = 8 * 1024 * 1024
 MAX_RELEASE_BYTES = 16 * 1024 * 1024
 MAX_FILE_BYTES = 1024 * 1024
 MAX_FILES = 512
+_CONSOLE_ENTRY = b"[console_scripts]\ngargoyl = gargoyl.cli:main\n"
 _HEX = re.compile(r"[0-9a-f]{64}")
 _VERSION = re.compile(r"[0-9]+(?:\.[0-9]+){1,3}")
 
@@ -73,7 +74,7 @@ def _member(name, version):
     allowed = (len(path.parts) >= 2 and path.parts[0] == "gargoyl"
                and path.suffix in {".py", ".md"})
     allowed = allowed or (len(path.parts) == 2 and path.parts[0] == metadata
-                         and path.parts[1] in {"METADATA", "WHEEL", "RECORD", "top_level.txt"})
+                         and path.parts[1] in {"METADATA", "WHEEL", "RECORD", "top_level.txt", "entry_points.txt"})
     _need(allowed)
 
 
@@ -103,7 +104,16 @@ def _wheel(wheel, expected_sha256):
         files = {}
         for item in members:
             _member(item.filename, version)
-            files[item.filename] = archive.read(item)
+            if item.filename == f"gargoyl-{version}.dist-info/entry_points.txt":
+                # Exact canonical metadata from the pinned build tool. Check the
+                # size before decompression; no permissive INI interpretation,
+                # alternate groups, duplicate commands, targets or hooks.
+                _need(item.file_size == len(_CONSOLE_ENTRY) and "gargoyl/cli.py" in names)
+                content = archive.read(item)
+                _need(content == _CONSOLE_ENTRY)
+                files[item.filename] = content
+            else:
+                files[item.filename] = archive.read(item)
         directories = _parents(files)
         all_paths = set(files) | directories
         _need(not set(files) & directories and len(all_paths) <= MAX_FILES * 2

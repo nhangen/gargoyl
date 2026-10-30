@@ -86,7 +86,7 @@ Only a **trusted artifact digest**, obtained through the reviewed release proces
 should be supplied. A matching hash detects changed bytes; it does not establish a
 publisher identity or replace review. This is deliberately a narrow pure-Python
 Gargoyl wheel installer, not a general wheel/pip implementation. It rejects extra
-packages, entry points, native libraries, wheel `.data` trees, executable hooks,
+packages, unapproved entry points, native libraries, wheel `.data` trees, executable hooks,
 traversal, duplicate paths, symlinks and excessive sizes. Limits: compressed wheel
 8 MiB, expanded code 16 MiB, 512 files, 1 MiB per file. No dependency resolution,
 index access, certificate setup or model download occurs.
@@ -148,3 +148,15 @@ installation, interpreter/dependency distribution, operator signing/enrollment, 
 custody, endpoint/service topology, compatible upgrade policy and pilot feedback remain
 unverified. Epics #4/#5 stay open. No production paths, settings, credentials, permissions,
 DNS, services, Darkbloom assets, or live host operations were changed in this work.
+
+
+The optional `entry_points.txt` is accepted only as the exact canonical ASCII
+content `[console_scripts]\ngargoyl = gargoyl.cli:main\n` produced by the pinned
+build tools, with `gargoyl/cli.py` present. Its length is checked before reading;
+additional groups/commands, duplicate mappings, alternate targets, comments and
+noncanonical formatting are rejected. Older wheels without entry-point metadata
+remain supported. This file is inert metadata during lifecycle extraction: no
+code executes and no console wrapper is created. A normal pip wheel installation
+creates the `gargoyl` wrapper; lifecycle extraction uses the module invocation
+with its explicitly selected code path. The artifact verifier checks both paths,
+including pip-installed console help, inspection and synthetic-only capture.
