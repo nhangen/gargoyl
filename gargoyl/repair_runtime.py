@@ -152,6 +152,25 @@ class RepairRuntime:
                                             now=invocation_time).as_dict()
                 require(all(current[key] == p[key] for key in
                             ("target_host", "runbook", "evidence", "checks", "blocked")))
+                # The durable claim and evidence read can outlive a grant. Recheck
+                # authenticated intent immediately before invocation, then ensure a
+                # slow authorization callback has not extended expiry/freshness.
+                refusal = "authorization_denied"
+                require(self.authorization.authorize(plan, confirmation) is None)
+                refusal = "clock_invalid"
+                authorized_at = self.wall_clock()
+                require(timestamp(authorized_at) >= timestamp(last_valid))
+                last_valid = authorized_at
+                refusal = "confirmation_expired"
+                validate_confirmation(confirmation, plan, now=authorized_at)
+                refusal = "catalog_rejected"
+                self.catalog.validate_plan(plan, now=authorized_at)
+                refusal = "plan_changed"
+                current = self.catalog.plan(VerifiedRunbook(canonical(p["runbook"])),
+                                            p["target_host"], fresh_evidence,
+                                            now=authorized_at).as_dict()
+                require(all(current[key] == p[key] for key in
+                            ("target_host", "runbook", "evidence", "checks", "blocked")))
             except Exception:
                 return finish_claim_refusal(
                     "outcome_unknown" if refusal == "clock_invalid" else "blocked", refusal)
