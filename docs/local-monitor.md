@@ -69,7 +69,10 @@ or multi-host ingestion. Those existing APIs require separately supplied keys an
 explicit deployment configuration. This avoids introducing credentials to the
 read-only pilot. Collection/storage failures stop the process with exit 1 and a
 fixed error; source read failures keep polling for recovery. Invalid caller
-configuration exits 2. Filesystem operations are not forcibly time-bounded.
+configuration exits 2 before opening the source or binding the listener. The source
+path must be an absolute UTF-8 string of at most 4096 characters with no empty,
+`.` or `..` components or NUL characters; the expected UID must be an integer
+from 0 through 2^32−2. Filesystem operations are not forcibly time-bounded.
 
 ## Optional user-level persistence (not activated)
 

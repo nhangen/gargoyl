@@ -1,4 +1,5 @@
 import contextlib
+import gc
 import http.client
 import io
 import json
@@ -11,7 +12,9 @@ import threading
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
+from gargoyl.cli import main
 from gargoyl.monitor import LocalMonitor, run_monitor, status
 
 HOST = '00000000-0000-4000-8000-000000000001'
@@ -174,6 +177,35 @@ class MonitorTests(unittest.TestCase):
             run_monitor(self.monitor, port=0, stop=stop, ready=ports.append)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(status(ports[0]), 1)
+
+    def test_invalid_source_configuration_exits_two_before_read_or_bind(self):
+        # Finalize unrelated earlier tests before capturing exact CLI stderr.
+        gc.collect()
+        invalid = [('/source.json', str(2**32-1)), ('/source.json', str(2**32)),
+                   ('/source.json', '-1'), ('relative.json', '501'),
+                   ('/private//source.json', '501'), ('/private/./source.json', '501'),
+                   ('/private/../source.json', '501'), ('/', '501'),
+                   ('/private/source.json/', '501'), ('/' + 'x' * 4096, '501'),
+                   ('/private/\0source.json', '501'), ('/private/\ud800source.json', '501')]
+        for source, uid in invalid:
+            with self.subTest(source=repr(source), uid=uid):
+                output, error = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error), \
+                     patch('gargoyl.monitor.read_daemon_state') as read, \
+                     patch('gargoyl.monitor.MonitorViewer') as viewer:
+                    code = main(['monitor', '--input', source, '--owner-uid', uid,
+                                 '--host', HOST])
+                self.assertEqual(code, 2)
+                self.assertEqual(output.getvalue(), '')
+                self.assertEqual(error.getvalue(), 'CLI input or configuration unavailable or invalid.\n')
+                read.assert_not_called()
+                viewer.assert_not_called()
+
+    def test_largest_valid_uid_is_configuration_without_access(self):
+        with patch('gargoyl.monitor.read_daemon_state') as read:
+            monitor = LocalMonitor('/private/source.json', 2**32-2, HOST)
+        self.assertEqual(monitor.owner_uid, 2**32-2)
+        read.assert_not_called()
 
     def test_configuration_and_restart_clear_memory(self):
         self.monitor.tick()

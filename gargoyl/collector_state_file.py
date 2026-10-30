@@ -134,6 +134,18 @@ def _read(path, uid, limit):
             os.close(directory)
 
 
+def validate_daemon_state_source(path, expected_owner_uid):
+    """Validate caller-owned source configuration without opening any path."""
+    _require(os.name == "posix" and type(path) is str and path.startswith("/")
+             and len(path) <= 4096 and "\0" not in path)
+    _require(type(expected_owner_uid) is int and 0 <= expected_owner_uid < 2**32 - 1)
+    try:
+        path.encode("utf-8", "strict")
+        _require(all(part and part not in {".", ".."} for part in path.split("/")[1:]))
+    except UnicodeError:
+        raise PolicyError("invalid daemon state path") from None
+
+
 def read_daemon_state(path, *, expected_owner_uid, now, ttl=60, max_bytes=MAX_STATE_BYTES):
     """Return DaemonStateResult(observed_at, result: AdapterResult); data/access failures have fixed codes.
 
@@ -142,17 +154,10 @@ def read_daemon_state(path, *, expected_owner_uid, now, ttl=60, max_bytes=MAX_ST
     Invalid caller configuration raises safe PolicyError before opening anything.
     No raw JSON, identifiers, paths or error strings are returned or retained.
     """
-    _require(os.name == "posix" and type(path) is str and path.startswith("/")
-             and len(path) <= 4096 and "\0" not in path)
-    _require(type(expected_owner_uid) is int and 0 <= expected_owner_uid < 2**32 - 1)
+    validate_daemon_state_source(path, expected_owner_uid)
     _require(type(ttl) is int and 1 <= ttl <= 86400)
     _require(type(max_bytes) is int and 1 <= max_bytes <= MAX_STATE_BYTES)
     timestamp(now)
-    try:
-        path.encode("utf-8", "strict")
-        _require(all(part and part not in {".", ".."} for part in path.split("/")[1:]))
-    except UnicodeError:
-        raise PolicyError("invalid daemon state path") from None
     try:
         return _parse(_read(path, expected_owner_uid, max_bytes), now, ttl)
     except PermissionError:

@@ -39,8 +39,8 @@ persistence remains running or enabled. The prepared plist is inactive.
 ## Automated verification
 
 - Ruff and `git diff --check` pass.
-- Full macOS suite: 337 tests pass with `TMPDIR=/private/tmp`.
-- Seven monitor tests exercise repeated polling independently of HTTP requests,
+- Full macOS suite: 339 tests pass with `TMPDIR=/private/tmp`.
+- Nine monitor tests exercise repeated polling independently of HTTP requests,
   loopback responses and Host rejection, actual SIGINT/SIGTERM cleanup, restart,
   latest-read failure isolation, malformed/missing recovery, stale/future sources,
   source permission/symlink enforcement, retention and runtime-failure cleanup.
@@ -69,3 +69,19 @@ The draft PR requires independent review before merge. Login persistence require
 an explicit activation choice; no new OS grants, keys, access settings or external
 listener are required or requested by this foreground pilot. Website hosting at
 gargoyl.dev was untouched.
+
+## Review correction
+
+Invalid source configuration now uses the same pure validator in the monitor
+constructor and state reader. Oversized/reserved owner UIDs and noncanonical,
+overlong, NUL-containing or invalid-UTF-8 paths exit 2 before source access or
+listener creation. Regression tests assert neither boundary is invoked and the
+fixed error contains no caller arguments. The largest allowed UID remains valid.
+The rebuilt installed wheel also passed both reported invalid-configuration cases.
+No browser inspection or persistence activation was attempted during this fix.
+
+The first correction-suite run exposed unrelated resource warnings inside the
+stderr assertion and an existing macOS deadline test receiving connection reset
+instead of EOF. The regression assertion now finalizes earlier test resources
+before capture; the subsequent full 339-test run passed without changing any
+network deadline or source protection.

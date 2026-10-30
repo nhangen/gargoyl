@@ -13,7 +13,7 @@ from collections import deque
 from html import escape
 
 from gargoyl.collector import collect
-from gargoyl.collector_state_file import read_daemon_state
+from gargoyl.collector_state_file import read_daemon_state, validate_daemon_state_source
 from gargoyl.dashboard import render_dashboard
 from gargoyl.dashboard.runtime import EvidenceViewer, utc_now
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
@@ -24,9 +24,8 @@ class LocalMonitor:
 
     def __init__(self, source, owner_uid, identity, *, interval=5, clock=utc_now):
         host_id(identity)
-        if (type(source) is not str or not source.startswith('/')
-                or type(owner_uid) is not int or owner_uid < 0
-                or type(interval) not in (int, float) or not math.isfinite(interval)
+        validate_daemon_state_source(source, owner_uid)
+        if (type(interval) not in (int, float) or not math.isfinite(interval)
                 or not 1 <= interval <= 60 or not callable(clock)):
             raise ValueError('invalid monitor configuration')
         self.source, self.owner_uid, self.identity = source, owner_uid, identity
