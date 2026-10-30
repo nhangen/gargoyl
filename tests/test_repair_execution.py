@@ -335,6 +335,22 @@ class RepairExecutionTests(unittest.TestCase):
                     self.store._db.execute("ROLLBACK TO corruption")
                     self.store._db.execute("RELEASE corruption")
 
+    def test_nul_suffixed_oversized_id_rejected_before_materialization(self):
+        self.store.claim(self.plan, self.confirmation, now=NOW)
+        oversized = CLICK + "\x00" + "x" * (2 * 1024 * 1024)
+        self.store._db.execute("UPDATE records SET id=?", (oversized,))
+        statements = []
+        self.store._db.set_trace_callback(statements.append)
+        try:
+            with patch.object(self.store, "_open") as decrypt:
+                with self.assertRaises(AuditError):
+                    self.store.lookup(CLICK)
+                decrypt.assert_not_called()
+        finally:
+            self.store._db.set_trace_callback(None)
+        self.assertFalse(any("SELECT id, payload" in sql for sql in statements))
+        self.assertFalse(any("SELECT payload" in sql for sql in statements))
+
     def test_clock_rollback_after_operation(self):
         self.runtime.wall_clock = iter((NOW, NOW, NOW, NOW, "2025-12-31T23:59:59Z")).__next__
         result = self.execute().as_dict()
