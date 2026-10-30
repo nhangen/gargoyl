@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from gargoyl.collector import collect
 from gargoyl.repair_audit import AuditError, RepairAuditStore
 from gargoyl.repair_catalog import SIGNING_CONTEXT, RunbookCatalog
 from gargoyl.repair_contract import (
@@ -215,8 +216,127 @@ class RepairExecutionTests(unittest.TestCase):
         self.assertEqual(result.as_dict()["reason"], "deadline_exceeded")
         self.assertEqual(result.as_dict()["outcome"], "outcome_unknown")
 
+    def test_contended_claim_expiry_is_consumed_without_invocation(self):
+        value = self.confirmation.as_dict()
+        value["expires_at"] = "2026-01-01T00:00:01Z"
+        self.confirmation = RepairConfirmation(canonical(value))
+        clock = [NOW]
+        self.runtime.wall_clock = lambda: clock[0]
+        other = RepairAuditStore(self.temp.name, key=self.key)
+        self.addCleanup(other.close)
+        other._db.execute("BEGIN IMMEDIATE")
+        entered = threading.Event()
+        original_claim = self.store.claim
+
+        def claim(*args, **kwargs):
+            entered.set()
+            return original_claim(*args, **kwargs)
+
+        with patch.object(self.store, "claim", side_effect=claim), ThreadPoolExecutor(1) as pool:
+            future = pool.submit(self.execute)
+            try:
+                self.assertTrue(entered.wait(2))
+                clock[0] = "2026-01-01T00:00:02Z"
+            finally:
+                other._db.rollback()
+            result = future.result(timeout=3).as_dict()
+        self.assertEqual(self.adapter.calls, 0)
+        self.assertEqual((result["stage"], result["outcome"], result["reason"]),
+                         ("claim", "blocked", "confirmation_expired"))
+        self.assertEqual(result["finished_at"], clock[0])
+        self.assertEqual(self.store.lookup(CLICK).as_dict()["receipt"], result)
+        self.assertFalse(self.store.claim(self.plan, self.confirmation, now=NOW))
+
+    def test_slow_authorization_cannot_extend_confirmation(self):
+        clock = [NOW]
+        self.runtime.wall_clock = lambda: clock[0]
+
+        def authorize(*args):
+            clock[0] = "2026-01-01T00:01:01Z"
+
+        with patch.object(self.runtime.authorization, "authorize", side_effect=authorize):
+            self.assertEqual(self.execute().as_dict()["outcome"], "blocked")
+        self.assertEqual(self.adapter.calls, 0)
+        self.assertIsNone(self.store.lookup(CLICK))
+
+    def test_slow_postclaim_evidence_cannot_extend_confirmation(self):
+        clock = [NOW]
+        self.runtime.wall_clock = lambda: clock[0]
+        calls = []
+
+        def evidence(host):
+            calls.append(host)
+            if len(calls) == 2:
+                clock[0] = "2026-01-01T00:01:01Z"
+            return []
+
+        self.runtime.evidence = evidence
+        result = self.execute().as_dict()
+        self.assertEqual(result["reason"], "confirmation_expired")
+        self.assertEqual(self.adapter.calls, 0)
+        self.assertEqual(self.store.lookup(CLICK).as_dict()["receipt"], result)
+
+    def test_valid_changed_evidence_after_claim_refuses(self):
+        fresh = collect(HOST, NOW, {})
+        self.runtime.evidence = unittest.mock.Mock(side_effect=[[], [fresh]])
+        result = self.execute().as_dict()
+        self.assertEqual((result["stage"], result["reason"]), ("claim", "plan_changed"))
+        self.assertEqual(self.adapter.calls, 0)
+        self.assertEqual(self.store.lookup(CLICK).as_dict()["receipt"], result)
+
+    def test_forged_receipt_on_started_claim_rejected(self):
+        with patch.object(self.store, "finalize", side_effect=OSError()):
+            terminal = self.execute().as_dict()
+        terminal["actor_id"] = HOST
+        with self.assertRaises(AuditError):
+            self.store.finalize(CLICK, RepairReceipt(canonical(terminal)))
+        self.assertEqual(self.store.lookup(CLICK).as_dict()["state"], "started")
+
+    def test_actual_sqlite_claim_write_failure_prevents_invocation(self):
+        self.store._db.execute("PRAGMA query_only=ON")
+        result = self.execute().as_dict()
+        self.assertEqual(result["reason"], "audit_unavailable")
+        self.assertEqual(self.adapter.calls, 0)
+        self.store._db.execute("PRAGMA query_only=OFF")
+        self.assertIsNone(self.store.lookup(CLICK))
+
+    def test_actual_sqlite_finalize_failure_preserves_started_claim(self):
+        self.store._db.execute(
+            "CREATE TRIGGER reject_terminal BEFORE UPDATE ON records "
+            "BEGIN SELECT RAISE(ABORT, 'synthetic private failure'); END")
+        result = self.execute().as_dict()
+        self.assertEqual((result["outcome"], result["reason"]),
+                         ("outcome_unknown", "audit_unavailable"))
+        self.assertEqual(self.adapter.calls, 1)
+        self.assertEqual(self.store.lookup(CLICK).as_dict()["state"], "started")
+        self.assertEqual(self.execute().as_dict()["reason"], "already_claimed")
+
+    def test_invalid_storage_bounds_rejected_before_decryption(self):
+        self.store.claim(self.plan, self.confirmation, now=NOW)
+        corruptions = (
+            "UPDATE records SET payload=zeroblob(2097152)",
+            "UPDATE records SET payload='not ciphertext'",
+            "UPDATE inventory SET payload=zeroblob(2097152)",
+            "UPDATE inventory SET payload=123",
+            "INSERT INTO inventory VALUES (2, zeroblob(29))",
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<10001) "
+            "INSERT INTO records SELECT printf('%036d', x), zeroblob(29) FROM n",
+        )
+        for sql in corruptions:
+            with self.subTest(sql=sql):
+                self.store._db.execute("SAVEPOINT corruption")
+                try:
+                    self.store._db.execute(sql)
+                    with patch.object(self.store, "_open") as decrypt:
+                        with self.assertRaises(PolicyError):
+                            self.store._read_all()
+                        decrypt.assert_not_called()
+                finally:
+                    self.store._db.execute("ROLLBACK TO corruption")
+                    self.store._db.execute("RELEASE corruption")
+
     def test_clock_rollback_after_operation(self):
-        self.runtime.wall_clock = iter((NOW, NOW, NOW, "2025-12-31T23:59:59Z")).__next__
+        self.runtime.wall_clock = iter((NOW, NOW, NOW, NOW, "2025-12-31T23:59:59Z")).__next__
         result = self.execute().as_dict()
         self.assertEqual(result["reason"], "clock_invalid")
         self.assertEqual(result["finished_at"], NOW)

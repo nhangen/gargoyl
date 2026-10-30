@@ -116,12 +116,45 @@ class RepairRuntime:
                 return receipt("blocked", "already_claimed", stage="claim")
         except Exception:
             return receipt("outcome_unknown", "audit_unavailable", stage="claim")
+        last_valid = now
+
+        def finish_claim_refusal(outcome, reason):
+            terminal = receipt(outcome, reason, stage="claim", finished=last_valid)
+            try:
+                self.audit.finalize(c["click_id"], terminal)
+            except Exception:
+                return receipt("outcome_unknown", "audit_unavailable", stage="claim",
+                               finished=last_valid)
+            return terminal
+
         result = OperationResult("outcome_unknown", "interrupted", False)
         try:
             started = time.monotonic()
             injected_start = self.monotonic_clock()
             require(type(injected_start) in (float, int) and abs(injected_start) < 1e100)
             require(math.isfinite(injected_start))
+            # Claim may wait on storage. Reacquire evidence, then read time so
+            # neither lock contention nor a slow provider extends permission.
+            refusal = "plan_changed"
+            try:
+                fresh_evidence = self.evidence(p["target_host"])
+                refusal = "clock_invalid"
+                invocation_time = self.wall_clock()
+                require(timestamp(invocation_time) >= timestamp(last_valid))
+                last_valid = invocation_time
+                refusal = "confirmation_expired"
+                validate_confirmation(confirmation, plan, now=invocation_time)
+                refusal = "catalog_rejected"
+                self.catalog.validate_plan(plan, now=invocation_time)
+                refusal = "plan_changed"
+                current = self.catalog.plan(VerifiedRunbook(canonical(p["runbook"])),
+                                            p["target_host"], fresh_evidence,
+                                            now=invocation_time).as_dict()
+                require(all(current[key] == p[key] for key in
+                            ("target_host", "runbook", "evidence", "checks", "blocked")))
+            except Exception:
+                return finish_claim_refusal(
+                    "outcome_unknown" if refusal == "clock_invalid" else "blocked", refusal)
             if stop_event.is_set():
                 result = OperationResult("cancelled", "cancelled", True)
             else:
@@ -149,9 +182,9 @@ class RepairRuntime:
         finished = now
         try:
             finished = self.wall_clock()
-            require(timestamp(finished) >= timestamp(now))
+            require(timestamp(finished) >= timestamp(last_valid))
         except Exception:
-            finished = now
+            finished = last_valid
             result = OperationResult("outcome_unknown", "clock_invalid", result.cleanup_complete)
         terminal = receipt(result.outcome, result.reason, stage="completion",
                            cleanup=result.cleanup_complete, finished=finished)

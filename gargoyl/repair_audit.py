@@ -8,6 +8,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from gargoyl.repair_contract import (
+    MAX_REPAIR_BYTES,
     RepairAuditEntry,
     RepairConfirmation,
     RepairPlan,
@@ -74,12 +75,23 @@ class RepairAuditStore:
     def _read_all(self):
         if self._db is None or not self._path.is_file():
             raise _error()
-        inventory = self._db.execute("SELECT id, payload FROM inventory").fetchall()
-        require(len(inventory) == 1 and inventory[0][0] == 1)
-        count = int(self._open(inventory[0][1], b"inventory"))
-        require(0 <= count <= 10000)
-        rows = self._db.execute("SELECT id, payload FROM records LIMIT 10001").fetchall()
-        require(len(rows) == count)
+        # Inspect SQL types and lengths without materializing attacker-sized blobs.
+        inventory = self._db.execute(
+            "SELECT id, typeof(payload), length(payload) FROM inventory LIMIT 2").fetchall()
+        require(len(inventory) == 1 and inventory[0][0] == 1
+                and inventory[0][1] == "blob" and 29 <= inventory[0][2] <= 33)
+        bounds = self._db.execute(
+            "SELECT typeof(id), length(id), typeof(payload), length(payload) "
+            "FROM records LIMIT 10001").fetchall()
+        require(len(bounds) <= 10000)
+        require(all(kind == "text" and size == 36 and payload_kind == "blob"
+                    and 29 <= payload_size <= MAX_REPAIR_BYTES + 28
+                    for kind, size, payload_kind, payload_size in bounds))
+        inventory_payload = self._db.execute(
+            "SELECT payload FROM inventory WHERE id=1").fetchone()[0]
+        count = int(self._open(inventory_payload, b"inventory"))
+        require(0 <= count <= 10000 and len(bounds) == count)
+        rows = self._db.execute("SELECT id, payload FROM records LIMIT 10000")
         entries = {}
         for identity, payload in rows:
             host_id(identity)

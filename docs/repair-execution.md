@@ -12,7 +12,11 @@ This slice supplies no production identity/click integration.
 
 Catalog signatures/pins and confirmation binding are revalidated, and current
 preflight evidence/checks must match the confirmed plan. Evaluation time alone
-may advance. Missing disruptive-operation preconditions remain blocked. The
+may advance. After the durable claim (which can wait on SQLite), runtime obtains
+current evidence again and rechecks time, confirmation and catalog immediately
+before invocation. Expiry or changed preflight leaves the claim consumed and stores
+a claim-stage refusal; slow authorization/evidence cannot extend intent validity.
+Missing disruptive-operation preconditions remain blocked. The
 shipped RefusingAdapter supports no operations and refuses before claiming.
 Only self-authored synthetic adapters are used in tests. No host commands,
 restart, model loading, reconciliation or automatic telemetry-triggered repairs.
@@ -28,7 +32,9 @@ Backward finish time yields clock_invalid with the last validated start time.
 
 RepairAuditStore uses a separate AES-GCM repair domain, private newly created
 files, SQLite FULL synchronous transactions and an authenticated record count.
-Every transaction authenticates the inventory and every bounded record, including
+SQL row-count/type/length checks precede ciphertext materialization and decryption;
+oversized or wrongly typed storage fails closed. Every transaction authenticates
+the inventory and every bounded record, including
 for absent lookups. Existing corrupt databases, wrong keys, missing rows and
 capacity exhaustion fail closed. Claims consume click IDs before invocation;
 terminal envelopes are size-checked beforehand. Finalization is exact-idempotent
