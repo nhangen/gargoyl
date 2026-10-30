@@ -25,7 +25,7 @@ class CollectorTests(unittest.TestCase):
                   1024, "valid", 10, "reachable"]
         readings = {name: observation(value, source) for (name, source), value in zip(SOURCES.items(), values)}
         snapshot = collect(IDENTITY, NOW, readings)
-        self.assertEqual(len(snapshot["fields"]), 13)
+        self.assertEqual(len(snapshot["fields"]), 15)
         self.assertEqual(snapshot["fields"]["memory_headroom_bytes"]["value"], 1024)
         self.assertEqual(snapshot["fields"]["clock_skew_seconds"]["state"], "unknown")
         readings["daemon_state"]["value"] = "stopped"
