@@ -135,11 +135,12 @@ class OperatorReportTests(unittest.TestCase):
         self.assertNotIn(HOST, denied)
         self.assertNotIn(CLICK, denied)
         self.assertIn(OTHER, denied)
+        self.assertIn('missing_collector_heartbeat', denied)
         self.grants(evidence=(), audit=(HOST,))
         audit_only = self.report()
         self.assertIn(CLICK, audit_only)
         self.assertNotIn(OTHER, audit_only)
-        self.assertNotIn('heartbeat_missing', audit_only)
+        self.assertNotIn('missing_collector_heartbeat', audit_only)
 
     def test_signature_audience_expiry_and_changed_scope_fail_closed(self):
         for auth in (self.authorization(signing_key=Ed25519PrivateKey.generate()),
@@ -157,6 +158,18 @@ class OperatorReportTests(unittest.TestCase):
             return values
         with patch.object(self.store, 'snapshots', side_effect=revoke):
             self.assertEqual(self.report(), UNAVAILABLE)
+
+    def test_denied_and_missing_audits_have_identical_cap_edge_behavior(self):
+        self.execute()
+        self.grants(audit=())
+        size = sum(len(encode_snapshot(value)) for value in self.store.snapshots(now=NOW))
+        with patch('gargoyl.operator_report.MAX_INPUT_BYTES', size):
+            missing = self.report(audit_ids=[OTHER])
+            denied = self.report(audit_ids=[CLICK])
+            self.assertNotEqual(missing, UNAVAILABLE)
+            self.assertEqual(denied, missing)
+            self.grants()
+            self.assertEqual(self.report(audit_ids=[CLICK]), UNAVAILABLE)
 
     def test_expiry_during_read_and_failed_reads_never_return_partial_report(self):
         original = self.store.snapshots

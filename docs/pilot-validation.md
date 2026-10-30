@@ -24,7 +24,11 @@ generic unavailable presentation. Neither result establishes absence of effects.
 Inventory is an explicit list or tuple of at most 16 distinct canonical host UUIDs.
 Audit selection is a list or tuple of at most 32 distinct canonical UUIDs; duplicate,
 noncanonical and lazy inputs are rejected. Readers return at most 256 snapshots;
-canonical snapshot and audit payload bytes together must not exceed 1 MiB.
+canonical snapshot and authorized audit payload bytes together must not exceed
+1 MiB. Missing and denied audit lookups consume zero bytes of that report budget,
+so the budget cannot reveal whether a denied audit exists. All inspected audit
+wrappers still have the shared 64 KiB per-record limit and the 32-lookup limit;
+denied records are validated one at a time and are not retained for rendering.
 All supplied records are validated, including records later omitted by scope.
 Corrupt data, failed storage reads, invalid input or failed authorization returns a
 single generic unavailable page, without a partial apparently healthy report or
@@ -81,7 +85,7 @@ by this report or checklist.
 ## Local acceptance evidence for this slice
 
 `python -m unittest discover -s tests -p 'test_operator_report*.py' -v`
-executes 11 report tests. Nine use real signed read intents and temporary stores;
+executes 12 report tests. Ten use real signed read intents and temporary stores;
 the successful execution and finalize-failure cases also compose the actual
 operator authorization, repair runtime, bounded acquisition and status adapter.
 The only executable is a test-authored script printing synthetic status text.

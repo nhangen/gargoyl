@@ -72,13 +72,17 @@ def render_operator_report(*, authorization: OperatorReadAuthorization,
                 if type(entry) is not RepairAuditEntry:
                     raise ValueError('invalid report audit')
                 checked = RepairAuditEntry(entry.payload)
-                used += len(checked.payload)
-                if used > MAX_INPUT_BYTES:
-                    raise ValueError('report input limit exceeded')
                 value = checked.as_dict()
                 if value['confirmation']['click_id'] != identifier:
                     raise ValueError('invalid report audit binding')
                 entry = checked if value['plan']['target_host'] in scope.audit_hosts else None
+                # Denied and missing lookups consume the same report budget.
+                # Each inspected wrapper still has the shared 64 KiB cap, and
+                # there are at most 32 lookups, including denied ones.
+                if entry is not None:
+                    used += len(checked.payload)
+                    if used > MAX_INPUT_BYTES:
+                        raise ValueError('report input limit exceeded')
             audits.append(_body(render_audit_entry(entry)))
         evidence = _body(render_dashboard(
             visible, [identity for identity in inventory if identity in scope.evidence_hosts], now=now))
