@@ -1,9 +1,12 @@
 # Offline release lifecycle for an explicitly approved application root
 
 This release package is Python code, not a deployed service or a self-contained
-runtime distribution. There is no operational collection CLI or console entry point:
-the module CLI only manages installed code and cannot collect, serve, authenticate
-an operator, or execute a repair. Operational CLI integration is separate work.
+runtime distribution. The `python -m gargoyl.release` CLI manages installed code
+only; it cannot collect, serve, authenticate an operator or execute a repair.
+The separate `gargoyl` / `python -m gargoyl` CLI supports explicit local inspection
+and bounded one-shot capture; see [CLI usage](cli.md). Pip creates the `gargoyl`
+console wrapper. Lifecycle extraction itself creates no wrapper and uses module
+invocation with an explicitly selected code path.
 It requires POSIX, Python >=3.11 and the declared cryptography
 dependency. It installs no service, host command, credentials, launch agent, network
 listener or production configuration. Building/verifying it does not authorize use
