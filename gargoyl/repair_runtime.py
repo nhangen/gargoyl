@@ -107,7 +107,7 @@ class RepairRuntime:
         if stop_event.is_set():
             return receipt("cancelled", "cancelled")
         # Reserve the largest terminal envelope before consuming intent or invoking.
-        reserve = receipt("outcome_unknown", "preconditions_blocked", stage="completion",
+        reserve = receipt("outcome_unknown", "cleanup_incomplete", stage="completion",
                           cleanup=False, finished="9999-12-31T23:59:59.999999+00:00")
         RepairAuditEntry(canonical(dict(schema_version=1, state="finished", plan=p,
                                        confirmation=c, started_at=now, receipt=reserve.as_dict())))

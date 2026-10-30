@@ -181,6 +181,14 @@ class RepairExecutionTests(unittest.TestCase):
         with patch.object(self.adapter, "execute", return_value=True):
             self.assertEqual(self.execute().as_dict()["reason"], "invalid_result")
 
+    def test_incompatible_adapter_outcome_becomes_unknown(self):
+        with patch.object(self.adapter, "execute", return_value=OperationResult(
+                "failed", "clock_invalid", True)):
+            result = self.execute().as_dict()
+        self.assertEqual(result["outcome"], "outcome_unknown")
+        self.assertEqual(result["reason"], "invalid_result")
+        self.assertEqual(self.store.lookup(CLICK).as_dict()["receipt"], result)
+
     def test_cancellation_before_claim(self):
         event = threading.Event()
         event.set()
