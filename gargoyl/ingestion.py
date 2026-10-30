@@ -116,6 +116,11 @@ class EvidenceStore:
                 self._db.close()
             raise EvidenceReadError("evidence unavailable") from None
 
+    @property
+    def configured_hosts(self):
+        """Immutable inventory identifiers only; never expose ciphers or keys."""
+        return frozenset(self._ciphers)
+
     @contextmanager
     def _transaction(self):
         with self._lock:
