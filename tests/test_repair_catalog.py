@@ -141,3 +141,82 @@ class RepairCatalogTests(unittest.TestCase):
                        object.__new__(OperationResult)):
             with self.assertRaises(PolicyError):
                 result.validate()
+
+    def snapshot(self, *, when=NOW, value="running", source="daemon"):
+        return {"schema_version": 1, "host_id": HOST, "collected_at": when,
+                "fields": {"daemon_state": {"value": value, "source": source,
+                "timestamp": when, "freshness_seconds": 10,
+                "state": "observed", "sensitivity": "safe"}}}
+
+    def test_evidence_provenance_conflicts_and_missing_stale_future_are_conservative(self):
+        good = self.snapshot()
+        detached = self.catalog.plan(self.runbook, HOST, [good], now=NOW)
+        self.assertEqual(detached.as_dict()["checks"][1]["state"], "passed")
+        cases = (([], NOW), ([good], LATER),
+                 ([self.snapshot(when=LATER)], NOW),
+                 ([good, self.snapshot(value="stopped")], NOW))
+        for records, now in cases:
+            plan = self.catalog.plan(self.runbook, HOST, records, now=now)
+            self.assertEqual(plan.as_dict()["checks"][1]["state"], "unknown")
+        conflicts = self.catalog.plan(self.runbook, HOST, [good, self.snapshot(value="stopped"), good], now=NOW)
+        self.assertEqual(len(conflicts.as_dict()["evidence"]), 2)
+        good["fields"]["daemon_state"]["value"] = "stopped"
+        self.assertEqual(detached.as_dict()["evidence"][0]["fields"]["daemon_state"]["value"], "running")
+
+    def test_cross_host_raw_fields_and_excess_evidence_fail_closed(self):
+        for value in (dict(self.snapshot(), host_id=ACTOR),
+                      dict(self.snapshot(), raw_logs="private-detail")):
+            with self.assertRaises(PolicyError):
+                self.catalog.plan(self.runbook, HOST, [value], now=NOW)
+        with self.assertRaises(PolicyError):
+            self.catalog.plan(self.runbook, HOST, [self.snapshot()] * 17, now=NOW)
+        self.catalog.plan(self.runbook, HOST, [self.snapshot()] * 16, now=NOW)
+
+    def test_plan_expiry_boundary_overflow_and_tampered_expiry(self):
+        for now in (END, "2025-12-31T23:59:59Z"):
+            with self.assertRaises(PolicyError):
+                self.catalog.validate_plan(self.plan, now=now)
+        self.catalog.validate_plan(self.plan, now="2026-01-01T00:00:59.999999Z")
+        with self.assertRaises(PolicyError):
+            self.catalog.plan(self.runbook, HOST, [], now="9999-12-31T23:59:59Z")
+        shortened = dict(self.plan.as_dict(), expires_at=LATER)
+        with self.assertRaises(PolicyError):
+            self.catalog.validate_plan(RepairPlan(canonical(shortened)), now=NOW)
+
+    def test_trust_registry_copy_and_replacement_rejects_old_proof(self):
+        keys = {"test-key": self.key.public_key().public_bytes_raw()}
+        pins = frozenset({("status_refresh", 1, self.runbook.digest)})
+        catalog = RunbookCatalog(trusted_keys=keys, allowed_versions=pins)
+        keys.clear()
+        catalog.validate_runbook(self.runbook)
+        other = Ed25519PrivateKey.generate()
+        revoked = RunbookCatalog(trusted_keys={"test-key": other.public_key().public_bytes_raw()},
+                                 allowed_versions=pins)
+        with self.assertRaises(PolicyError):
+            revoked.validate_plan(self.plan, now=NOW)
+        for keys, pins in (({}, pins), ({"test-key": b"x"}, pins),
+                           ({"test-key": self.key.public_key().public_bytes_raw()}, frozenset())):
+            with self.assertRaises(PolicyError):
+                RunbookCatalog(trusted_keys=keys, allowed_versions=pins)
+
+    def test_exact_input_size_boundary_and_strict_utf8(self):
+        payload = manifest_bytes(self.manifest)
+        signature = self.key.sign(SIGNING_CONTEXT + payload)
+        self.catalog.verify_runbook(payload + b" " * (65536 - len(payload)), signature, key_id="test-key")
+        for raw in (payload + b" " * (65537 - len(payload)),
+                    payload.decode().encode("utf-16")):
+            with self.assertRaises(PolicyError):
+                self.catalog.verify_runbook(raw, signature, key_id="test-key")
+
+    def test_forged_confirmation_receipt_audit_and_operation_fields_rejected(self):
+        for cls in (RepairConfirmation, RepairReceipt, RepairAuditEntry):
+            with self.assertRaises(PolicyError):
+                object.__new__(cls).as_dict()
+        for result in (OperationResult("succeeded", "private-detail", True),
+                       OperationResult("failed", "operation_failed", 1)):
+            with self.assertRaises(PolicyError):
+                result.validate()
+        value = self.receipt()
+        value["preflight"]["evidence"] = [dict(self.snapshot(), raw_logs="private-detail")]
+        with self.assertRaises(PolicyError):
+            RepairReceipt(canonical(value))
