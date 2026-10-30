@@ -37,7 +37,11 @@ Capture uses the existing acquisition budget: five seconds including one second
 reserved for terminate/kill/reap cleanup, with 64 KiB combined stdout/stderr.
 Raw stderr is counted and discarded. Filesystem/config reads, process launch and
 OS scheduling are not forcibly bounded. SIGINT/SIGTERM request cleanup; repeated
-signals do not skip cleanup. Incomplete cleanup is reported without claiming
+signals do not skip cleanup. After acquisition finishes, the CLI takes one final
+interruption snapshot before publishing JSON; that snapshot determines both the
+JSON and exit status. Signals during or after publication do not change the
+committed result (a completed valid observation can therefore still exit 0).
+Incomplete cleanup is reported without claiming
 child containment. No background loop, network delivery, store or retry is added.
 
 Output is one JSON object containing `schema_version: 1`, `source_kind`,

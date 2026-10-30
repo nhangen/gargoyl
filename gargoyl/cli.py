@@ -4,7 +4,6 @@ import argparse
 import json
 import signal
 import sys
-import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +19,13 @@ class _Parser(argparse.ArgumentParser):
     def error(self, message):
         # argparse's default includes user-supplied argument values.
         raise ValueError('invalid CLI arguments')
+
+
+class _StopFlag:
+    requested = False
+
+    def is_set(self):
+        return self.requested
 
 
 def _utc_now():
@@ -92,19 +98,28 @@ def main(argv=None):
         print('CLI input or configuration unavailable or invalid.', file=sys.stderr)
         return 2
 
-    stop = threading.Event()
+    stop = _StopFlag()
+
+    def request_stop(signum, frame):
+        # Signal handlers must not acquire Event/Condition locks: a second
+        # signal can reenter while the first handler still owns that lock.
+        stop.requested = True
+
     previous = {}
     try:
         # Signals request cleanup instead of raising out of acquisition. Repeated
-        # signals also only set the event; restore caller handlers on every path.
+        # signals also only assign the flag; restore caller handlers on every path.
         for sig in (signal.SIGINT, signal.SIGTERM):
-            previous[sig] = signal.signal(sig, lambda signum, frame: stop.set())
+            previous[sig] = signal.signal(sig, request_stop)
         acquired = acquirer.acquire(kind, stop_event=stop)
+        # Commit one result before publication. Signals during/after output do
+        # not change the already chosen JSON or exit status.
+        interrupted = stop.is_set()
         _emit(kind, acquired.observed_at, acquired.result, completed=acquired.completed_at,
-              cleanup=acquired.cleanup_complete, interrupted=stop.is_set())
+              cleanup=acquired.cleanup_complete, interrupted=interrupted)
         if not acquired.cleanup_complete:
             return 3
-        if stop.is_set():
+        if interrupted:
             return 130
         return 1 if acquired.result.errors else 0
     except Exception:

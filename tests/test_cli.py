@@ -15,9 +15,9 @@ from unittest.mock import patch
 
 from test_collector_adapters import DOCTOR_TEXT
 
-from gargoyl.cli import main
+from gargoyl.cli import _emit, main
 from gargoyl.collector_acquisition import AcquisitionResult
-from gargoyl.collector_adapters import AdapterResult
+from gargoyl.collector_adapters import AdapterResult, parse_observations
 
 NOW = '2026-01-01T00:00:00Z'
 
@@ -123,6 +123,7 @@ class CliTests(unittest.TestCase):
                     time.sleep(.01)
                 self.assertTrue(marker.exists())
                 process.send_signal(sig)
+                process.send_signal(sig)
                 output, error = process.communicate(timeout=4)
                 self.assertEqual(process.returncode, 130, error)
                 value = json.loads(output)
@@ -168,3 +169,53 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(value['readings'], {})
                 self.assertEqual(value['errors'], ['invalid_state'])
             self.assertNotIn('12345', output)
+
+    def test_signal_during_publication_cannot_change_committed_result(self):
+        result = parse_observations('darkbloom_status_text_v1', b'Status: \xe2\x97\x8f Running',
+                                    observed_at=NOW)
+        def emit_then_interrupt(*args, **kwargs):
+            _emit(*args, **kwargs)
+            signal.raise_signal(signal.SIGINT)
+        for clean, expected in ((True, 0), (False, 3)):
+            acquired = AcquisitionResult('darkbloom_status_text_v1', NOW, NOW, result, clean)
+            with patch('gargoyl.cli.BoundedAcquirer.acquire', return_value=acquired), \
+                 patch('gargoyl.cli._emit', side_effect=emit_then_interrupt):
+                code, output, _ = self.run_main(self.capture())
+            self.assertEqual(code, expected)
+            value = json.loads(output)
+            self.assertEqual(bool(value['readings']), clean)
+            self.assertEqual(value['cleanup_complete'], clean)
+
+    def test_reentrant_signals_do_not_use_event_condition_lock(self):
+        # The previous Event.set handler deadlocks here: notify_all is called
+        # with its non-reentrant lock held, then the second signal calls set.
+        # Keep the probe isolated and give the parent an external deadline.
+        probe = r"""
+import signal
+import threading
+from unittest.mock import patch
+from gargoyl.cli import main
+from gargoyl.collector_acquisition import AcquisitionResult
+from gargoyl.collector_adapters import AdapterResult
+original = threading.Condition.notify_all
+raised = False
+def nested(self):
+    global raised
+    if not raised:
+        raised = True
+        signal.raise_signal(signal.SIGTERM)
+    return original(self)
+def acquire(self, source_kind, *, stop_event):
+    signal.raise_signal(signal.SIGINT)
+    signal.raise_signal(signal.SIGTERM)
+    assert stop_event.is_set()
+    return AcquisitionResult(source_kind, '2026-01-01T00:00:00Z',
+        '2026-01-01T00:00:00Z', AdapterResult({}, ('unavailable',)), True)
+with patch.object(threading.Condition, 'notify_all', nested), \
+     patch('gargoyl.cli.BoundedAcquirer.acquire', acquire):
+    raise SystemExit(main(ARGS))
+"""
+        probe = probe.replace('ARGS', repr(self.capture()))
+        result = subprocess.run([sys.executable, '-c', probe], capture_output=True, timeout=4)
+        self.assertEqual(result.returncode, 130, result.stderr)
+        self.assertTrue(json.loads(result.stdout)['cleanup_complete'])
