@@ -102,7 +102,9 @@ class RepairCatalogTests(unittest.TestCase):
             with self.assertRaises(PolicyError):
                 manifest_bytes(dict(self.manifest, **mutation))
         for payload in (b'{"version":1,"version":1}', b"x" * 65537, b"\xff", b"[" * 1000,
-                        b'{"schema_version":NaN}'):
+                        b'{"schema_version":NaN}',
+                        canonical(dict(self.manifest, command="private-detail")),
+                        canonical(dict(self.manifest, operation="private-detail"))):
             with self.assertRaises(PolicyError) as caught:
                 self.catalog.verify_runbook(payload, b"x" * 64, key_id="test-key")
             self.assertNotIn("private-detail", str(caught.exception))
@@ -220,3 +222,73 @@ class RepairCatalogTests(unittest.TestCase):
         value["preflight"]["evidence"] = [dict(self.snapshot(), raw_logs="private-detail")]
         with self.assertRaises(PolicyError):
             RepairReceipt(canonical(value))
+
+    def test_outcome_reason_cleanup_matrix_is_shared_at_both_boundaries(self):
+        valid = [
+            ("succeeded", "completed", True),
+            ("failed", "operation_failed", True),
+            ("cancelled", "cancelled", True),
+            ("outcome_unknown", "cancelled", False),
+            ("outcome_unknown", "audit_unavailable", True),
+            ("outcome_unknown", "cleanup_incomplete", False),
+        ]
+        uncertain = ("clock_invalid", "deadline_exceeded", "interrupted",
+                     "invalid_result", "recovery_required")
+        valid.extend(("outcome_unknown", reason, clean) for reason in uncertain for clean in (True, False))
+        invalid = [
+            ("failed", "clock_invalid", True),
+            ("failed", "cleanup_incomplete", True),
+            ("cancelled", "completed", True),
+            ("outcome_unknown", "cleanup_incomplete", True),
+            ("succeeded", "operation_failed", True),
+            ("failed", "operation_failed", False),
+            ("outcome_unknown", "completed", True),
+        ]
+        invalid.extend((outcome, reason, True) for reason in uncertain
+                       for outcome in ("succeeded", "failed", "cancelled"))
+        for expected, cases in ((True, valid), (False, invalid)):
+            for outcome, reason, cleanup in cases:
+                with self.subTest(outcome=outcome, reason=reason, cleanup=cleanup, valid=expected):
+                    result = OperationResult(outcome, reason, cleanup)
+                    receipt = canonical(dict(self.receipt(), outcome=outcome, reason=reason,
+                                             cleanup_complete=cleanup))
+                    if expected:
+                        self.assertEqual(result.validate(), result)
+                        RepairReceipt(receipt)
+                    else:
+                        with self.assertRaises(PolicyError):
+                            result.validate()
+                        with self.assertRaises(PolicyError):
+                            RepairReceipt(receipt)
+
+    def test_receipt_stage_matrix_and_audit_nested_validation(self):
+        valid = (("blocked", "authorization_denied", "preflight", True),
+                 ("blocked", "already_claimed", "claim", True),
+                 ("blocked", "audit_unavailable", "claim", True),
+                 ("outcome_unknown", "audit_unavailable", "completion", True),
+                 ("outcome_unknown", "recovery_required", "claim", False),
+                 ("failed", "operation_failed", "execution", True),
+                 ("outcome_unknown", "clock_invalid", "preflight", True))
+        invalid = (("succeeded", "completed", "execution", True),
+                   ("failed", "operation_failed", "preflight", True),
+                   ("blocked", "authorization_denied", "completion", True),
+                   ("blocked", "audit_unavailable", "execution", True),
+                   ("outcome_unknown", "cleanup_incomplete", "claim", False),
+                   ("outcome_unknown", "deadline_exceeded", "preflight", True),
+                   ("outcome_unknown", "recovery_required", "execution", False))
+        for accepted, cases in ((True, valid), (False, invalid)):
+            for outcome, reason, stage, cleanup in cases:
+                with self.subTest(outcome=outcome, reason=reason, stage=stage):
+                    receipt = dict(self.receipt(), outcome=outcome, reason=reason,
+                                   stage=stage, cleanup_complete=cleanup)
+                    audit = {"schema_version": 1, "state": "finished", "plan": self.plan.as_dict(),
+                             "confirmation": self.confirmation().as_dict(), "started_at": NOW,
+                             "receipt": receipt}
+                    if accepted:
+                        RepairReceipt(canonical(receipt))
+                        RepairAuditEntry(canonical(audit))
+                    else:
+                        with self.assertRaises(PolicyError):
+                            RepairReceipt(canonical(receipt))
+                        with self.assertRaises(PolicyError):
+                            RepairAuditEntry(canonical(audit))
