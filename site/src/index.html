@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Gargoyl — Darkbloom fleet monitoring you can inspect</title>
-  <meta name="description" content="Gargoyl is an in-development project for privacy-first evidence on inference-provider fleets, starting with Darkbloom: per-field state for routing, model residency and verification, with confirm-each-host repairs on the roadmap.">
+  <meta name="description" content="Gargoyl is an in-development project for privacy-first evidence on inference-provider fleets, starting with Darkbloom: per-field state for routing, model residency and verification, with confirm-each-host repairs in development.">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0c0e0d">
   <link rel="canonical" href="https://gargoyl.dev/">
@@ -12,6 +12,15 @@
   <meta property="og:description" content="Know what your Darkbloom fleet is really doing.">
   <meta property="og:url" content="https://gargoyl.dev/">
   <meta property="og:type" content="website">
+  <meta property="og:image" content="https://gargoyl.dev/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Gargoyl: Know what your Darkbloom fleet is really doing.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Gargoyl">
+  <meta name="twitter:description" content="Know what your Darkbloom fleet is really doing.">
+  <meta name="twitter:image" content="https://gargoyl.dev/og.png">
+  <meta name="twitter:creator" content="@nathan_hangen">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preload" href="fonts/archivo-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
@@ -47,7 +56,7 @@
       <div class="wrap hero-inner">
         <div class="hero-copy">
           <h1 id="hero-title">Know what your Darkbloom fleet is <em>really</em> doing.</h1>
-          <p class="lede">Built to show which hosts are up but not routed, missing a model, or past verification, with evidence behind every state. Repairs you confirm host by host are on the roadmap.</p>
+          <p class="lede">Built to show which hosts are up but not routed, missing a model, or past verification, with evidence behind every state. Repairs you confirm host by host are in development.</p>
           <div class="cta-row">
             <a class="btn btn-primary" {{link:github}}>
               View on GitHub
@@ -164,10 +173,10 @@
         <article class="principle">
           <div class="principle-text">
             <h3>Repairs under your control <span class="badge">In development</span></h3>
-            <p>Planned repairs are a short list of approved actions. Each is checked before it runs, targets one host, and waits for your confirmation. Nothing runs on its own.</p>
+            <p>Repairs come from a short list of approved actions. Each is checked before it runs, targets one host, and waits for your confirmation. Nothing runs on its own. Tested in simulation so far, not yet on live hosts.</p>
           </div>
           <figure class="snippet">
-            <figcaption>Sketch of the planned flow, not built yet</figcaption>
+            <figcaption>Sketch of the flow, simulated hosts only</figcaption>
 <pre tabindex="0" aria-label="Sketch of a planned repair confirmation"><code><span class="k">target</span>     <span class="v">b07d…41a8 only</span>
 <span class="k">evidence</span>   <span class="v">model_state</span> <span class="warn">stale</span><span class="v">, 43m</span>
 <span class="k">action</span>     <span class="v">from the approved list</span>
