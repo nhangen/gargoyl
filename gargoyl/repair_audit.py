@@ -81,7 +81,7 @@ class RepairAuditStore:
         require(len(inventory) == 1 and inventory[0][0] == 1
                 and inventory[0][1] == "blob" and 29 <= inventory[0][2] <= 33)
         bounds = self._db.execute(
-            "SELECT typeof(id), length(id), typeof(payload), length(payload) "
+            "SELECT typeof(id), length(CAST(id AS BLOB)), typeof(payload), length(payload) "
             "FROM records LIMIT 10001").fetchall()
         require(len(bounds) <= 10000)
         require(all(kind == "text" and size == 36 and payload_kind == "blob"
