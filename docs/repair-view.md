@@ -72,13 +72,11 @@ Five tests cover successful attribution, started-claim uncertainty, denial/expir
 wrong bindings, actual SQLite finalize failure and no automatic replay execution.
 The adapter asserts that the durable claim is readable before recording a call.
 
-Runtime dependency: `45e929bd8fea9bdfa7bfde96941c916fc7c56f1d` (PR #18). The five
-composed tests passed before the strengthened foundation matrix was integrated.
-Current integration blocker: runtime's completion-size reservation uses
-outcome_unknown/preconditions_blocked/completion with cleanup_complete=False,
-which the strengthened shared validator rejects. Runtime owner must update its
-reservation using semantically valid data while preserving the complete size bound;
-presentation does not weaken validation or edit the other lane's runtime. No production key, real repair, upstream command, host install,
+Runtime dependency: `c528b23fa435142e7cf344f2b54097d0364ea312` (PR #18).
+The complete integrated suite passes with the strengthened foundation outcome
+matrix and corrected runtime size reservation. Presentation does not weaken
+validation or edit the other lane's runtime. No production key, real repair,
+upstream command, host install,
 credential/permission/access/DNS change or deployment is part of this implementation.
 Epic #4 remains open for authenticated click integration, actual host preflight and
 operations, and deployed separation from collector identities. No one-click repair
