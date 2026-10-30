@@ -41,6 +41,16 @@ class EvidenceTests(unittest.TestCase):
         with sqlite3.connect(self.directory / "evidence.sqlite3") as db:
             db.execute(sql, parameters)
 
+    def test_configured_hosts_is_immutable_and_contains_no_ciphers(self):
+        store = self.store()
+        hosts = store.configured_hosts
+        self.assertEqual(hosts, frozenset({self.identity.host_id}))
+        self.assertIs(type(hosts), frozenset)
+        self.ciphers[OTHER_HOST] = SpoolCipher(CollectionIdentity(OTHER_HOST), b"y" * 32)
+        self.assertEqual(store.configured_hosts, hosts)
+        with self.assertRaises(AttributeError):
+            store.configured_hosts = frozenset({OTHER_HOST})
+
     def test_restart_dedup_and_ciphertext_only_payload(self):
         store = self.store()
         self.assertTrue(store.accept(snapshot(), now=NOW))
