@@ -261,7 +261,11 @@ def install_release(root, wheel, *, expected_sha256):
             staging.mkdir(mode=0o700)
             for name, payload in files.items():
                 destination = staging / name
-                destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                parent = staging
+                for part in PurePosixPath(name).parts[:-1]:
+                    parent = parent / part
+                    if not parent.exists():
+                        parent.mkdir(mode=0o700)
                 fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(fd, "wb") as stream:
                     stream.write(payload)

@@ -257,3 +257,17 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ReleaseError):
                 self.install(wheel, digest)
             self.assertFalse(self.root.exists())
+
+    def test_nested_package_directories_are_private_with_permissive_umask(self):
+        wheel, digest = make_wheel(self.parent, "0.9.0", additions={
+            "gargoyl/deep/middle/package/__init__.py": b"# synthetic nested package\n"})
+        original_umask = os.umask(0)
+        try:
+            self.install(wheel, digest)
+        finally:
+            os.umask(original_umask)
+        for path in [self.root, *self.root.rglob("*")]:
+            if path.is_dir():
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700, path.name)
+        self.assertEqual(inspect_release(self.root)["active"], digest)
+        uninstall_release(self.root)
