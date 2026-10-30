@@ -56,7 +56,7 @@ Even successful reported outcomes cannot authorize another operation.
 
 ## Verification and limitations
 
-Foundation pin: `8050816f235a7073b5a14572f40189c7de86d1f7` (PR #15).
+Foundation PR #15 is integrated through main `5480d71c71acbd1d7cb73e69da9d13361f793c59`.
 
 Run `python -m ruff check .` and `python -m unittest discover -s tests -v`.
 `tests/test_repair_view.py` generates ephemeral signing keys and synthetic fixtures;
@@ -68,13 +68,14 @@ or interrupted claims, safe failure text and absence of actionable controls.
 `tests/test_repair_view_integration.py` composes catalog verification, explicit
 synthetic host/actor authorization, a test-only recording adapter, real encrypted
 RepairAuditStore claims/runtime completion, restart/readback and rendered history.
-Five tests cover successful attribution, started-claim uncertainty, denial/expiry/
-wrong bindings, actual SQLite finalize failure and no automatic replay execution.
+Seven tests cover successful attribution, started-claim uncertainty, denial/expiry/
+wrong bindings, expiry during durable claim, genuinely changed evidence after claim,
+actual SQLite finalize failure and no automatic replay execution.
 The adapter asserts that the durable claim is readable before recording a call.
 
-Runtime dependency: `c528b23fa435142e7cf344f2b54097d0364ea312` (PR #18).
+Runtime dependency: `dfd085b091fb8679b54990114aa1920b08807a01` (PR #18).
 The complete integrated suite passes with the strengthened foundation outcome
-matrix and corrected runtime size reservation. Presentation does not weaken
+matrix, corrected runtime size reservation and post-claim preflight/expiry checks. Presentation does not weaken
 validation or edit the other lane's runtime. No production key, real repair,
 upstream command, host install,
 credential/permission/access/DNS change or deployment is part of this implementation.

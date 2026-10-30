@@ -6,9 +6,11 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from gargoyl.collector import collect
 from gargoyl.repair_audit import RepairAuditStore
 from gargoyl.repair_catalog import SIGNING_CONTEXT, RunbookCatalog
 from gargoyl.repair_contract import OperationResult, RepairConfirmation, canonical
@@ -141,6 +143,53 @@ class RepairViewIntegrationTests(unittest.TestCase):
         self.assertIn('recovery_required', render_audit_entry(self.store.lookup(CLICK)))
         self.assertIn('already_claimed', render_receipt(self.execute()))
         self.assertEqual(self.adapter.calls, 1)
+
+    def test_expiry_during_real_claim_renders_consumed_refusal(self):
+        original_claim = self.store.claim
+
+        def delayed_claim(*args, **kwargs):
+            claimed = original_claim(*args, **kwargs)
+            self.clock = END
+            return claimed
+
+        with patch.object(self.store, 'claim', side_effect=delayed_claim):
+            receipt = self.execute()
+        page = render_receipt(receipt)
+        self.assertIn('<dd>blocked</dd>', page)
+        self.assertIn('confirmation_expired', page)
+        self.assertIn('grants no retry permission', page)
+        self.assertNotIn('<dd>succeeded</dd>', page)
+        self.assertEqual(self.adapter.calls, 0)
+        self.restart()
+        entry = self.store.lookup(CLICK)
+        self.assertEqual(entry.as_dict()['receipt'], receipt.as_dict())
+        self.assertIn('confirmation_expired', render_audit_entry(entry))
+        self.assertFalse(self.store.claim(self.plan, self.confirmation, now=NOW))
+        with self.assertRaises(PolicyError):
+            self.execute()
+        self.assertEqual(self.adapter.calls, 0)
+
+    def test_changed_valid_evidence_after_claim_renders_refusal(self):
+        calls = []
+        changed = collect(HOST, NOW, {})
+
+        def evidence(host):
+            self.assertEqual(host, HOST)
+            calls.append(host)
+            return [] if len(calls) == 1 else [changed]
+
+        self.runtime.evidence = evidence
+        receipt = self.execute()
+        page = render_receipt(receipt)
+        self.assertIn('<dd>blocked</dd>', page)
+        self.assertIn('plan_changed', page)
+        self.assertIn('grants no retry permission', page)
+        self.assertEqual(self.adapter.calls, 0)
+        self.assertEqual(self.store.lookup(CLICK).as_dict()['receipt'], receipt.as_dict())
+        self.assertIn('plan_changed', render_audit_entry(self.store.lookup(CLICK)))
+        self.runtime.evidence = lambda host: []
+        self.assertIn('already_claimed', render_receipt(self.execute()))
+        self.assertEqual(self.adapter.calls, 0)
 
     def test_failed_operation_receipt_never_implies_retry_permission(self):
         self.adapter.result = OperationResult('failed', 'operation_failed', True)
