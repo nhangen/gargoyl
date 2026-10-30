@@ -68,6 +68,17 @@ class StatusRefreshTests(unittest.TestCase):
         self.addCleanup(reopened.close)
         self.assertEqual(reopened.snapshots(now=NOW), values)
 
+    def test_current_daemon_format_reaches_durable_normalized_evidence(self):
+        self.write_producer("print('Daemon: running (pid 12345, up 2h17m)')\n"
+                            "print('Machine ID: synthetic-private-id')\n"
+                            "print('Authorization: synthetic-private-detail')\n")
+        self.assertEqual(self.execute().outcome, "succeeded")
+        snapshot = self.store.snapshots(now=NOW)[0]
+        self.assertEqual(snapshot["fields"]["daemon_state"]["value"], "running")
+        self.assertIsNone(snapshot["fields"]["attestation_state"]["value"])
+        self.assertNotIn("synthetic-private", repr(snapshot))
+        self.assertNotIn("12345", repr(snapshot))
+
     def test_running_and_observation_start_preserved(self):
         self.write_producer("print('Status: ● Running')\n")
         self.adapter._wall_clock = iter((NOW, "2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z")).__next__
