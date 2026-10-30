@@ -1,4 +1,4 @@
-"""Explicit local status refresh; no automatic repairs or production enrollment."""
+"""Explicit local status/diagnostic observation; no automatic repairs or production enrollment."""
 
 import math
 import threading
@@ -11,22 +11,18 @@ from gargoyl.ingestion import EvidenceStore
 from gargoyl.repair_contract import OperationResult, RepairPlan, require
 from gargoyl.telemetry import PolicyError, host_id, timestamp
 
-_KIND = "darkbloom_status_text_v1"
-
 
 def _budget(value):
     require(type(value) in (int, float) and 0 < value <= 30 and math.isfinite(value))
     return float(value)
 
 
-class StatusRefreshAdapter:
+class _ObservationAdapter:
     """Borrowed acquirer/store remain caller-owned; invoke through RepairRuntime.
 
     Dependencies are trusted in-process objects, not wire-provided capabilities.
     Local filesystem latency cannot be forcibly bounded; late acceptance is unknown.
     """
-
-    supported_operations = frozenset({"status_refresh"})
 
     def __init__(self, target_host, *, acquirer, store, wall_clock,
                  monotonic_clock=time.monotonic, total_timeout_seconds=6.0):
@@ -51,12 +47,12 @@ class StatusRefreshAdapter:
         value = RepairPlan(plan.payload).as_dict()
         manifest = value["runbook"]["manifest"]
         require(value["target_host"] == self._host and not value["blocked"]
-                and manifest["operation"] == "status_refresh"
-                and manifest["runbook_id"] == "status_refresh"
+                and manifest["operation"] == self._operation
+                and manifest["runbook_id"] == self._operation
                 and self._total <= manifest["timeout_seconds"])
         require(callable(getattr(stop_event, "is_set", None)))
         if not self._lock.acquire(blocking=False):
-            raise PolicyError("status refresh already active")
+            raise PolicyError("host observation already active")
         try:
             require(not self._halted)
             return self._execute(stop_event)
@@ -73,7 +69,7 @@ class StatusRefreshAdapter:
             require(type(logical_start) in (int, float) and 0 <= logical_start <= 2**53
                     and math.isfinite(logical_start))
         except Exception:
-            raise PolicyError("invalid status refresh clock") from None
+            raise PolicyError("invalid host observation clock") from None
         previous = logical_start
 
         def late():
@@ -90,9 +86,9 @@ class StatusRefreshAdapter:
             started_at = self._wall_clock()
             timestamp(started_at)
         except Exception:
-            raise PolicyError("invalid status refresh clock") from None
+            raise PolicyError("invalid host observation clock") from None
         try:
-            acquired = self._acquirer.acquire(_KIND, stop_event=stop_event)
+            acquired = self._acquirer.acquire(self._kind, stop_event=stop_event)
         except BaseException:
             self._halted = True
             return result("outcome_unknown", "interrupted", False)
@@ -107,7 +103,7 @@ class StatusRefreshAdapter:
                 return result("outcome_unknown", "deadline_exceeded")
             if stop_event.is_set():
                 return result("outcome_unknown", "cancelled")
-            require(acquired.source_kind == _KIND and type(acquired.result) is AdapterResult)
+            require(acquired.source_kind == self._kind and type(acquired.result) is AdapterResult)
             observed = timestamp(acquired.observed_at)
             completed = timestamp(acquired.completed_at)
             if not timestamp(started_at) <= observed <= completed:
@@ -119,10 +115,10 @@ class StatusRefreshAdapter:
                         {"timeout", "unavailable", "permission_denied", "invalid_state"})
                 return (result("outcome_unknown", "deadline_exceeded") if errors == ("timeout",)
                         else result("failed", "operation_failed"))
-            require(set(readings) == {"daemon_state"})
-            field = readings["daemon_state"]
+            require(set(readings) == {self._metric})
+            field = readings[self._metric]
             require(type(field) is dict and field.get("timestamp") == acquired.observed_at
-                    and field.get("source") == "daemon" and field.get("state") == "observed"
+                    and field.get("source") == self._source and field.get("state") == "observed"
                     and type(field.get("freshness_seconds")) is int
                     and field["freshness_seconds"] == 60)
             now = self._wall_clock()
@@ -148,3 +144,23 @@ class StatusRefreshAdapter:
         except BaseException:
             return result("outcome_unknown", "audit_unavailable")
         return result("succeeded", "completed")
+
+
+class StatusRefreshAdapter(_ObservationAdapter):
+    """Capture only the fixed status source; success does not mean healthy."""
+
+    supported_operations = frozenset({"status_refresh"})
+    _operation = "status_refresh"
+    _kind = "darkbloom_status_text_v1"
+    _metric = "daemon_state"
+    _source = "daemon"
+
+
+class DiagnosticsCaptureAdapter(_ObservationAdapter):
+    """Capture the normalized doctor summary, including complete failed checks."""
+
+    supported_operations = frozenset({"diagnostics_capture"})
+    _operation = "diagnostics_capture"
+    _kind = "darkbloom_doctor_text_v1"
+    _metric = "doctor_state"
+    _source = "doctor"
