@@ -100,3 +100,8 @@ For separately authorized collector deployment, registry grants must include the
 `requests_total`/`daemon` and `tokens_total`/`daemon` pairs required by the expanded
 source allowlist, including unknown placeholders. This local inspection command
 does not migrate registries, load credentials or change live configuration.
+
+## Continuous monitoring
+
+`gargoyl monitor` composes the strict state reader and loopback viewer.
+`gargoyl status` checks the local viewer. See [operational setup and lifecycle](local-monitor.md).

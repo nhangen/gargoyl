@@ -34,5 +34,8 @@ Python 3.11+; create and activate a virtual environment with
 `python -m ruff check .` and `python -m unittest discover -s tests -v`.
 PRs and pushes to main run both checks on Python 3.11 and 3.12 in GitHub Actions. See [the v1 contract](docs/contract.md)
 for schema, privacy rules, collector/dashboard integration and security boundaries.
-This repository currently provides validated telemetry and security adapters; no live
-host enrollment, collection, dashboard service or repair execution is implied.
+For a runnable single-host collector and live loopback dashboard, see
+[continuous local monitoring](docs/local-monitor.md). It polls an explicitly supplied
+owner-local daemon-state file, keeps bounded memory history and offers foreground
+start/stop/status. Repairs remain disabled. No host enrollment or persistent service
+is enabled by installation.

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.gargoyl.monitor</string>
+  <key>ProgramArguments</key><array>
+    <string>/ABSOLUTE/ISOLATED/VENV/bin/gargoyl</string>
+    <string>monitor</string>
+    <string>--input</string><string>/Users/nhangen/.darkbloom/daemon-state.json</string>
+    <string>--owner-uid</string><string>501</string>
+    <string>--host</string><string>00000000-0000-4000-8000-000000000001</string>
+    <string>--interval</string><string>5</string>
+    <string>--port</string><string>8765</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+</dict></plist>
