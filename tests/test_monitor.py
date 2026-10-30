@@ -1,0 +1,184 @@
+import contextlib
+import http.client
+import io
+import json
+import os
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+from datetime import datetime
+from pathlib import Path
+
+from gargoyl.monitor import LocalMonitor, run_monitor, status
+
+HOST = '00000000-0000-4000-8000-000000000001'
+NOW = '2026-10-30T12:00:00Z'
+EPOCH = datetime.fromisoformat(NOW.replace('Z', '+00:00')).timestamp()
+
+
+class MonitorTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.directory = Path(self.temp.name).resolve()
+        self.directory.chmod(0o700)
+        self.path = self.directory / 'state.json'
+        self.write()
+        self.monitor = LocalMonitor(str(self.path), os.getuid(), HOST, interval=1, clock=lambda: NOW)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def write(self, requests=7, epoch=EPOCH):
+        data = dict(schema=1, pid=123, version='fixture', written_at=epoch,
+                    started_at=epoch-100, inference_active=False, warm_models=[],
+                    stats=dict(requests_served=requests, tokens_generated=42),
+                    secret='MUST_NEVER_APPEAR')
+        new = self.directory / 'replacement'
+        new.write_text(json.dumps(data))
+        new.replace(self.path)
+
+    def test_updates_bounded_history_and_current_failure_recovers(self):
+        for i in range(70):
+            self.write(i)
+            self.monitor.tick()
+        page = self.monitor.render_page(NOW)
+        self.assertIn('70 completed polls', page)
+        self.assertNotIn('MUST_NEVER_APPEAR', page)
+        self.assertEqual(len(self.monitor._history), 64)
+        self.path.unlink()
+        failed = self.monitor.tick()
+        self.assertIsNone(failed['fields']['requests_total']['value'])
+        self.assertEqual(self.monitor.snapshots(now=NOW), [failed])
+        self.assertIn('unavailable', self.monitor.render_page(NOW))
+        self.path.write_text('{malformed')
+        self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'invalid_state')
+        self.write(99)
+        self.assertEqual(self.monitor.tick()['fields']['requests_total']['value'], 99)
+        self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'none')
+
+    def test_source_time_stays_stale_and_future_rejected(self):
+        self.write(epoch=EPOCH-61)
+        snapshot = self.monitor.tick()
+        self.assertEqual(snapshot['fields']['requests_total']['state'], 'stale')
+        self.assertNotEqual(snapshot['fields']['requests_total']['timestamp'], NOW)
+        self.assertEqual(snapshot['fields']['heartbeat_age_seconds']['state'], 'observed')
+        self.write(epoch=EPOCH+1)
+        self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'invalid_state')
+
+    def test_protections_preserved(self):
+        self.directory.chmod(0o755)
+        self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'permission_denied')
+        self.directory.chmod(0o700)
+        self.path.unlink()
+        self.path.symlink_to(self.directory / 'absent')
+        self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'unavailable')
+
+    def test_live_http_repeated_updates_stop_restart_and_host_guard(self):
+        for _ in range(2):
+            stop = threading.Event()
+            ready = threading.Event()
+            ports = []
+            errors = []
+
+            def started(port):
+                ports.append(port)
+                ready.set()
+
+            def run():
+                try:
+                    run_monitor(self.monitor, port=0, stop=stop, ready=started)
+                except BaseException as error:
+                    errors.append(error)
+
+            thread = threading.Thread(target=run)
+            thread.start()
+            self.assertTrue(ready.wait(5))
+            try:
+                connection = http.client.HTTPConnection('127.0.0.1', ports[0], timeout=3)
+                connection.request('GET', '/', headers={'Host': 'evil.example'})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 403)
+                response.read()
+                connection.close()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(status(ports[0]), 0)
+                first = self.monitor._collections
+                self.write(100)
+                deadline = threading.Event()
+                # Real scheduler must acquire again without a browser request.
+                for attempt in range(30):
+                    if self.monitor._collections > first:
+                        break
+                    deadline.wait(0.1)
+                self.assertGreater(self.monitor._collections, first)
+                connection = http.client.HTTPConnection('127.0.0.1', ports[0], timeout=3)
+                connection.request('GET', '/')
+                response = connection.getresponse()
+                body = response.read().decode()
+                self.assertEqual(response.status, 200)
+                self.assertIn('http-equiv="refresh"', body)
+                self.assertIn('100', body)
+                self.assertIn('Repairs disabled', body)
+                self.assertNotIn('MUST_NEVER_APPEAR', body)
+                connection.close()
+            finally:
+                stop.set()
+                thread.join(8)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, [])
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(status(ports[0]), 1)
+
+    def test_cli_sigterm_and_sigint_cleanup(self):
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            process = subprocess.Popen([sys.executable, '-m', 'gargoyl', 'monitor',
+                '--input', str(self.path), '--owner-uid', str(os.getuid()),
+                '--host', HOST, '--port', '0', '--interval', '1'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                line = process.stdout.readline()
+                self.assertIn('Gargoyl listening on http://127.0.0.1:', line)
+                port = int(line.split('127.0.0.1:')[1].split('/')[0])
+                process.send_signal(sig)
+                out, err = process.communicate(timeout=8)
+                self.assertEqual(process.returncode, 0, err)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(status(port), 1)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+
+    def test_runtime_failure_closes_listener_and_staleness_ages_without_poll(self):
+        self.monitor.tick()
+        page = self.monitor.render_page('2026-10-30T12:02:00Z')
+        self.assertIn('collector_heartbeat_not_current', page)
+        self.assertIn('stale', page)
+        stop = threading.Event()
+        ports = []
+        original = self.monitor.tick
+        calls = 0
+
+        def fail_second():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError('PRIVATE_FAILURE_MUST_NOT_APPEAR')
+            return original()
+
+        self.monitor.tick = fail_second
+        with self.assertRaises(OSError):
+            run_monitor(self.monitor, port=0, stop=stop, ready=ports.append)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(status(ports[0]), 1)
+
+    def test_configuration_and_restart_clear_memory(self):
+        self.monitor.tick()
+        restarted = LocalMonitor(str(self.path), os.getuid(), HOST)
+        self.assertEqual(restarted.snapshots(now=NOW), [])
+        for interval in (0, 61, float('nan'), True):
+            with self.assertRaises(ValueError):
+                LocalMonitor(str(self.path), os.getuid(), HOST, interval=interval)

@@ -60,6 +60,9 @@ class EvidenceViewer(HTTPServer):
         self.refresh_seconds = refresh_seconds
         super().__init__(('127.0.0.1', port), _Handler)
 
+    def render_page(self, now):
+        return render_dashboard(self.reader.snapshots(now=now), self.expected_hosts, now)
+
     def get_request(self):
         connection, address = super().get_request()
         connection.settimeout(5)
@@ -119,7 +122,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             now = self.server.clock()
             timestamp(now)
-            page = render_dashboard(self.server.reader.snapshots(now=now), self.server.expected_hosts, now)
+            page = self.server.render_page(now)
             page = page.replace('Read-only snapshot view. Regenerate after collection and at least every minute.',
                                 'Read-only stored evidence. This page refreshes automatically; evaluation time below identifies the current report.')
             status = 200

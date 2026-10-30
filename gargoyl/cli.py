@@ -84,8 +84,19 @@ def main(argv=None):
     capture.add_argument('--cwd', required=True, help='Explicit absolute working directory.')
     capture.add_argument('--environment', required=True, help='Explicit JSON environment file; {} is allowed. '
                          'No parent environment is inherited.')
+    monitor = commands.add_parser('monitor', help='Continuously read owner-local state and serve a loopback dashboard.')
+    monitor.add_argument('--input', required=True, help='Absolute private daemon-state file.')
+    monitor.add_argument('--owner-uid', required=True, type=int)
+    monitor.add_argument('--host', required=True, help='Stable opaque host UUID; no enrollment implied.')
+    monitor.add_argument('--interval', type=float, default=5)
+    monitor.add_argument('--port', type=int, default=8765)
+    status = commands.add_parser('status', help='Check the local viewer; does not imply source health.')
+    status.add_argument('--port', type=int, default=8765)
     try:
         args = parser.parse_args(argv)
+        if args.command in {'monitor', 'status'}:
+            from gargoyl.monitor import main as monitor_main
+            return monitor_main(args)
         if args.command == 'inspect' and args.source == 'state':
             if args.observed_at is not None or args.owner_uid is None:
                 raise ValueError('invalid state inspection arguments')

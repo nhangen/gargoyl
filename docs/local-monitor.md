@@ -1,0 +1,97 @@
+# Continuous single-host read-only monitor
+
+Install into an isolated virtual environment (Python 3.11 or newer):
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install /absolute/path/to/gargoyl-0.1.0-py3-none-any.whl
+```
+
+Choose a stable opaque UUID for this host. It is an inventory label, not a key,
+credential or enrollment grant. Explicitly provide the owner UID and canonical
+absolute source path. Never use sudo or relax source permissions to make a read
+succeed. On macOS `/var` and `/tmp` are symlinks; canonicalize paths before use.
+
+Start in a terminal (MBP-26 pilot example, already authorized owner-local source):
+
+```sh
+.venv/bin/gargoyl monitor \
+  --input /Users/nhangen/.darkbloom/daemon-state.json \
+  --owner-uid 501 \
+  --host 00000000-0000-4000-8000-000000000001 \
+  --interval 5 --port 8765
+```
+
+Open `http://127.0.0.1:8765/`. The first poll is immediate, subsequent polls use a
+monotonic schedule (1–60 seconds, default 5). Missed intervals are skipped rather
+than replayed. HTTP serving runs independently of polling. The browser reloads
+every two seconds, including error responses. The existing bounded header reads,
+Host/Origin checks, CSP and no-store policy apply. Only numeric IPv4 loopback is
+bound; no remote interface option exists. A busy port fails without replacing or
+signaling an existing process. `--port 0` chooses an ephemeral port printed at startup.
+
+In another terminal:
+
+```sh
+.venv/bin/gargoyl status --port 8765
+```
+
+Status exits 0 when the local Gargoyl viewer answers successfully, 1 when it is
+unavailable. It does not establish producer freshness, collection cadence or host
+health; check poll count, source timestamps, errors and evidence states in the page.
+No remote request, credential or PID file is involved. Stop with Ctrl-C in the
+owning terminal, or send SIGTERM to that known foreground process. Both stop
+polling, finish any active bounded HTTP request, join the viewer and close the
+listener. Repeated signals request the same graceful stop. Restart by running the
+same command. Configuration is explicit CLI arguments; nothing is auto-discovered.
+
+## Evidence and privacy
+
+Every poll uses the shared strict owner-local state reader unchanged: private
+owner-matched parent, owned regular single-link file, no symlink traversal, bounded
+64 KiB input and strict schema validation. No producer command runs and no repair
+module is constructed. Only allowlisted metrics, fixed errors and timestamps reach
+the UI. Raw source data, model names, identities and exception strings are omitted.
+
+Current evidence uses the latest poll exclusively. Missing, malformed, oversized,
+future or permission-denied source evidence becomes unknown with a fixed read
+error; a previous good sample cannot supply current counters. A stale source keeps
+its original timestamp and stale state even while the collector heartbeat is
+current. Empty valid sources remain unknown. Repeated values are cumulative
+observations, not usage deltas, earnings, daemon liveness or proof of inference.
+Detailed evidence is evaluated against the current clock on every browser request.
+
+The last 64 normalized samples remain in process memory for recent traffic
+inspection. Nothing is persisted to disk or delivered to another service; no keys
+are generated or loaded. Restart clears history. This local runtime deliberately
+does not activate encrypted durable fleet spooling, mTLS delivery, registry grants
+or multi-host ingestion. Those existing APIs require separately supplied keys and
+explicit deployment configuration. This avoids introducing credentials to the
+read-only pilot. Collection/storage failures stop the process with exit 1 and a
+fixed error; source read failures keep polling for recovery. Invalid caller
+configuration exits 2. Filesystem operations are not forcibly time-bounded.
+
+## Optional user-level persistence (not activated)
+
+A service manager can execute the exact absolute `.venv/bin/gargoyl monitor ...`
+argument vector above with the same ordinary user, owner UID, canonical path,
+interval and port. Use a private user-owned service file and a trusted local source.
+No environment variables or credentials are required. A macOS LaunchAgent may use
+`ProgramArguments` for that vector, `RunAtLoad` and `KeepAlive` only after an explicit
+choice to enable login persistence; remove/unload it to disable persistence.
+Gargoyl neither installs nor enables any service. Do not add OS grants or change
+security settings without separate approval. Foreground start/stop/status is fully
+implemented; no login/boot service is running as a result of installation.
+
+## Verification
+
+`python -m unittest discover -s tests -p test_monitor.py -v` checks real loopback
+requests, independent repeated polling, Host rejection, missing/malformed recovery,
+stale/future timestamps, ownership protection, bounded history, restart and actual
+SIGINT/SIGTERM shutdown. Fixtures contain synthetic private text that must never
+appear in HTML. These tests do not read the real daemon or execute repairs.
+
+A prepared, inactive [LaunchAgent example](examples/dev.gargoyl.monitor.plist)
+contains the MBP-26 arguments. Replace its absolute venv placeholder before any
+use. Both persistence flags are false. It is documentation only and has not been
+copied into `~/Library/LaunchAgents`, loaded or enabled.
