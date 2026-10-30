@@ -73,7 +73,7 @@ wrong bindings, expiry during durable claim, genuinely changed evidence after cl
 actual SQLite finalize failure and no automatic replay execution.
 The adapter asserts that the durable claim is readable before recording a call.
 
-Runtime dependency: `dfd085b091fb8679b54990114aa1920b08807a01` (PR #18).
+Runtime dependency: `24c5393c19ad986313edeca05b39fa49666a54d2` (PR #18).
 The complete integrated suite passes with the strengthened foundation outcome
 matrix, corrected runtime size reservation and post-claim preflight/expiry checks. Presentation does not weaken
 validation or edit the other lane's runtime. No production key, real repair,
