@@ -1,0 +1,115 @@
+"""Explicit local parsing or one-shot acquisition, without persistence or repairs."""
+
+import argparse
+import json
+import signal
+import sys
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+from gargoyl.collector_acquisition import BoundedAcquirer
+from gargoyl.collector_adapters import MAX_SOURCE_BYTES, parse_observations
+from gargoyl.telemetry import timestamp
+
+KINDS = {'status': 'darkbloom_status_text_v1', 'doctor': 'darkbloom_doctor_text_v1'}
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse's default includes user-supplied argument values.
+        raise ValueError('invalid CLI arguments')
+
+
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+
+def _read(path):
+    if path == '-':
+        return sys.stdin.buffer.read(MAX_SOURCE_BYTES + 1)
+    with Path(path).open('rb') as stream:
+        return stream.read(MAX_SOURCE_BYTES + 1)
+
+
+def _environment(path):
+    if path == '-':
+        raise ValueError('environment requires an explicit file')
+    payload = _read(path)
+    if len(payload) > MAX_SOURCE_BYTES:
+        raise ValueError('environment limit exceeded')
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate environment key')
+            result[key] = value
+        return result
+
+    return json.loads(payload.decode('utf-8'), object_pairs_hook=unique)
+
+
+def _emit(kind, observed, result, *, completed=None, cleanup=None, interrupted=False):
+    value = dict(schema_version=1, source_kind=kind, observed_at=observed,
+                 readings=result.readings, errors=list(result.errors))
+    if cleanup is not None:
+        value.update(completed_at=completed, cleanup_complete=cleanup)
+    if interrupted or cleanup is False:
+        value.update(readings={}, errors=['unavailable'])
+    print(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False))
+
+
+def main(argv=None):
+    parser = _Parser(description=__doc__)
+    commands = parser.add_subparsers(dest='command', required=True)
+    inspect = commands.add_parser('inspect', help='Parse supplied bytes; execute nothing.')
+    inspect.add_argument('source', choices=KINDS)
+    inspect.add_argument('--input', required=True, help='File or - for stdin; at most 64 KiB.')
+    inspect.add_argument('--observed-at', required=True, help='Actual UTC source observation time.')
+    capture = commands.add_parser('capture', help='Explicitly execute one bounded local acquisition.',
+        description='Upstream status/doctor may read keys/files and use the network. '
+                    'This is not a sandbox, authenticated repair, or durable collection.')
+    capture.add_argument('source', choices=KINDS)
+    capture.add_argument('--executable', required=True, help='Explicit trusted absolute executable.')
+    capture.add_argument('--cwd', required=True, help='Explicit absolute working directory.')
+    capture.add_argument('--environment', required=True, help='Explicit JSON environment file; {} is allowed. '
+                         'No parent environment is inherited.')
+    try:
+        args = parser.parse_args(argv)
+        kind = KINDS[args.source]
+        if args.command == 'inspect':
+            timestamp(args.observed_at)
+            payload = _read(args.input)
+            result = parse_observations(kind, payload, observed_at=args.observed_at)
+            _emit(kind, args.observed_at, result)
+            return 1 if result.errors else 0
+        acquirer = BoundedAcquirer(args.executable, environment=_environment(args.environment),
+            cwd=args.cwd, wall_clock=_utc_now, monotonic_clock=time.monotonic,
+            total_timeout_seconds=5, cleanup_grace_seconds=1, max_output_bytes=65536)
+    except (ValueError, OSError, UnicodeError, RecursionError):
+        print('CLI input or configuration unavailable or invalid.', file=sys.stderr)
+        return 2
+
+    stop = threading.Event()
+    previous = {}
+    try:
+        # Signals request cleanup instead of raising out of acquisition. Repeated
+        # signals also only set the event; restore caller handlers on every path.
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            previous[sig] = signal.signal(sig, lambda signum, frame: stop.set())
+        acquired = acquirer.acquire(kind, stop_event=stop)
+        _emit(kind, acquired.observed_at, acquired.result, completed=acquired.completed_at,
+              cleanup=acquired.cleanup_complete, interrupted=stop.is_set())
+        if not acquired.cleanup_complete:
+            return 3
+        if stop.is_set():
+            return 130
+        return 1 if acquired.result.errors else 0
+    except Exception:
+        print('Acquisition unavailable; no result established.', file=sys.stderr)
+        return 1
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
