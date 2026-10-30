@@ -195,6 +195,48 @@ def validate_confirmation(confirmation, plan, *, now):
     return RepairConfirmation(canonical(c))
 
 
+
+def validate_outcome(outcome, reason, cleanup_complete, *, stage):
+    """Validate semantic consistency only, never authority or actual side effects.
+
+    Adapter results use stage=completion because they describe a returned call;
+    runtime receipts additionally record the real control-flow stage.
+    """
+    enum(outcome, OUTCOMES)
+    enum(reason, REASONS)
+    enum(stage, STAGES)
+    require(type(cleanup_complete) is bool)
+    refusals = {
+        "preconditions_blocked", "authorization_denied", "confirmation_expired",
+        "plan_changed", "catalog_rejected", "already_claimed", "operation_unavailable",
+    }
+    if reason == "completed":
+        require(outcome == "succeeded" and cleanup_complete and stage == "completion")
+    elif reason in refusals:
+        require(outcome == "blocked" and cleanup_complete and stage in {"preflight", "claim"})
+    elif reason == "operation_failed":
+        require(outcome == "failed" and cleanup_complete and stage in {"execution", "completion"})
+    elif reason == "cancelled":
+        require(outcome in {"cancelled", "outcome_unknown"})
+        require(outcome != "cancelled" or cleanup_complete)
+    elif reason == "audit_unavailable":
+        require((outcome == "blocked" and cleanup_complete and stage in {"preflight", "claim"})
+                or (outcome == "outcome_unknown" and stage in {"claim", "execution", "completion"}))
+    else:
+        # Clock regression, interruption, unresolved claims, invalid results and
+        # deadline/cleanup uncertainty must never be presented as definite failure.
+        enum(reason, {"clock_invalid", "interrupted", "recovery_required",
+                      "deadline_exceeded", "cleanup_incomplete", "invalid_result"})
+        require(outcome == "outcome_unknown")
+        if reason in {"deadline_exceeded", "cleanup_incomplete", "invalid_result"}:
+            require(stage in {"execution", "completion"})
+        if reason == "recovery_required":
+            require(stage in {"claim", "completion"})
+        if reason == "cleanup_incomplete":
+            require(not cleanup_complete)
+    if not cleanup_complete:
+        require(outcome == "outcome_unknown")
+
 def _receipt(value):
     exact(value, "schema_version actor_id click_id target_host runbook_id version runbook_digest plan_digest preflight started_at finished_at stage outcome reason cleanup_complete")
     integer(value["schema_version"], 1, 1)
@@ -211,15 +253,9 @@ def _receipt(value):
             and value["runbook_id"] == manifest["runbook_id"] and value["version"] == manifest["version"]
             and value["runbook_digest"] == hashlib.sha256(manifest_bytes(manifest)).hexdigest())
     require(timestamp(value["finished_at"]) >= timestamp(value["started_at"]))
-    enum(value["stage"], STAGES)
-    enum(value["outcome"], OUTCOMES)
-    enum(value["reason"], REASONS)
-    require(type(value["cleanup_complete"]) is bool)
+    validate_outcome(value["outcome"], value["reason"], value["cleanup_complete"], stage=value["stage"])
     if value["outcome"] == "succeeded":
-        require(value["stage"] == "completion" and value["reason"] == "completed"
-                and value["cleanup_complete"] and not p["blocked"])
-    if not value["cleanup_complete"]:
-        require(value["outcome"] == "outcome_unknown")
+        require(not p["blocked"])
     return value
 
 
@@ -247,12 +283,8 @@ class OperationResult:
     def validate(self):
         require(type(self) is OperationResult)
         enum(getattr(self, "outcome", None), {"succeeded", "failed", "cancelled", "outcome_unknown"})
-        enum(getattr(self, "reason", None), REASONS)
-        require(type(getattr(self, "cleanup_complete", None)) is bool)
-        if self.outcome == "succeeded":
-            require(self.reason == "completed" and self.cleanup_complete)
-        if not self.cleanup_complete:
-            require(self.outcome == "outcome_unknown")
+        validate_outcome(self.outcome, getattr(self, "reason", None),
+                         getattr(self, "cleanup_complete", None), stage="completion")
         return OperationResult(self.outcome, self.reason, self.cleanup_complete)
 
 

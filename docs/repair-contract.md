@@ -121,6 +121,36 @@ Enums exported from repair_contract:
   cancelled, cleanup_incomplete, interrupted, invalid_result, recovery_required,
   clock_invalid.
 
+### Shared outcome compatibility (validation, not authorization)
+
+`validate_outcome(outcome, reason, cleanup_complete, *, stage)` is shared by
+OperationResult.validate, RepairReceipt, and transitively finished RepairAuditEntry.
+The schemas and enums are unchanged; these combinations are now enforced:
+
+| Reason | Outcome | Stage | Cleanup |
+| --- | --- | --- | --- |
+| completed | succeeded | completion | true |
+| preconditions_blocked, authorization_denied, confirmation_expired, plan_changed, catalog_rejected, already_claimed, operation_unavailable | blocked | preflight or claim | true |
+| operation_failed | failed | execution or completion | true |
+| cancelled | cancelled or outcome_unknown | any | cancelled requires true; unknown permits either |
+| audit_unavailable | blocked | preflight or claim | true |
+| audit_unavailable | outcome_unknown | claim, execution or completion | either |
+| deadline_exceeded, invalid_result | outcome_unknown | execution or completion | either |
+| cleanup_incomplete | outcome_unknown | execution or completion | false |
+| recovery_required | outcome_unknown | claim or completion | either |
+| clock_invalid, interrupted | outcome_unknown | any | either |
+
+No other combination is accepted. Adapter results are validated with stage=completion
+(the call returned) and cannot use blocked. Runtime receipts must use their actual
+stage. A timeout, interruption or invalid result cannot establish definite failure;
+clean process cleanup alone cannot establish whether a side effect occurred.
+Cancellation is definite only when the adapter can establish its outcome; otherwise
+return outcome_unknown/cancelled. Before invocation, refuse as blocked at preflight
+or claim; after invocation an audit failure must be outcome_unknown. A known safe
+pre-invocation cancellation can use cancelled/cancelled; interrupted is conservative
+uncertainty. None of these validations verifies an operation actually took place or
+that an actor was authorized.
+
 Raw errors/stdout/stderr, prompts/completions, model labels, addresses and credentials
 are never fields. Exact outcomes mean honest fixed stage/status/reason and uncertainty,
 not a raw exception dump. Backward wall-clock movement after starting must be reported
@@ -146,7 +176,7 @@ adapter.execute(plan: RepairPlan, *, stop_event) -> OperationResult
 `OperationResult(outcome, reason, cleanup_complete)` is a frozen dataclass with
 `.validate() -> detached OperationResult`; runtime must call it after checking exact
 type. Allowed outcomes exclude blocked (refuse before invoking); enums as above.
-Success requires completed/clean; incomplete cleanup requires outcome_unknown.
+The shared compatibility validator below also applies; incomplete cleanup requires outcome_unknown.
 Adapter must actually honor a total cleanup-inclusive deadline and return truthful
 certainty. A background thread timeout cannot stop arbitrary side effects. No default
 production adapter; refusal happens before a durable claim. Fakes/synthetic processes
