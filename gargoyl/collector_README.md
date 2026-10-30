@@ -115,3 +115,23 @@ The runtime does not yet acquire launchd, model residency, pressure, attestation
 usage, routing or independent coordinator observations. The two text parsers must
 not infer these from unrelated status/doctor details. Live acquisition, scheduling,
 key/certificate custody and target-host acceptance remain outstanding for issue #2.
+
+
+### Additional observed status dialect
+
+The user-supplied current status example starts with
+`Daemon: running (pid <positive decimal>, up <hours>h<minutes>m)`.
+The parser additionally accepts exactly this running-only shape (ASCII decimal
+PID of 1–10 digits, hours of 1–6 digits, minutes 0–59); these numeric limits are
+parser bounds, not a claim about all producer versions. The producer revision
+for this supplied format is unknown. No current-format stopped, day, seconds-only,
+or minutes-only uptime variant has been verified or added. The old pinned
+`Status: ● Running` / `Status: ○ Stopped` forms remain supported.
+
+Exactly one state-looking Status/Daemon line is required across both dialects;
+repeated, mixed, malformed or contradictory candidates fail closed. Other detail
+lines are ignored within the existing UTF-8/control/64 KiB limits. Only normalized
+`daemon_state` leaves parsing; PID, uptime, machine identity, model details,
+authorization and traffic text are discarded. Running proves neither app-attest
+nor overall health. Tests replace the supplied installation details with synthetic
+values and execute no real producer command.

@@ -1,7 +1,9 @@
 """Bounded in-memory parsers for pinned Darkbloom text formats; no execution.
 
 Producer: darkbloomdev/darkbloom a6f7f483ab88806c633e37e00339c13e37ab62f4,
-provider/src/main.rs cmd_status and cmd_doctor. Only fixed states leave parsing.
+provider/src/main.rs cmd_status and cmd_doctor. The additional Daemon line is
+limited to the user-supplied hours/minutes running format; producer revision unknown.
+Only fixed states leave parsing.
 """
 import re
 from dataclasses import dataclass
@@ -36,10 +38,16 @@ def execution_failure(code):
 
 
 def _status(lines):
-    candidates = [line.strip() for line in lines if line.strip().startswith("Status")]
+    # Treat all state-looking lines across both dialects as candidates, including
+    # malformed ones. Never select a preferred dialect from a conflicting report.
+    candidates = [line.strip() for line in lines
+                  if line.strip().startswith(("Status", "Daemon"))]
     if len(candidates) != 1:
         return None
     if re.fullmatch(r"Status: +● Running(?: — serving [^\r\n]+)?", candidates[0]):
+        return "running"
+    if re.fullmatch(r"Daemon: +running \(pid [1-9][0-9]{0,9}, up [0-9]{1,6}h[0-5]?[0-9]m\)",
+                    candidates[0]):
         return "running"
     if re.fullmatch(r"Status: +○ Stopped", candidates[0]):
         return "stopped"

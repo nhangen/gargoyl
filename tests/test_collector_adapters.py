@@ -38,6 +38,45 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(result.readings["daemon_state"]["value"], value)
             self.assertNotIn("synthetic-private", repr(result))
 
+    def test_current_daemon_line_normalizes_only_process_state(self):
+        text = """Daemon: running (pid 12345, up 2h17m)
+Autopilot: synthetic policy
+Model switch: synthetic-private-model
+Authorization: synthetic-unverified-detail
+Machine ID: synthetic-private-id
+Traffic: synthetic counters
+Warm models: synthetic-private-model
+Memory: synthetic detail
+Totals: synthetic counters
+Slot posture: synthetic detail
+"""
+        result = parse(STATUS, text)
+        self.assertEqual(result.errors, ())
+        self.assertEqual(set(result.readings), {"daemon_state"})
+        field = result.readings["daemon_state"]
+        self.assertEqual((field["value"], field["source"], field["timestamp"]),
+                         ("running", "daemon", NOW))
+        self.assertNotIn("synthetic-private", repr(result))
+        self.assertNotIn("12345", repr(result))
+        self.assertNotIn("2h17m", repr(result))
+
+    def test_current_status_duplicates_mixed_dialects_and_unseen_forms_rejected(self):
+        current = "Daemon: running (pid 12345, up 2h17m)"
+        cases = [current + "\n" + current,
+                 current + "\nStatus: ● Running", current + "\nStatus: ○ Stopped",
+                 "Status: ● Running\nDaemon: stopped", current + "\nDaemon: malformed",
+                 current.replace("running", "Running"), current.replace("running", "stopped"),
+                 current.replace("12345", "0"), current.replace("12345", "-1"),
+                 current.replace("12345", "１２３"), current.replace("2h17m", "2h60m"),
+                 current.replace("2h17m", "17m"), current.replace("2h17m", "1d2h17m"),
+                 current[:-1], current + " unexpected", "Daemon: running",
+                 current.replace("12345", "1" * 11), current.replace("2h", "1" * 7 + "h")]
+        for text in cases:
+            with self.subTest(text=text):
+                result = parse(STATUS, text)
+                self.assertEqual(result.readings, {})
+                self.assertEqual(result.errors, ("invalid_state",))
+
     def test_status_ambiguity_rejected(self):
         for text in ("", "Status: ● Running\nStatus: ○ Stopped", "Status: ● Running\nStatus: ● Running",
                      "Status: ● Running extra", "Status: ○ Stopped — serving synthetic",
