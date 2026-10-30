@@ -8,7 +8,7 @@ status_refresh, and execute(plan, *, stop_event) returning OperationResult.
 
 The acquirer and store are explicit, trusted concrete dependencies and remain
 caller-owned. Construction checks host membership in EvidenceStore's fixed cipher
-inventory (currently its private `_ciphers` mapping; no public accessor exists),
+inventory through its read-only `configured_hosts` frozenset,
 clock callability and finite budgets. Total budget must cover the acquirer's full
 execution/cleanup budget and fit the signed manifest timeout. The adapter rejects
 wrong-host, blocked, diagnostics and disruptive requests before launching. The

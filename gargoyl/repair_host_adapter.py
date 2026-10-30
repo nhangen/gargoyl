@@ -34,9 +34,7 @@ class StatusRefreshAdapter:
         require(type(acquirer) is BoundedAcquirer and type(store) is EvidenceStore)
         budget = _budget(total_timeout_seconds)
         require(acquirer.total_timeout_seconds <= budget)
-        # EvidenceStore currently has no public inventory accessor. Its fixed,
-        # constructor-validated cipher inventory is checked without touching keys.
-        require(target_host in store._ciphers)
+        require(target_host in store.configured_hosts)
         require(callable(wall_clock) and callable(monotonic_clock))
         self._host, self._acquirer, self._store = target_host, acquirer, store
         self._wall_clock, self._clock = wall_clock, monotonic_clock
