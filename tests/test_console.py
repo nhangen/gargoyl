@@ -1,3 +1,4 @@
+import re
 import unittest
 from html.parser import HTMLParser
 
@@ -6,6 +7,8 @@ from test_dashboard import HOST, NOW, snapshot
 from gargoyl.dashboard import ADVERSE_VALUES, render_dashboard
 from gargoyl.dashboard.theme import STYLE
 from gargoyl.repair_view import render_restart_unavailable
+
+OTHER = '00000000-0000-4000-8000-0000000000aa'
 
 
 class Structure(HTMLParser):
@@ -38,6 +41,23 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn('coordinator · ' + NOW, page)
         self.assertIn('Protocol confidence: <strong>unknown</strong>', page)
         self.assertFalse(set(parser.tags) & {'script', 'form', 'button', 'input', 'link', 'iframe'})
+
+    def test_host_navigation_and_mobile_jump_resolve_for_every_inventory(self):
+        for data, hosts in (([snapshot()], [HOST]), ([], [HOST]), ([], [])):
+            with self.subTest(hosts=len(hosts), reports=len(data)):
+                page = render_dashboard(data, hosts, NOW)
+                parser = Structure()
+                parser.feed(page)
+                self.assertIn('<a class="jump-link" href="#fleet-overview">Jump to hosts</a>', page)
+                self.assertIn('<a href="#needs-attention">Needs attention</a>', page)
+                self.assertTrue({'fleet-overview', 'needs-attention'} <= set(parser.ids))
+                self.assertTrue(all(link[1:] in parser.ids for link in parser.links))
+        page = render_dashboard([snapshot(), snapshot(value='stopped', source='coordinator')], [HOST, OTHER], NOW)
+        regions = re.findall(r'role="region" aria-label="([^"]+)"', page)
+        self.assertGreater(len(regions), 2)
+        self.assertEqual(len(regions), len(set(regions)))
+        # Pages without the fleet overview must not carry dangling host links.
+        self.assertNotIn('#fleet-overview', render_restart_unavailable())
 
     def test_absent_stale_blocked_conflicting_evidence_is_not_healthy(self):
         for data, now, expected in (

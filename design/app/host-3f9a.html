@@ -15,7 +15,6 @@
       gargoyl
     </a>
     <div class="asof">
-      <span class="pill">Synthetic prototype · fixed example data</span>
       <span>As of <strong class="mono">2026-10-30 14:02:30Z</strong></span>
       <span>Static example · no auto-refresh</span>
       <span class="pill">Read-only · 127.0.0.1</span>
@@ -30,4 +29,50 @@
     </ul>
   </nav>
 
-<main id="main"><p class="crumbs"><a href="index.html">Fleet</a> / Host</p><h1>Host 3f9a…c21e</h1><p class="mono faint">3f9a2c4e-8b1d-4f6a-9c3e-1d7b5a20c21e · synthetic expected host</p><section><h2>Needs attention</h2><p>A synthetic diagnostics capture was claimed without a completion record. Its outcome is unknown; this is not permission to retry.</p><p><a href="audit.html">Inspect the synthetic audit history</a>. No retry control is offered.</p></section><section><h2>Retained example values</h2><p>These values come from the synthetic fleet overview. Source timestamps not supplied by that overview remain unspecified here; this page does not establish freshness.</p><div class="table-wrap" tabindex="0" role="region" aria-label="Synthetic host values"><table><thead><tr><th scope="col">Field</th><th scope="col">Example value</th></tr></thead><tbody><tr><th scope="row">daemon_state</th><td>running</td></tr><tr><th scope="row">routing_eligible</th><td>eligible</td></tr><tr><th scope="row">attestation_state</th><td>valid</td></tr><tr><th scope="row">model_state</th><td>resident</td></tr><tr><th scope="row">memory_pressure</th><td>normal</td></tr></tbody></table></div></section><p>Protocol confidence: <span class="ev ev-unknown">unknown</span>. No overall health verdict.</p><footer class="page-foot">Design prototype with synthetic data. This page does not refresh or execute actions.</footer></main></div></body></html>
+  <main id="main">
+    <p class="proto-banner" role="note"><strong>Design prototype</strong> · synthetic data. Not a live console; these hosts, times and repairs are invented.</p>
+    <p class="crumbs"><a href="index.html">Fleet</a> / Host</p>
+    <div class="page-head">
+      <div>
+        <h1>Host <span class="mono" style="font-size:inherit">3f9a…c21e</span></h1>
+        <p class="mono faint">3f9a2c4e-8b1d-4f6a-9c3e-1d7b5a20c21e · expected host</p>
+      </div>
+    </div>
+
+    <dl class="facts">
+      <div><dt>Collector heartbeat</dt><dd><span class="ev ev-observed">12 s</span> <span class="faint">TTL 60 s</span></dd></div>
+      <div><dt>Newest collection</dt><dd class="mono">14:02:18Z</dd></div>
+      <div><dt>Collector incidents</dt><dd>None detected</dd></div>
+      <div><dt>Protocol confidence</dt><dd><span class="ev ev-unknown">unknown</span></dd></div>
+    </dl>
+
+    <section aria-labelledby="recovery-title">
+      <div class="section-head"><h2 id="recovery-title">Repair needing recovery</h2></div>
+      <div class="callout danger">
+        <div class="callout-title"><span class="st st-unknown">outcome unknown</span> Diagnostics capture claimed at 13:20:44Z, no completion recorded</div>
+        <p>Side effects may have occurred. Every field below is fresh and observed, but that doesn't say what the interrupted run did. Reconcile before planning another repair on this host. <a href="audit.html">View audit history</a>.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="fields-title">
+      <div class="section-head"><h2 id="fields-title">Evidence</h2><p>Local and coordinator routing reports agree. Agreement isn't proof of dispatch.</p></div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Evidence (scrollable table)">
+        <table>
+          <thead><tr><th scope="col">Field</th><th scope="col">State</th><th scope="col">Value</th><th scope="col">Source</th><th scope="col">Observed</th><th scope="col">Collected</th><th scope="col" class="num">TTL</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>daemon_state</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">running</td><td>daemon</td><td class="mono nowrap">14:02:06Z</td><td class="mono nowrap">14:02:18Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>routing_eligible</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">eligible</td><td>daemon</td><td class="mono nowrap">14:02:06Z</td><td class="mono nowrap">14:02:18Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>routing_eligible</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">eligible</td><td>coordinator</td><td class="mono nowrap">14:01:58Z</td><td class="mono nowrap">14:02:18Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>attestation_state</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">valid</td><td>daemon</td><td class="mono nowrap">14:01:40Z</td><td class="mono nowrap">14:02:18Z</td><td class="num mono">900 s</td></tr>
+            <tr><th scope="row"><code>model_state</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">resident</td><td>daemon</td><td class="mono nowrap">14:02:06Z</td><td class="mono nowrap">14:02:18Z</td><td class="num mono">900 s</td></tr>
+            <tr><th scope="row"><code>memory_pressure</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">normal</td><td>host</td><td class="mono nowrap">14:02:10Z</td><td class="mono nowrap">14:02:18Z</td><td class="num mono">120 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="page-foot">Design prototype with synthetic data.</footer>
+  </main>
+</div>
+</body>
+</html>

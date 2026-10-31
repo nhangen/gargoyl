@@ -15,7 +15,6 @@
       gargoyl
     </a>
     <div class="asof">
-      <span class="pill">Synthetic prototype · fixed example data</span>
       <span>Read at <strong class="mono">2026-10-30 14:02:30Z</strong></span>
       <span>Doesn't auto-refresh</span>
       <span class="pill">Read-only</span>
@@ -31,6 +30,7 @@
   </nav>
 
   <main id="main">
+    <p class="proto-banner" role="note"><strong>Design prototype</strong> · synthetic data. Not a live console; these hosts, times and repairs are invented.</p>
     <div class="page-head">
       <div>
         <h1>Audit history</h1>
@@ -52,8 +52,8 @@
           <thead><tr><th scope="col">Started</th><th scope="col">Host</th><th scope="col">Runbook</th><th scope="col">Outcome</th><th scope="col">Reason</th><th scope="col">Stage</th><th scope="col">Actor</th></tr></thead>
           <tbody>
             <tr><td class="mono nowrap">14:00:12Z</td><td class="mono"><a href="host-71aa.html">71aa…0b5d</a></td><td><code>status_refresh</code> v1</td><td><span class="st st-observed">succeeded</span></td><td class="mono">completed</td><td>completion</td><td class="mono">a7c0…11e4</td></tr>
-            <tr><td class="mono nowrap">13:41:03Z</td><td class="mono"><span class="mono">b07d…41a8</span></td><td><code>status_refresh</code> v1</td><td><span class="st st-unknown">cancelled</span></td><td class="mono">cancelled</td><td>completion</td><td class="mono">a7c0…11e4</td></tr>
-            <tr><td class="mono nowrap">13:20:44Z</td><td class="mono"><span class="mono">3f9a…c21e</span></td><td><code>diagnostics_capture</code> v1</td><td><span class="st st-unknown">outcome unknown</span></td><td class="mono">recovery_required</td><td class="muted">claim recorded, no receipt</td><td class="mono">a7c0…11e4</td></tr>
+            <tr><td class="mono nowrap">13:41:03Z</td><td class="mono"><a class="mono" href="host-b07d.html">b07d…41a8</a></td><td><code>status_refresh</code> v1</td><td><span class="st st-unknown">cancelled</span></td><td class="mono">cancelled</td><td>completion</td><td class="mono">a7c0…11e4</td></tr>
+            <tr><td class="mono nowrap">13:20:44Z</td><td class="mono"><a class="mono" href="host-3f9a.html">3f9a…c21e</a></td><td><code>diagnostics_capture</code> v1</td><td><span class="st st-unknown">outcome unknown</span></td><td class="mono">recovery_required</td><td class="muted">claim recorded, no receipt</td><td class="mono">a7c0…11e4</td></tr>
             <tr><td class="mono nowrap">12:55:09Z</td><td class="mono"><a href="host-9d40.html">9d40…77e2</a></td><td><code>status_refresh</code> v1</td><td><span class="st st-failed">failed</span></td><td class="mono">operation_failed</td><td>completion</td><td class="mono">a7c0…11e4</td></tr>
           </tbody>
         </table>

@@ -11,6 +11,8 @@ evidence store; it's the target design for `gargoyl.dashboard` and
 | Host detail | `host-71aa.html` | one host with a local / coordinator mismatch and a diagnostic warning |
 | Host, no heartbeat | `host-e5c2.html` | an expected host with no retained reports |
 | Host, conflicting reports | `host-9d40.html` | same-source, same-time reports that disagree |
+| Host, repair needing recovery | `host-3f9a.html` | fresh evidence alongside an outcome-unknown repair |
+| Host, stale report | `host-b07d.html` | a current heartbeat with one stale field |
 | Repair preview | `repair.html` | `RunbookCatalog.plan` / `render_preview`; the confirmation is a labelled mock-up |
 | Audit history | `audit.html` | `render_receipt` / `render_audit_entry` |
 | Unavailable | `unavailable.html` | the viewer's HTTP 503 state |
@@ -52,8 +54,8 @@ design, axe-core (WCAG 2.2 AA plus best practices) reported no violations on
 any screen at 1440 and 390 px in either theme. That check isn't automated in
 CI.
 
-The fleet links to the three host states above; the other two rows aren't
-linked.
+Every page carries a "Design prototype · synthetic data" banner, and every
+fleet row links to its host page.
 
 ## Open questions
 

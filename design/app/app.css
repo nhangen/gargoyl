@@ -312,3 +312,7 @@ a.runbook:hover { background: var(--surface-2); }
 .unavailable h1 { font-size: 22px; }
 
 footer.page-foot { margin-top: 40px; color: var(--text-faint); font-size: 12.5px; max-width: 90ch; }
+
+/* Prototype labelling: every page states it carries synthetic data. */
+.proto-banner { margin: 0 0 20px; padding: 10px 14px; border: 1px dashed var(--info); border-radius: var(--radius); background: var(--info-soft); color: var(--text); font-size: 13px; }
+.unavailable .proto-banner { margin: 0; }

@@ -145,11 +145,11 @@ def render_overview(dashboard):
             'aria-label="Evidence legend">' + ''.join('<span class="ev ev-' + state + '">'
             + state + '</span>' for state in ('observed', 'stale', 'unknown', 'blocked'))
             + '<span class="adv">adverse reported value</span></div>'
-            '<div id="hosts-table" class="table-wrap" tabindex="0" role="region" aria-label="Host overview table">'
+            '<div class="table-wrap" tabindex="0" role="region" aria-label="Host overview table">'
             '<table class="fleet"><caption class="sr-only">Newest per-source evidence; inspect host for original reports</caption>'
             '<thead><tr><th scope="col">Host</th>' + ''.join('<th scope="col">' + label + '</th>'
             for _, label in columns) + '</tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>'
-            '<h3>Needs attention</h3><div class="attention">' + ('<ul>' + ''.join(attention) + '</ul>'
+            '<h3 id="needs-attention">Needs attention</h3><div class="attention">' + ('<ul>' + ''.join(attention) + '</ul>'
             if attention else '<p>No collector, correlation, stale, blocked, conflicting or adverse-report '
             'items detected in this projection. Missing fields and protocol confidence remain unknown; '
             'this is not a health verdict.</p>') + '</div></section>')
@@ -169,7 +169,7 @@ def render_dashboard(snapshots, expected_hosts, now=None):
                        f'<td>{e(item["collected_at"])}; TTL {e(item["freshness_seconds"])}s</td></tr>' for item in items)
     def table(content):
         return '<table><thead><tr><th>Metric</th><th>Evidence state</th><th>Value</th><th>Source</th><th>Source timestamp</th><th>Collection / freshness</th></tr></thead><tbody>' + content + '</tbody></table>'
-    parts = [page_start('Gargoyl fleet evidence', include_hosts=True),
+    parts = [page_start('Gargoyl fleet evidence', host_navigation=True),
              '<h1>Fleet evidence</h1><p>Read-only snapshot view. Regenerate after collection and at least every minute. Missing evidence never means healthy.</p>',
              f'<p>Evaluated at {e(dashboard["evaluated_at"])}</p>',
              render_overview(dashboard), '<div id="local-collection"></div>']
@@ -182,12 +182,12 @@ def render_dashboard(snapshots, expected_hosts, now=None):
             parts.append('<p>No collector or correlation incident detected; inspect individual evidence below. This is not an overall health verdict.</p>')
         parts.append('<h3>Local liveness and eligibility reports</h3>')
         parts.append('<p>Collector liveness does not prove provider liveness. Running and eligible '
-                     'reports do not establish coordinator protocol compatibility or dispatch.</p><div class="scroll" tabindex="0" role="region" aria-label="Evidence table">')
+                     'reports do not establish coordinator protocol compatibility or dispatch.</p><div class="scroll" tabindex="0" role="region" aria-label="Local liveness evidence for host ' + e(host['host_id']) + '">')
         parts.append(table(''.join(rows(metric, [item for item in host['latest'][metric]
                                                 if item['source'] in LOCAL])
                                    for metric in ('daemon_state', 'launchd_state',
                                                   'routing_eligible', 'attestation_state'))))
-        parts.append('</div><h3>Coordinator and protocol confidence</h3><div class="scroll" tabindex="0" role="region" aria-label="Evidence table">')
+        parts.append('</div><h3>Coordinator and protocol confidence</h3><div class="scroll" tabindex="0" role="region" aria-label="Coordinator evidence for host ' + e(host['host_id']) + '">')
         parts.append(table(''.join(rows(metric, [item for item in host['latest'][metric]
                                                 if item['source'] == 'coordinator' or
                                                 (metric == 'coordinator_reachable' and item['source'] == 'daemon')])
@@ -213,26 +213,26 @@ def render_dashboard(snapshots, expected_hosts, now=None):
         parts.append('<p>Low or zero traffic alone is not a failure signal. Demand and routing '
                      'effects cannot be distinguished from counters alone. No restart is inferred.</p>')
         parts.append('<h3>Model and memory evidence</h3><p>These observations are separate from '
-                     'coordinator warnings and do not establish their cause.</p><div class="scroll" tabindex="0" role="region" aria-label="Evidence table">')
+                     'coordinator warnings and do not establish their cause.</p><div class="scroll" tabindex="0" role="region" aria-label="Model and memory evidence for host ' + e(host['host_id']) + '">')
         parts.append(table(''.join(rows(metric, host['latest'][metric]) for metric in
                                    ('model_state', 'memory_pressure', 'memory_headroom_bytes'))))
         parts.append('</div>')
         parts.append('<h3>Local / coordinator comparisons</h3><ul>' + ''.join(f'<li>{e(item["metric"])}: {e(item["state"])}</li>' for item in host['comparisons']) + '</ul>')
-        parts.append('<details><summary>All normalized availability evidence</summary><h3>Availability, routing and host evidence</h3><div class="scroll" tabindex="0" role="region" aria-label="Evidence table">')
+        parts.append('<details><summary>All normalized availability evidence</summary><h3>Availability, routing and host evidence</h3><div class="scroll" tabindex="0" role="region" aria-label="All availability evidence for host ' + e(host['host_id']) + '">')
         parts.append(table(''.join(rows(metric, items) for metric, items in host['latest'].items() if metric not in {'requests_total','tokens_total','confirmed_paid_microunits'})))
         parts.append('</div></details>')
         for metric, items in host['latest'].items():
             for item in items:
                 if 'conflicting_observations' in item:
                     parts.append(f'<details open><summary>{e(metric)}: unknown — conflicting observations</summary>')
-                    parts.append('<p>Reports from the same source at the same observation timestamp disagree in value, state or freshness. No report is selected as authoritative. Original evidence follows.</p><div class="scroll" tabindex="0" role="region" aria-label="Evidence table">')
+                    parts.append('<p>Reports from the same source at the same observation timestamp disagree in value, state or freshness. No report is selected as authoritative. Original evidence follows.</p><div class="scroll" tabindex="0" role="region" aria-label="Conflicting ' + e(metric) + ' reports for host ' + e(host['host_id']) + '">')
                     parts.append(table(rows(metric, item['conflicting_observations'])))
                     parts.append('</div></details>')
-        parts.append('<h3>Local request / token history</h3><p>Cumulative observations; no inferred deltas, billing or earnings.</p><div class="scroll" tabindex="0" role="region" aria-label="Evidence table">')
+        parts.append('<h3>Local request / token history</h3><p>Cumulative observations; no inferred deltas, billing or earnings.</p><div class="scroll" tabindex="0" role="region" aria-label="Local usage history for host ' + e(host['host_id']) + '">')
         parts.append(table(''.join(rows(metric, [item for item in host['history'][metric] if item['source'] in LOCAL]) for metric in ('requests_total','tokens_total'))))
-        parts.append('</div><h3>Coordinator / console usage evidence</h3><div class="scroll" tabindex="0" role="region" aria-label="Evidence table">')
+        parts.append('</div><h3>Coordinator / console usage evidence</h3><div class="scroll" tabindex="0" role="region" aria-label="Coordinator and console usage for host ' + e(host['host_id']) + '">')
         parts.append(table(''.join(rows(metric, [item for item in host['history'][metric] if item['source'] in {'coordinator','console'}]) for metric in ('requests_total','tokens_total'))))
-        parts.append('</div><h3>Console-reported confirmed paid units</h3><p>Microunits only; currency and independent payment verification are not established by this view.</p><div class="scroll" tabindex="0" role="region" aria-label="Evidence table">')
+        parts.append('</div><h3>Console-reported confirmed paid units</h3><p>Microunits only; currency and independent payment verification are not established by this view.</p><div class="scroll" tabindex="0" role="region" aria-label="Confirmed paid units for host ' + e(host['host_id']) + '">')
         parts.append(table(rows('confirmed_paid_microunits', host['history']['confirmed_paid_microunits'])))
         parts.append('</div><details><summary>Recent failure evidence</summary>')
         parts.append(table(rows('error_code', host['history']['error_code'])))

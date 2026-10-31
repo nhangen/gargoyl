@@ -15,7 +15,6 @@
       gargoyl
     </a>
     <div class="asof">
-      <span class="pill">Synthetic prototype · fixed example data</span>
       <span>As of <strong class="mono">2026-10-30 14:02:30Z</strong></span>
       <span>Static example · no auto-refresh</span>
       <span class="pill">Read-only · 127.0.0.1</span>
@@ -30,4 +29,50 @@
     </ul>
   </nav>
 
-<main id="main"><p class="crumbs"><a href="index.html">Fleet</a> / Host</p><h1>Host b07d…41a8</h1><p class="mono faint">b07d5e12-9a4c-4d3b-b6f0-8e21c7a941a8 · synthetic expected host</p><section><h2>Needs attention</h2><p>The synthetic model observation is stale: resident was reported43 minutes before this example evaluation, beyond its15-minute TTL. Current model state is not established.</p></section><section><h2>Retained example values</h2><p>These values come from the synthetic fleet overview. Source timestamps not supplied by that overview remain unspecified here; this page does not establish freshness.</p><div class="table-wrap" tabindex="0" role="region" aria-label="Synthetic host values"><table><thead><tr><th scope="col">Field</th><th scope="col">Example value</th></tr></thead><tbody><tr><th scope="row">daemon_state</th><td>running</td></tr><tr><th scope="row">routing_eligible</th><td>eligible</td></tr><tr><th scope="row">attestation_state</th><td>valid</td></tr><tr><th scope="row">model_state</th><td>resident (stale)</td></tr><tr><th scope="row">memory_pressure</th><td>normal</td></tr></tbody></table></div></section><p>Protocol confidence: <span class="ev ev-unknown">unknown</span>. No overall health verdict.</p><footer class="page-foot">Design prototype with synthetic data. This page does not refresh or execute actions.</footer></main></div></body></html>
+  <main id="main">
+    <p class="proto-banner" role="note"><strong>Design prototype</strong> · synthetic data. Not a live console; these hosts, times and repairs are invented.</p>
+    <p class="crumbs"><a href="index.html">Fleet</a> / Host</p>
+    <div class="page-head">
+      <div>
+        <h1>Host <span class="mono" style="font-size:inherit">b07d…41a8</span></h1>
+        <p class="mono faint">b07d5e12-9a4c-4d3b-b6f0-8e21c7a941a8 · expected host</p>
+      </div>
+    </div>
+
+    <dl class="facts">
+      <div><dt>Collector heartbeat</dt><dd><span class="ev ev-observed">15 s</span> <span class="faint">TTL 60 s</span></dd></div>
+      <div><dt>Newest collection</dt><dd class="mono">14:02:15Z</dd></div>
+      <div><dt>Collector incidents</dt><dd>None detected</dd></div>
+      <div><dt>Protocol confidence</dt><dd><span class="ev ev-unknown">unknown</span></dd></div>
+    </dl>
+
+    <section aria-labelledby="stale-title">
+      <div class="section-head"><h2 id="stale-title">Stale evidence</h2></div>
+      <div class="callout warn">
+        <div class="callout-title"><span class="st st-stale">stale</span> Model state is 43 minutes old</div>
+        <p>The daemon last reported <code>resident</code> at 13:19:47Z with a 15-minute freshness window. The current model state is unknown; the old value is shown for context, not as current truth.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="fields-title">
+      <div class="section-head"><h2 id="fields-title">Evidence</h2><p>The collector heartbeat is current, but that doesn't make every source current.</p></div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Evidence (scrollable table)">
+        <table>
+          <thead><tr><th scope="col">Field</th><th scope="col">State</th><th scope="col">Value</th><th scope="col">Source</th><th scope="col">Observed</th><th scope="col">Collected</th><th scope="col" class="num">TTL</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>daemon_state</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">running</td><td>daemon</td><td class="mono nowrap">14:02:01Z</td><td class="mono nowrap">14:02:15Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>routing_eligible</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">eligible</td><td>daemon</td><td class="mono nowrap">14:02:01Z</td><td class="mono nowrap">14:02:15Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>routing_eligible</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">eligible</td><td>coordinator</td><td class="mono nowrap">14:01:55Z</td><td class="mono nowrap">14:02:15Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>attestation_state</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">valid</td><td>daemon</td><td class="mono nowrap">14:01:31Z</td><td class="mono nowrap">14:02:15Z</td><td class="num mono">900 s</td></tr>
+            <tr><th scope="row"><code>model_state</code></th><td><span class="ev ev-stale">stale</span></td><td class="mono">resident</td><td>daemon</td><td class="mono nowrap">13:19:47Z</td><td class="mono nowrap">14:02:15Z</td><td class="num mono">900 s</td></tr>
+            <tr><th scope="row"><code>memory_pressure</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">normal</td><td>host</td><td class="mono nowrap">14:02:09Z</td><td class="mono nowrap">14:02:15Z</td><td class="num mono">120 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="page-foot">Design prototype with synthetic data.</footer>
+  </main>
+</div>
+</body>
+</html>
