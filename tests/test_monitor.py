@@ -64,6 +64,33 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(self.monitor.tick()['fields']['requests_total']['value'], 99)
         self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'none')
 
+    def test_repair_explanations_ignore_telemetry_authorization_claims(self):
+        # Daemon 0.10.5 lifecycle fields are unsigned local observations, not
+        # v2 target/drain/replay authority. Even apparently healthy/drained
+        # source content must not expose a repair action.
+        data = json.loads(self.path.read_text())
+        data.update(process_identity=dict(pid=123, start_time_micros=1),
+                    lifecycle=dict(request_id="fixture", outcome="drained",
+                                   remaining=0, coordinator_acknowledged=True),
+                    repair_available=True)
+        self.path.write_text(json.dumps(data))
+        for state in ("fresh", "stale", "missing"):
+            with self.subTest(state=state):
+                if state == "stale":
+                    data["written_at"] = EPOCH - 61
+                    data["started_at"] = EPOCH - 100
+                    self.path.write_text(json.dumps(data))
+                elif state == "missing":
+                    self.path.unlink()
+                self.monitor.tick()
+                page = self.monitor.render_page(NOW)
+                for reason in ("Target unverified", "Drain unverified",
+                               "Repeat safety unverified", "Repair authorization unavailable",
+                               "read-only reconciliation", "Provider restart unavailable"):
+                    self.assertIn(reason, page)
+                for control in ("<form", "<button", "<input", "onclick=", "repair_available"):
+                    self.assertNotIn(control, page)
+
     def test_source_time_stays_stale_and_future_rejected(self):
         self.write(epoch=EPOCH-61)
         snapshot = self.monitor.tick()
@@ -127,6 +154,17 @@ class MonitorTests(unittest.TestCase):
                 self.assertIn('http-equiv="refresh"', body)
                 self.assertIn('100', body)
                 self.assertIn('Repairs disabled', body)
+                self.assertIn('Provider restart unavailable', body)
+                self.assertIn('Repeat safety unverified', body)
+                for method, target, expected in (("POST", "/", 501),
+                                                 ("POST", "/repair/restart", 501),
+                                                 ("GET", "/repair/restart", 404)):
+                    connection.close()
+                    connection = http.client.HTTPConnection('127.0.0.1', ports[0], timeout=3)
+                    connection.request(method, target)
+                    rejected = connection.getresponse()
+                    self.assertEqual(rejected.status, expected)
+                    rejected.read()
                 self.assertNotIn('MUST_NEVER_APPEAR', body)
                 connection.close()
             finally:

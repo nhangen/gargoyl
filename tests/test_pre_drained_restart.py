@@ -202,6 +202,39 @@ class RestartTests(unittest.TestCase):
             self.assertEqual(f.provider.calls, 0)
             self.assertIsNotNone(f.journal.pending())
 
+    def test_accepted_work_arriving_during_claim_never_dispatches(self):
+        original = self.f.journal.claim
+
+        def accept_work(*args, **kwargs):
+            claimed = original(*args, **kwargs)
+            # Includes accepted/bound work not yet executing or counted as a
+            # completed request; a fresh snapshot cannot override this check.
+            self.f.provider.outstanding = 1
+            return claimed
+
+        with patch.object(self.f.journal, "claim", side_effect=accept_work):
+            result = self.execute()
+        self.assertEqual(result["outcome"], "blocked")
+        self.assertEqual((self.f.provider.calls, self.f.provider.effects), (0, 0))
+        self.assertIsNotNone(self.f.journal.pending())
+
+    def test_offline_drained_state_without_coordinator_ack_never_dispatches(self):
+        # Stock 0.10.5 may report drained when no registered coordinator remains.
+        # The approved Gargoyl policy requires an actual matching acknowledgement.
+        self.f.provider.ack = False
+        result = self.execute()
+        self.assertEqual(result["outcome"], "blocked")
+        self.assertEqual((self.f.provider.calls, self.f.provider.effects), (0, 0))
+        self.assertIsNone(self.f.journal.pending())
+
+    def test_pid_reuse_after_plan_never_targets_replacement(self):
+        old = self.f.provider.identity
+        self.f.provider.live[old["pid"]] = dict(old, born_us=old["born_us"] + 1)
+        result = self.execute()
+        self.assertEqual(result["outcome"], "blocked")
+        self.assertEqual((self.f.provider.calls, self.f.provider.effects), (0, 0))
+        self.assertIsNone(self.f.journal.pending())
+
     def test_revocation_or_expiry_during_claim_prevents_dispatch(self):
         original = self.f.journal.claim
 
@@ -267,6 +300,30 @@ class RestartTests(unittest.TestCase):
             self.execute(runtime=other, intent=fresh)["reason"], "recovery_required"
         )
         self.assertEqual(self.f.provider.calls, 1)
+
+    def test_lost_backend_dedup_history_after_interruption_cannot_enable_replay(self):
+        self.f.provider.mode = "lost_reply"
+        self.assertEqual(self.execute()["outcome"], "outcome_unknown")
+        self.assertEqual(self.f.provider.effects, 1)
+        # Model a control API losing its in-memory request map. Its not-found
+        # response cannot establish that the previous effect is terminal.
+        self.f.provider.ledger.clear()
+        reopened = RestartJournal(
+            self.root / "journal", target_host=HOST, key=self.f.journal_key
+        )
+        self.addCleanup(reopened.close)
+        runtime = self.f.make_runtime()
+        runtime.journal = reopened
+        fresh = self.f.intent(attempt=OTHER, challenge=OTHER)
+        self.assertEqual(self.execute(runtime=runtime, intent=fresh)["reason"],
+                         "recovery_required")
+        with self.assertRaises(PolicyError):
+            runtime.reconcile(challenge=OTHER, stop_event=self.stop)
+        self.assertIsNotNone(reopened.pending())
+        self.assertEqual(self.execute(runtime=runtime, intent=fresh)["reason"],
+                         "recovery_required")
+        self.assertEqual((self.f.provider.calls, self.f.provider.effects), (1, 1))
+        self.assertEqual(self.f.provider.ledger, {})  # Reconciliation is read-only.
 
     def test_late_and_incomplete_cleanup_never_succeed_or_release_gate(self):
         for mode in ("late", "pending_timeout", "cleanup_incomplete"):
@@ -664,6 +721,13 @@ class NativeIdentityTests(unittest.TestCase):
         )
         identity = verifier._identity(os.getpid())
         self.assertTrue(verifier(identity))
+        # A correct PID/birth/UID still cannot authorize a different image.
+        with tempfile.NamedTemporaryFile() as other_image:
+            wrong_image = MacOSProcessVerifier(
+                expected_owner_uid=os.getuid(),
+                expected_executable=str(Path(other_image.name).resolve()),
+            )
+            self.assertFalse(wrong_image(identity))
         self.assertFalse(verifier(dict(identity, born_us=identity["born_us"] + 1)))
         self.assertFalse(verifier(dict(identity, owner_uid=os.getuid() + 1)))
         self.assertFalse(verifier(dict(identity, pid=2**31 - 1)))

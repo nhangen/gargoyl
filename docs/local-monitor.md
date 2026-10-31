@@ -103,3 +103,14 @@ A prepared, inactive [LaunchAgent example](examples/dev.gargoyl.monitor.plist)
 contains the MBP-26 arguments. Replace its absolute venv placeholder before any
 use. Both persistence flags are false. It is documentation only and has not been
 copied into `~/Library/LaunchAgents`, loaded or enabled.
+
+## Why provider restart is unavailable
+
+The source dashboard explains target, accepted-work drain, repeated/interrupted
+request safety and per-action authorization separately. This is a statement of
+the read-only monitor composition, not a runtime probe of Darkbloom capabilities
+or credentials. Healthy counters and source-supplied drain flags never enable a
+repair. No action routes or controls are added. See the
+[verified Darkbloom 0.10.5 assessment](darkbloom-restart-evidence.md) for existing
+safeguards, missing guarantees and unverified installed/live behavior. Source
+changes do not update an already installed service.

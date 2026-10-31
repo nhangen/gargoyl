@@ -16,6 +16,7 @@ from gargoyl.collector import collect
 from gargoyl.collector_state_file import read_daemon_state, validate_daemon_state_source
 from gargoyl.dashboard import render_dashboard
 from gargoyl.dashboard.runtime import EvidenceViewer, utc_now
+from gargoyl.repair_view import render_restart_unavailable
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
 
 
@@ -77,7 +78,7 @@ class LocalMonitor:
         else:
             summary += '<p>Waiting for first observation. Source state is unknown.</p>'
         summary += '<p>Up to 64 normalized observations remain in this process. Restart clears history. No earnings or daemon liveness are inferred.</p></section>'
-        return page.replace('<h1>Fleet evidence</h1>', '<h1>Gargoyl local monitor</h1>' + summary)
+        return page.replace('<h1>Fleet evidence</h1>', '<h1>Gargoyl local monitor</h1>' + summary + render_restart_unavailable())
 
 
 class MonitorViewer(EvidenceViewer):
