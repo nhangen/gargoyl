@@ -1,4 +1,6 @@
+import contextlib
 import copy
+import io
 import json
 import os
 import subprocess
@@ -202,6 +204,16 @@ class ManualRestartTests(unittest.TestCase):
                     journal, inspect=Mock(side_effect=[TARGET, replacement])
                 )
             self.assertEqual(journal.read()["state"], "unknown")
+
+    def test_help_names_real_nested_command_and_never_runs_preflight(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), patch('gargoyl.operator_tools.installation_preflight') as preflight:
+            with self.assertRaises(SystemExit) as result:
+                main(['tools', 'restart', '--help'])
+        self.assertEqual(result.exception.code, 0)
+        self.assertIn('gargoyl tools restart', output.getvalue())
+        self.assertIn('No automatic retry', output.getvalue())
+        preflight.assert_not_called()
 
     def test_cli_requires_interactive_terminal_never_calls_provider_on_pipe(self):
         with (

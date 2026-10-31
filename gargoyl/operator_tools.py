@@ -21,7 +21,7 @@ from gargoyl.manual_restart import (
 
 
 def main(argv):
-    parser = _Parser(description=__doc__)
+    parser = _Parser(prog="gargoyl tools", description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     inspect = commands.add_parser(
         "inspect",
@@ -34,6 +34,7 @@ def main(argv):
     restart = commands.add_parser(
         "restart",
         help="Interactive manual graceful restart of this installation; never automatic.",
+        description="Manual restart requires an interactive terminal, explicit installation-scoped confirmation and verified preflight. One graceful no-force invocation; an unknown outcome blocks another attempt. No automatic retry. See docs/manual-operator-tools.md for prerequisites and recovery effects.",
     )
     restart.add_argument("--input", required=True)
     restart.add_argument("--owner-uid", type=int, required=True)
