@@ -114,3 +114,14 @@ repair. No action routes or controls are added. See the
 [verified Darkbloom 0.10.5 assessment](darkbloom-restart-evidence.md) for existing
 safeguards, missing guarantees and unverified installed/live behavior. Source
 changes do not update an already installed service.
+
+## Interpreting diagnostic confidence
+
+The dashboard separates local process/eligibility reports, coordinator/protocol
+confidence, and model/memory evidence. This collector does not obtain provider
+liveness, eligibility, coordinator errors or protocol compatibility, so these
+remain unknown even while counters and collection are current. A source-read
+error is not a coordinator protocol error. No raw-log collection is added.
+Normalized coordinator errors supplied by other supported evidence paths remain
+warnings, not restart triggers. Low or zero traffic alone is not failure. See
+[diagnostic confidence](diagnostic-confidence.md) for evidence and limitations.

@@ -103,3 +103,13 @@ recovery. Corruption recovery is test fixture restoration, not an operator repai
 These checks integrate foundation via main commit `6eca704b615a87743cbc74edc2de19d4cb084d57`;
 they do not demonstrate live host acceptance or browser refresh scheduling.
 All existing usage-window/currency/payment verification limitations still apply.
+
+## Diagnostic confidence
+
+Local liveness/eligibility reports are shown separately from coordinator reports
+and protocol confidence. Protocol compatibility remains unknown without supported
+evidence. Retained normalized coordinator error observations produce diagnostic
+warnings, never restart triggers or an overall failure verdict. Low/zero traffic
+is not a failure classification; model/memory symptoms remain separate. The
+[diagnostic confidence contract](../../docs/diagnostic-confidence.md) describes
+freshness, conflict/dedup semantics and current local collection limitations.

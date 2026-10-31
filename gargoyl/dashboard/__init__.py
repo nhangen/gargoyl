@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from html import escape
 
+from gargoyl.dashboard.diagnostics import coordinator_diagnostics
 from gargoyl.telemetry import (
     METRICS,
     effective_state,
@@ -71,7 +72,8 @@ def build_dashboard(snapshots, expected_hosts, now=None):
             if state == "mismatch":
                 incidents.append(metric + "_mismatch")
         result["hosts"].append({"host_id": identity, "latest": latest, "history": evidence,
-                                "comparisons": comparisons, "incidents": incidents})
+                                "comparisons": comparisons, "incidents": incidents,
+                                "diagnostics": coordinator_diagnostics(evidence["error_code"])})
     return result
 
 
@@ -100,10 +102,44 @@ def render_dashboard(snapshots, expected_hosts, now=None):
         parts.append('<h3>Collector and correlation incidents</h3><ul>' + ''.join(f'<li>{e(item)}</li>' for item in host['incidents']) + '</ul>')
         if not host['incidents']:
             parts.append('<p>No collector or correlation incident detected; inspect individual evidence below. This is not an overall health verdict.</p>')
-        parts.append('<h3>Local / coordinator comparisons</h3><ul>' + ''.join(f'<li>{e(item["metric"])}: {e(item["state"])}</li>' for item in host['comparisons']) + '</ul>')
-        parts.append('<h3>Availability, routing and host evidence</h3><div class="scroll">')
-        parts.append(table(''.join(rows(metric, items) for metric, items in host['latest'].items() if metric not in {'requests_total','tokens_total','confirmed_paid_microunits'})))
+        parts.append('<h3>Local liveness and eligibility reports</h3>')
+        parts.append('<p>Collector liveness does not prove provider liveness. Running and eligible '
+                     'reports do not establish coordinator protocol compatibility or dispatch.</p><div class="scroll">')
+        parts.append(table(''.join(rows(metric, [item for item in host['latest'][metric]
+                                                if item['source'] in LOCAL])
+                                   for metric in ('daemon_state', 'launchd_state',
+                                                  'routing_eligible', 'attestation_state'))))
+        parts.append('</div><h3>Coordinator and protocol confidence</h3><div class="scroll">')
+        parts.append(table(''.join(rows(metric, [item for item in host['latest'][metric]
+                                                if item['source'] == 'coordinator'])
+                                   for metric in ('coordinator_reachable', 'routing_eligible'))))
+        parts.append('</div><p>Protocol confidence: <strong>unknown</strong>. '
+                     'No supported protocol-compatibility evidence is collected. Reachability, '
+                     'eligibility and a reported absence of errors cannot establish it.</p>')
+        diagnostic = host['diagnostics']
+        if diagnostic['state'] == 'warning':
+            label = ('Repeated coordinator error observations' if diagnostic['recurrence'] == 'repeated_observations'
+                     else 'Coordinator error observation; recurrence unknown')
+            parts.append(f'<p><strong>Diagnostic warning: {e(label)}</strong>. '
+                         f'Normalized codes: {e(", ".join(diagnostic["codes"]))}. '
+                         'This is not a distinct error-event count or a restart trigger. '
+                         'These retained observations do not establish a current service failure. '
+                         'Root cause and impact on routing remain unknown.</p>')
+        else:
+            parts.append('<p>Coordinator diagnostic detail: <strong>unknown</strong>. '
+                         'No unambiguous current normalized coordinator error observation is available. '
+                         'This does not establish an error-free connection.</p>')
+        parts.append('<p>Low or zero traffic alone is not a failure signal. Demand and routing '
+                     'effects cannot be distinguished from counters alone. No restart is inferred.</p>')
+        parts.append('<h3>Model and memory evidence</h3><p>These observations are separate from '
+                     'coordinator warnings and do not establish their cause.</p><div class="scroll">')
+        parts.append(table(''.join(rows(metric, host['latest'][metric]) for metric in
+                                   ('model_state', 'memory_pressure', 'memory_headroom_bytes'))))
         parts.append('</div>')
+        parts.append('<h3>Local / coordinator comparisons</h3><ul>' + ''.join(f'<li>{e(item["metric"])}: {e(item["state"])}</li>' for item in host['comparisons']) + '</ul>')
+        parts.append('<details><summary>All normalized availability evidence</summary><h3>Availability, routing and host evidence</h3><div class="scroll">')
+        parts.append(table(''.join(rows(metric, items) for metric, items in host['latest'].items() if metric not in {'requests_total','tokens_total','confirmed_paid_microunits'})))
+        parts.append('</div></details>')
         for metric, items in host['latest'].items():
             for item in items:
                 if 'conflicting_observations' in item:
