@@ -36,6 +36,7 @@ PRs and pushes to main run both checks on Python 3.11 and 3.12 in GitHub Actions
 for schema, privacy rules, collector/dashboard integration and security boundaries.
 For a runnable single-host collector and live loopback dashboard, see
 [continuous local monitoring](docs/local-monitor.md). It polls an explicitly supplied
-owner-local daemon-state file, keeps bounded memory history and offers foreground
-start/stop/status. Repairs remain disabled. No host enrollment or persistent service
-is enabled by installation.
+owner-local daemon-state file, keeps bounded memory history, displays recent fresh
+counter changes, and offers foreground start/stop/status. Counter changes do not
+establish earnings or reliably detect every reset. Repairs remain disabled. No host
+enrollment or persistent service is enabled by installation.
