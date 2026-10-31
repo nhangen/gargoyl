@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Host 71aa…0b5d · Gargoyl</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="Gargoyl fleet overview">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path class="brand-eyes" d="M21 31l8 3-8 1z M43 31l-8 3 8 1z"/></svg>
+      gargoyl
+    </a>
+    <div class="asof">
+      <span>As of <strong class="mono">2026-10-30 14:02:30Z</strong></span>
+      <span>Refreshes every 30 s</span>
+      <span class="pill">Read-only · 127.0.0.1</span>
+    </div>
+  </header>
+
+  <nav class="nav" aria-label="Sections">
+    <ul>
+      <li><a href="index.html" aria-current="location">Fleet <span class="count">5 hosts</span></a></li>
+      <li><a href="repair.html">Repair preview</a></li>
+      <li><a href="audit.html">Audit history <span class="count">4</span></a></li>
+    </ul>
+  </nav>
+
+  <main id="main">
+    <p class="crumbs"><a href="index.html">Fleet</a> / Host</p>
+    <div class="page-head">
+      <div>
+        <h1>Host <span class="mono" style="font-size:inherit">71aa…0b5d</span></h1>
+        <p class="mono faint">71aa04c9-2f6e-4b8d-a1c7-5e93f2d80b5d · expected host</p>
+      </div>
+      <a class="btn" href="repair.html">Preview a repair</a>
+    </div>
+
+    <dl class="facts">
+      <div><dt>Collector heartbeat</dt><dd><span class="ev ev-observed">8 s</span> <span class="faint">TTL 60 s</span></dd></div>
+      <div><dt>Newest collection</dt><dd class="mono">14:02:22Z</dd></div>
+      <div><dt>Collector incidents</dt><dd>1: routing mismatch</dd></div>
+      <div><dt>Protocol confidence</dt><dd><span class="ev ev-unknown">unknown</span></dd></div>
+    </dl>
+
+    <section aria-labelledby="incidents-title">
+      <div class="section-head"><h2 id="incidents-title">Incidents and warnings</h2></div>
+      <div class="stack">
+        <div class="callout danger">
+          <div class="callout-title"><span class="st st-mismatch">mismatch</span> Routing eligibility: local and coordinator disagree</div>
+          <p>The daemon reports <code>eligible</code> (14:02:05Z) and the coordinator reports <code>ineligible</code> (14:01:52Z). Both are within their freshness windows, so neither can be treated as authoritative.</p>
+        </div>
+        <div class="callout warn">
+          <div class="callout-title"><span class="st st-warning">warning</span> Repeated coordinator error observations</div>
+          <p>Normalized code <code>timeout</code> at 2 distinct source times. This is not a count of distinct errors and not a restart trigger. These observations don't establish a current service failure; root cause and routing impact are unknown.</p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="compare-title">
+      <div class="section-head">
+        <h2 id="compare-title">Local / coordinator comparison</h2>
+        <p>Only fresh observed reports on both sides can agree or mismatch. Anything else stays unknown.</p>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Local / coordinator comparison (scrollable table)">
+        <table>
+          <thead><tr><th scope="col">Field</th><th scope="col">Local</th><th scope="col">Coordinator</th><th scope="col">Result</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>routing_eligible</code></th><td><span class="ev ev-observed">eligible</span></td><td><span class="ev ev-observed"><span class="adv">ineligible</span></span></td><td><span class="st st-mismatch">mismatch</span></td></tr>
+            <tr><th scope="row"><code>attestation_state</code></th><td><span class="ev ev-observed">valid</span></td><td><span class="ev ev-observed">valid</span></td><td><span class="st st-agreement">agreement</span></td></tr>
+            <tr><th scope="row"><code>daemon_state</code></th><td><span class="ev ev-observed">running</span></td><td><span class="ev ev-unknown">no report</span></td><td><span class="ev ev-unknown">unknown</span></td></tr>
+            <tr><th scope="row"><code>model_state</code></th><td><span class="ev ev-observed">resident</span></td><td><span class="ev ev-unknown">no report</span></td><td><span class="ev ev-unknown">unknown</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="local-title">
+      <div class="section-head">
+        <h2 id="local-title">Local liveness and eligibility</h2>
+        <p>Collector liveness doesn't prove provider liveness. Running and eligible reports don't establish dispatch.</p>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Local liveness and eligibility (scrollable table)">
+        <table>
+          <thead><tr><th scope="col">Field</th><th scope="col">State</th><th scope="col">Value</th><th scope="col">Source</th><th scope="col">Observed</th><th scope="col">Collected</th><th scope="col" class="num">TTL</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>daemon_state</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">running</td><td>daemon</td><td class="mono nowrap">14:02:05Z</td><td class="mono nowrap">14:02:22Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>launchd_state</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">running</td><td>launchd</td><td class="mono nowrap">14:02:04Z</td><td class="mono nowrap">14:02:22Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>routing_eligible</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">eligible</td><td>daemon</td><td class="mono nowrap">14:02:05Z</td><td class="mono nowrap">14:02:22Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>attestation_state</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">valid</td><td>daemon</td><td class="mono nowrap">14:01:50Z</td><td class="mono nowrap">14:02:22Z</td><td class="num mono">900 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="coord-title">
+      <div class="section-head">
+        <h2 id="coord-title">Coordinator and protocol confidence</h2>
+        <p>A daemon-reported connection isn't independent coordinator confirmation.</p>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Coordinator and protocol confidence (scrollable table)">
+        <table>
+          <thead><tr><th scope="col">Field</th><th scope="col">State</th><th scope="col">Value</th><th scope="col">Source</th><th scope="col">Observed</th><th scope="col">Collected</th><th scope="col" class="num">TTL</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>coordinator_reachable</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">reachable</td><td>daemon</td><td class="mono nowrap">14:02:05Z</td><td class="mono nowrap">14:02:22Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row"><code>routing_eligible</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono"><span class="adv">ineligible</span></td><td>coordinator</td><td class="mono nowrap">14:01:52Z</td><td class="mono nowrap">14:02:22Z</td><td class="num mono">300 s</td></tr>
+            <tr><th scope="row">Protocol compatibility</th><td><span class="ev ev-unknown">unknown</span></td><td colspan="5" class="muted">No supported compatibility evidence is collected. Reachability, eligibility and an absence of errors can't establish it.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="model-title">
+      <div class="section-head">
+        <h2 id="model-title">Model and memory</h2>
+        <p>Separate evidence. These don't explain the coordinator warning.</p>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Model and memory (scrollable table)">
+        <table>
+          <thead><tr><th scope="col">Field</th><th scope="col">State</th><th scope="col">Value</th><th scope="col">Source</th><th scope="col">Observed</th><th scope="col">Collected</th><th scope="col" class="num">TTL</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>model_state</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">resident</td><td>daemon</td><td class="mono nowrap">14:02:05Z</td><td class="mono nowrap">14:02:22Z</td><td class="num mono">900 s</td></tr>
+            <tr><th scope="row"><code>memory_pressure</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono"><span class="adv">warning</span></td><td>host</td><td class="mono nowrap">14:02:10Z</td><td class="mono nowrap">14:02:22Z</td><td class="num mono">120 s</td></tr>
+            <tr><th scope="row"><code>memory_headroom_bytes</code></th><td><span class="ev ev-observed">observed</span></td><td class="mono">3.0 GiB<span class="sub">3 221 225 472</span></td><td>host</td><td class="mono nowrap">14:02:10Z</td><td class="mono nowrap">14:02:22Z</td><td class="num mono">120 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="usage-title">
+      <div class="section-head">
+        <h2 id="usage-title">Usage and paid units</h2>
+        <p>Cumulative counters, kept apart by source. No deltas, billing or earnings are inferred, and console provenance alone isn't proof of payment.</p>
+      </div>
+      <div class="grid-2">
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Local request and token counters">
+          <table>
+            <caption class="sr-only">Local cumulative counters</caption>
+            <thead><tr><th scope="col">Local counter</th><th scope="col" class="num">Value</th><th scope="col">Observed</th><th scope="col">Note</th></tr></thead>
+            <tbody>
+              <tr><th scope="row"><code>requests_total</code></th><td class="num mono">18 442</td><td class="mono">14:02:05Z</td><td></td></tr>
+              <tr><th scope="row"><code>requests_total</code></th><td class="num mono">18 391</td><td class="mono">13:57:05Z</td><td></td></tr>
+              <tr><th scope="row"><code>tokens_total</code></th><td class="num mono">1 204</td><td class="mono">14:02:05Z</td><td><span class="st st-info">counter reset</span></td></tr>
+              <tr><th scope="row"><code>tokens_total</code></th><td class="num mono">9 871 120</td><td class="mono">13:57:05Z</td><td></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Coordinator and console usage">
+          <table>
+            <caption class="sr-only">Coordinator and console usage evidence</caption>
+            <thead><tr><th scope="col">Reported by</th><th scope="col">Field</th><th scope="col" class="num">Value</th><th scope="col">Observed</th></tr></thead>
+            <tbody>
+              <tr><td>coordinator</td><th scope="row"><code>requests_total</code></th><td class="num mono">18 120</td><td class="mono">14:00:00Z</td></tr>
+              <tr><td>console</td><th scope="row"><code>confirmed_paid_microunits</code></th><td class="num mono">4 812 300</td><td class="mono">13:00:00Z</td></tr>
+              <tr><td colspan="4" class="muted">The contract carries no request windows, so totals aren't compared. Microunits carry no currency.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="more-title">
+      <h2 id="more-title" class="sr-only">More evidence</h2>
+      <details>
+        <summary>Failure evidence <span class="faint" style="font-weight:400">· 3 reports</span></summary>
+        <div class="body">
+          <p class="muted">Bounded error codes with timestamps. Raw logs are never collected.</p>
+          <div class="table-wrap" tabindex="0" role="region" aria-label="Failure evidence">
+            <table>
+              <thead><tr><th scope="col">Code</th><th scope="col">Source</th><th scope="col">Observed</th><th scope="col">State</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">timeout</td><td>coordinator</td><td class="mono">14:01:40Z</td><td><span class="ev ev-observed">observed</span></td></tr>
+                <tr><td class="mono">timeout</td><td>coordinator</td><td class="mono">13:58:10Z</td><td><span class="ev ev-observed">observed</span></td></tr>
+                <tr><td class="mono">none</td><td>daemon</td><td class="mono">14:02:05Z</td><td><span class="ev ev-observed">observed</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+      <details>
+        <summary>All normalized evidence <span class="faint" style="font-weight:400">· 15 fields</span></summary>
+        <div class="body"><p class="muted">Every field, source, state, value, timestamp and TTL from this host, including thermal pressure, launchd, doctor and clock skew. Usage counters and paid units appear in their own section above.</p></div>
+      </details>
+    </section>
+
+    <footer class="page-foot">Design prototype with synthetic data.</footer>
+  </main>
+</div>
+</body>
+</html>

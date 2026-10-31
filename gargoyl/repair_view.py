@@ -1,6 +1,7 @@
 """Read-only repair data presentation; no routes, execution or authorization minting."""
 from html import escape
 
+from gargoyl.dashboard.theme import PAGE_END, page_start
 from gargoyl.repair_catalog import RunbookCatalog, VerifiedRunbook
 from gargoyl.repair_contract import (
     RepairAuditEntry,
@@ -18,11 +19,10 @@ def _text(value):
 
 
 def _page(title, content):
-    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width">'
-            f'<title>{_text(title)}</title></head><body><h1>{_text(title)}</h1>'
+    return (page_start(title) + f'<h1>{_text(title)}</h1>'
             '<p>Read-only presentation. This page cannot authorize, confirm, execute, '
-            'retry or resume an operation.</p>' + content + '</body></html>')
+            'retry or resume an operation.</p>' + content + PAGE_END)
+
 
 
 def render_restart_unavailable():
@@ -37,8 +37,9 @@ def render_restart_unavailable():
         '<h2 id="restart-unavailable">Provider restart unavailable</h2>'
         '<p>Repairs disabled. This read-only monitor cannot execute repairs.</p>'
         '<ul>'
-        '<li>Target unverified: collected counters do not prove the current '
-        'provider process, its start time or executable.</li>'
+        '<li>Target unverified for repair: collected counters or optional read-only '
+        'process observations do not provide the operation-bound target proof '
+        'required by a restart backend.</li>'
         '<li>Drain unverified: this monitor has no authoritative proof that new '
         'work is blocked, accepted work is zero and the coordinator drain '
         'acknowledgement matches this process and drain.</li>'
@@ -59,7 +60,7 @@ def _unavailable():
 
 
 def _fields(values):
-    return '<dl>' + ''.join(f'<dt>{_text(name)}</dt><dd>{_text(value)}</dd>'
+    return '<dl class="facts">' + ''.join(f'<div><dt>{_text(name)}</dt><dd>{_text(value)}</dd></div>'
                            for name, value in values) + '</dl>'
 
 

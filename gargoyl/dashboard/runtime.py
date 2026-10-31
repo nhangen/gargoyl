@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from gargoyl.dashboard import render_dashboard
+from gargoyl.dashboard.theme import PAGE_END, page_start
 from gargoyl.telemetry import host_id, timestamp
 
 HEADER_DEADLINE_SECONDS = 5
@@ -129,7 +130,7 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             # Never turn a failed read into an empty successful fleet, or serve a
             # cached healthy page. Do not expose exception strings or file paths.
-            page = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Evidence unavailable</title><h1>Evidence unavailable</h1><p>Storage or evaluation failed. Fleet state is unknown. No successful report is available. This page will retry automatically.</p></html>'
+            page = (page_start('Evidence unavailable') + '<section class="unavailable"><h1>Evidence unavailable</h1><p>Storage or evaluation failed. Fleet state is unknown. No successful report is available. This page will retry automatically.</p></section>' + PAGE_END)
             status = 503
         refresh = f'<meta http-equiv="refresh" content="{self.server.refresh_seconds}">'
         self._respond(status, page.replace('<title>', refresh + '<title>', 1))

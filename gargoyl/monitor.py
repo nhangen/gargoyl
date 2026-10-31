@@ -158,7 +158,8 @@ class LocalMonitor:
             summary += '<p>Waiting for first observation. Source state is unknown.</p>'
         summary += render_log_report(log_report, now)
         summary += '<p>Up to 64 normalized observations remain in this process. Restart clears history. No earnings or daemon liveness are inferred.</p></section>'
-        return page.replace('<h1>Fleet evidence</h1>', '<h1>Gargoyl local monitor</h1>' + summary + render_restart_unavailable())
+        return page.replace('<h1>Fleet evidence</h1>', '<h1>Gargoyl local monitor</h1>').replace(
+            '<div id="local-collection"></div>', summary + render_restart_unavailable())
 
 
 class MonitorViewer(EvidenceViewer):
