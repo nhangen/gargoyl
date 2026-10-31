@@ -60,7 +60,7 @@ def _unavailable():
 
 
 def _fields(values):
-    return '<dl class="facts">' + ''.join(f'<dt>{_text(name)}</dt><dd>{_text(value)}</dd>'
+    return '<dl class="facts">' + ''.join(f'<div><dt>{_text(name)}</dt><dd>{_text(value)}</dd></div>'
                            for name, value in values) + '</dl>'
 
 

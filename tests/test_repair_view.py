@@ -1,4 +1,5 @@
 import hashlib
+import re
 import unittest
 from unittest.mock import patch
 
@@ -56,8 +57,12 @@ class RepairViewTests(unittest.TestCase):
             receipt=receipt.as_dict() if receipt else None)))
 
     def assert_read_only(self, page):
-        for tag in ('<form', '<button', '<input', '<script', 'onclick=', 'href='):
+        for tag in ('<form', '<button', '<input', '<script', 'onclick='):
             self.assertNotIn(tag, page)
+        # The shared presentation shell permits only navigation within this
+        # document, never a repair route, external resource or action link.
+        self.assertEqual(set(re.findall(r'href="([^"]*)"', page)), {'#main'})
+        self.assertIn('id="main"', page)
 
     def test_exact_bindings_and_intent_are_not_authorization(self):
         page = render_preview(self.plan, self.catalog, now=NOW, confirmation=self.confirmation())

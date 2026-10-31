@@ -3,7 +3,7 @@ from html.parser import HTMLParser
 
 from test_dashboard import HOST, NOW, snapshot
 
-from gargoyl.dashboard import render_dashboard
+from gargoyl.dashboard import ADVERSE_VALUES, render_dashboard
 from gargoyl.dashboard.theme import STYLE
 from gargoyl.repair_view import render_restart_unavailable
 
@@ -64,6 +64,23 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn(':focus-visible', STYLE)
         self.assertNotIn('url(', STYLE)
         self.assertNotIn('@import', STYLE)
+
+    def test_all_adverse_enum_reports_get_attention_without_health_inference(self):
+        heartbeat = snapshot('heartbeat_age_seconds', 0, 'collector')
+        for metric, values in ADVERSE_VALUES.items():
+            for value in values:
+                with self.subTest(metric=metric, value=value):
+                    data = [heartbeat, snapshot(metric, value)]
+                    page = render_dashboard(data, [HOST], NOW)
+                    self.assertIn(metric + ': adverse reported value ' + value, page)
+                    self.assertNotIn('No collector, correlation, stale, blocked, conflicting or adverse-report', page)
+                    if metric in {'daemon_state', 'model_state', 'routing_eligible', 'attestation_state', 'memory_pressure'}:
+                        self.assertIn('observed · <span class="adv">' + value + '</span>', page)
+                    self.assertIn('Protocol confidence: <strong>unknown</strong>', page)
+        zero = snapshot('requests_total', 0, 'daemon')
+        page = render_dashboard([heartbeat, zero], [HOST], NOW)
+        self.assertNotIn('requests_total: adverse', page)
+        self.assertIn('Low or zero traffic alone is not a failure signal', page)
 
     def test_zero_hosts_is_an_explicit_empty_inventory(self):
         page = render_dashboard([], [], NOW)

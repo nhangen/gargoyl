@@ -78,8 +78,18 @@ def build_dashboard(snapshots, expected_hosts, now=None):
     return result
 
 
-ADVERSE_VALUES = frozenset({'stopped', 'ineligible', 'expired', 'warning', 'critical',
-                            'absent', 'unreachable', 'failed', 'invalid'})
+ADVERSE_VALUES = {
+    'daemon_state': frozenset({'stopped', 'degraded'}),
+    'doctor_state': frozenset({'failed'}),
+    'launchd_state': frozenset({'stopped', 'missing'}),
+    'model_state': frozenset({'absent', 'failed'}),
+    'memory_pressure': frozenset({'warning', 'critical'}),
+    'thermal_pressure': frozenset({'warning', 'critical'}),
+    'coordinator_reachable': frozenset({'unreachable'}),
+    'routing_eligible': frozenset({'ineligible'}),
+    'attestation_state': frozenset({'expired', 'missing'}),
+    'error_code': frozenset({'timeout', 'unavailable', 'invalid_state', 'permission_denied'}),
+}
 
 
 def render_overview(dashboard):
@@ -103,7 +113,7 @@ def render_overview(dashboard):
                     reasons.append(metric + ': stale ' + item['source'] + ' report')
                 elif item['state'] == 'blocked':
                     reasons.append(metric + ': blocked report; reason not supplied by v1')
-                elif item['state'] == 'observed' and item['value'] in ADVERSE_VALUES:
+                elif item['state'] == 'observed' and item['value'] in ADVERSE_VALUES.get(metric, ()):
                     reasons.append(metric + ': adverse reported value ' + str(item['value']))
         if host['diagnostics']['state'] == 'warning':
             reasons.append('coordinator diagnostic warning; cause and routing impact unknown')
@@ -119,7 +129,7 @@ def render_overview(dashboard):
                 if 'conflicting_observations' in item:
                     value = 'conflicting observations'
                 display = ('<span class="adv">' + e(value) + '</span>'
-                           if item['value'] in ADVERSE_VALUES else e(value))
+                           if item['value'] in ADVERSE_VALUES.get(metric, ()) else e(value))
                 values.append('<span class="ev-line"><span class="ev ev-' + e(item['state'])
                               + '">' + e(item['state']) + ' · ' + display + '</span><small>'
                               + e(item['source']) + ' · ' + e(item['timestamp']) + ' · TTL '
