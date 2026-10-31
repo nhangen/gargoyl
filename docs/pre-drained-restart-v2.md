@@ -109,12 +109,16 @@ client independently verifies the replacement's native process identity and
 rechecks freshness/budget after verification. A client timeout or boolean cleanup
 claim alone does not establish provider completion.
 
-The stock provider CLI is **not a compatible backend**. At pinned upstream
-[RestartCommand](https://github.com/Layr-Labs/d-inference/blob/6a78624b4b46329a6d1535435f7cd9d7f4ebb4c6/provider-swift/Sources/darkbloom/RestartCommand.swift)
-and [ServiceDrain](https://github.com/Layr-Labs/d-inference/blob/6a78624b4b46329a6d1535435f7cd9d7f4ebb4c6/provider-swift/Sources/darkbloom/ServiceDrain.swift), restart can create a new drain request and rearm recovery before
-confirmation; it does not provide this atomic fence-preserving ledger protocol.
-It must not be wrapped as if it met these guarantees. A compatible provider-side
-implementation and its own durable-ledger/deadline acceptance tests remain required.
+The matched installed Darkbloom **0.10.5** release has a supported graceful
+manual restart, kernel process-birth checks, accepted-work drain, request IDs,
+serialization and limited desktop deduplication/history. These safeguards do not
+supply a durable cross-interruption restart transaction, persistent replacement
+fence, active-state compare-and-swap or one cleanup-inclusive 30-second deadline.
+The earlier source reference was not the installed release commit. See the
+[installed-version evidence and guarantee assessment](darkbloom-restart-evidence.md)
+for exact binary/release/commit provenance, supported CLI/API paths, corrections
+and smallest upstream addition. The stock CLI is not used as a v2 backend; no
+live restart was executed to establish these source-level conclusions.
 
 Client real/logical clock checks detect lateness and report uncertainty. They
 cannot preempt a lying callback or forcibly bound SQLite/filesystem/kernel calls.

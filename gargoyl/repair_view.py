@@ -25,6 +25,34 @@ def _page(title, content):
             'retry or resume an operation.</p>' + content + '</body></html>')
 
 
+def render_restart_unavailable():
+    """Explain this read-only monitor's limits; never infer repair authority.
+
+    These are composition limits, not a probe of installed Darkbloom or its
+    credentials. Fresh counters, source-supplied flags and command availability
+    cannot turn this presentation into a repair adapter.
+    """
+    return (
+        '<section aria-labelledby="restart-unavailable">'
+        '<h2 id="restart-unavailable">Provider restart unavailable</h2>'
+        '<p>Repairs disabled. This read-only monitor cannot execute repairs.</p>'
+        '<ul>'
+        '<li>Target unverified: collected counters do not prove the current '
+        'provider process, its start time or executable.</li>'
+        '<li>Drain unverified: this monitor has no authoritative proof that new '
+        'work is blocked, accepted work is zero and the coordinator drain '
+        'acknowledgement matches this process and drain.</li>'
+        '<li>Repeat safety unverified: no compatible restart backend is connected '
+        'to prove that repeated or interrupted requests cannot cause a second '
+        'restart. An unknown outcome requires read-only reconciliation.</li>'
+        '<li>Repair authorization unavailable: this monitor does not configure '
+        'per-action signing or confirmation.</li>'
+        '</ul><p>Darkbloom provides a manual restart command. Command availability '
+        'and healthy telemetry do not establish these repair prerequisites. '
+        'No restart, retry or unfencing action is offered here.</p></section>'
+    )
+
+
 def _unavailable():
     return _page('Repair data unavailable', '<p>Input validation failed. State is unknown; '
                  'no authorization or successful outcome is established.</p>')
