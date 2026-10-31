@@ -142,7 +142,13 @@ class ViewerTests(unittest.TestCase):
                         time.sleep(0.03)
                     worker.join(timeout=0.5)
                     self.assertFalse(worker.is_alive())
-                    self.assertEqual(client.recv(1024), b'')
+                    try:
+                        self.assertEqual(client.recv(1024), b'')
+                    except ConnectionResetError:
+                        # Darwin may reset a closed connection with unread header
+                        # bytes. The deadline, stopped worker, untouched reader
+                        # and next valid request assertions still apply.
+                        pass
                 self.assertEqual(reader.calls, [])
                 # A timed-out client does not prevent the next valid request.
                 self.assertEqual(self.request(viewer)[0], 200)
