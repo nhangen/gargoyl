@@ -78,3 +78,11 @@ linked.
    `repair_view` renderers add no routes today.
 5. Apply the same shell to `repair_view` pages; keep them control-free until
    confirmation is authenticated.
+
+## Live integration
+
+The production single-page renderer now ports this shell and evidence vocabulary;
+see [operator console](../../docs/operator-console.md). It uses validated real
+normalized evidence, anchored host details and existing read-only HTTP boundaries.
+These static pages remain synthetic design references, not runtime data sources.
+Multi-page routes and authenticated confirmation remain outside this integration.
