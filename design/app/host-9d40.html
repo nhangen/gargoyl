@@ -56,10 +56,10 @@
           <p class="muted">Two reports from the same source at the same observation time disagree in value. Neither is selected as authoritative, so the field reads unknown. Both original reports follow.</p>
           <div class="table-wrap" tabindex="0" role="region" aria-label="Conflicting attestation reports (scrollable table)">
             <table>
-              <thead><tr><th scope="col">Reported state</th><th scope="col">Value</th><th scope="col">Source</th><th scope="col">Observed</th><th scope="col">Collected</th><th scope="col" class="num">TTL</th></tr></thead>
+              <thead><tr><th scope="col">State (reported)</th><th scope="col">Value</th><th scope="col">Source</th><th scope="col">Observed</th><th scope="col">Collected</th><th scope="col" class="num">TTL</th></tr></thead>
               <tbody>
-                <tr><td><span class="ev ev-observed">observed</span></td><td class="mono">valid</td><td>daemon</td><td class="mono nowrap">13:58:04Z</td><td class="mono nowrap">13:58:20Z</td><td class="num mono">900 s</td></tr>
-                <tr><td><span class="ev ev-observed">observed</span></td><td class="mono"><span class="adv">expired</span></td><td>daemon</td><td class="mono nowrap">13:58:04Z</td><td class="mono nowrap">14:02:09Z</td><td class="num mono">900 s</td></tr>
+                <tr><td><span class="ev ev-observed">observed</span> <span class="faint">(observed)</span></td><td class="mono">valid</td><td>daemon</td><td class="mono nowrap">13:58:04Z</td><td class="mono nowrap">13:58:20Z</td><td class="num mono">900 s</td></tr>
+                <tr><td><span class="ev ev-observed">observed</span> <span class="faint">(observed)</span></td><td class="mono"><span class="adv">expired</span></td><td>daemon</td><td class="mono nowrap">13:58:04Z</td><td class="mono nowrap">14:02:09Z</td><td class="num mono">900 s</td></tr>
               </tbody>
             </table>
           </div>
@@ -70,7 +70,7 @@
     <section aria-labelledby="compare-title">
       <div class="section-head">
         <h2 id="compare-title">Local / coordinator comparison</h2>
-        <p>A conflicting or missing side can't establish agreement or mismatch.</p>
+        <p>A conflicting report is left out of the comparison. With no other fresh report on that side, the result is unknown.</p>
       </div>
       <div class="table-wrap" tabindex="0" role="region" aria-label="Local / coordinator comparison (scrollable table)">
         <table>
