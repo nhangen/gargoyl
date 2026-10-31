@@ -25,7 +25,7 @@ class CollectorTests(unittest.TestCase):
                   1024, "valid", 10, "reachable"]
         readings = {name: observation(value, source) for (name, source), value in zip(SOURCES.items(), values)}
         snapshot = collect(IDENTITY, NOW, readings)
-        self.assertEqual(len(snapshot["fields"]), 16)
+        self.assertEqual(len(snapshot["fields"]), 15)
         self.assertEqual(snapshot["fields"]["memory_headroom_bytes"]["value"], 1024)
         self.assertEqual(snapshot["fields"]["clock_skew_seconds"]["state"], "unknown")
         readings["daemon_state"]["value"] = "stopped"
@@ -34,6 +34,38 @@ class CollectorTests(unittest.TestCase):
         for name in SOURCES:
             self.assertIsNone(missing["fields"][name]["value"])
             self.assertEqual(missing["fields"][name]["state"], "unknown")
+
+    def test_default_snapshots_preserve_prior_exact_ingestion_grants(self):
+        import hashlib
+
+        from gargoyl.ingestion import IngestionService, Principal
+
+        # Fixed prior contract, deliberately not derived from collect/SOURCES.
+        grants = frozenset({('daemon_state', 'daemon'), ('doctor_state', 'doctor'),
+            ('launchd_state', 'launchd'), ('model_state', 'daemon'),
+            ('memory_pressure', 'host'), ('thermal_pressure', 'host'),
+            ('memory_headroom_bytes', 'host'), ('attestation_state', 'daemon'),
+            ('attestation_age_seconds', 'daemon'), ('coordinator_reachable', 'coordinator'),
+            ('requests_total', 'daemon'), ('tokens_total', 'daemon'),
+            ('heartbeat_age_seconds', 'collector'), ('error_code', 'collector'),
+            ('clock_skew_seconds', 'collector')})
+        accepted = []
+
+        class Store:
+            def accept(self, snapshot, *, now):
+                accepted.append(snapshot)
+                return 'accepted'
+
+        peer = b'synthetic-verified-peer'
+        service = IngestionService(Store(), {hashlib.sha256(peer).hexdigest():
+            Principal(frozenset({IDENTITY}), grants)})
+        original = collect(IDENTITY, NOW, {})
+        self.assertEqual(frozenset((metric, f['source']) for metric, f in original['fields'].items()), grants)
+        self.assertEqual(service.accept(boundary_payload(original, IDENTITY), peer, now=NOW), 'accepted')
+        optional = collect(IDENTITY, NOW, {'routing_eligible': observation('eligible')})
+        with self.assertRaises(PermissionError):
+            service.accept(boundary_payload(optional, IDENTITY), peer, now=NOW)
+        self.assertEqual(accepted, [original])  # No implicit grant/enrollment expansion.
 
     def test_prohibited_input_rejected_without_echo(self):
         for key in ("prompt", "completion", "credentials", "api_key", "raw_logs", "customer_id", "ip_address"):

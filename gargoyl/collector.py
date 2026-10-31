@@ -23,7 +23,7 @@ SOURCES = {
     "memory_pressure": "host", "thermal_pressure": "host",
     "memory_headroom_bytes": "host", "attestation_state": "daemon",
     "attestation_age_seconds": "daemon", "coordinator_reachable": "coordinator",
-    "requests_total": "daemon", "tokens_total": "daemon", "routing_eligible": "daemon",
+    "requests_total": "daemon", "tokens_total": "daemon",
 }
 ERROR_CODES = frozenset({"timeout", "unavailable", "invalid_state", "permission_denied"})
 
@@ -36,21 +36,24 @@ def _observation(value, source, now, ttl, state="observed"):
 def collect(identity, now, readings, *, errors=(), reference_time=None, ttl=60):
     """Build a validated v1 snapshot from a bounded set of normalized evidence.
 
-    readings maps the metrics in SOURCES to complete foundation observations.
+    readings maps default SOURCES metrics and optional routing_eligible to complete
+    foundation observations. Optional readings are never emitted as default placeholders.
     Reject unknown keys/values rather than stripping potentially sensitive input.
     Errors are at most 32 fixed codes; v1 carries only the latest code. Wall-clock
     skew is local minus trusted reference seconds, or unknown without a reference.
     """
     host_id(identity)
     local = timestamp(now)
-    if type(readings) is not dict or not set(readings) <= SOURCES.keys():
+    if type(readings) is not dict or not set(readings) <= SOURCES.keys() | {"routing_eligible"}:
         raise PolicyError("collector readings rejected")
     if type(errors) not in (list, tuple) or len(errors) > 32:
         raise PolicyError("collector events rejected")
     if any(type(code) is not str or code not in ERROR_CODES for code in errors):
         raise PolicyError("collector events rejected")
     fields = {}
-    for metric, source in SOURCES.items():
+    for metric, source in {**SOURCES, "routing_eligible": "daemon"}.items():
+        if metric == "routing_eligible" and metric not in readings:
+            continue
         if metric not in readings:
             fields[metric] = _observation(None, source, now, ttl, "unknown")
         else:

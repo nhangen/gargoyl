@@ -9,7 +9,11 @@ import threading
 from dataclasses import dataclass
 
 from gargoyl.collector_adapters import AdapterResult
-from gargoyl.collector_coordinator_log import CoordinatorLogReader, unknown
+from gargoyl.collector_coordinator_log import (
+    CoordinatorLogReader,
+    process_birth,
+    unknown,
+)
 from gargoyl.collector_state_file import (
     _epoch,
     _parse,
@@ -41,7 +45,7 @@ class LocalDiagnostics:
         validate_daemon_state_source(source, self.uid)
         timestamp(now)
         stop = stop or threading.Event()
-        log = unknown('not_configured', now)
+        log = unknown('target_or_state_unverified' if self._logs else 'not_configured', now)
         try:
             payload = _read(source, self.uid, 65536)
             baseline = _parse(payload, now, 60)
@@ -58,7 +62,11 @@ class LocalDiagnostics:
                      and 0 < process['start_time_micros'] < 2**64)
             identity = dict(pid=process['pid'], born_us=process['start_time_micros'], owner_uid=self.uid)
             _require(self._verifier(identity))
-            fresh = (timestamp(now) - timestamp(baseline.observed_at)).total_seconds() <= 60
+            birth = process_birth(identity)
+            coherent = timestamp(baseline.observed_at) >= birth
+            fresh = coherent and (timestamp(now) - timestamp(baseline.observed_at)).total_seconds() <= 60
+            if self._logs and coherent and not fresh:
+                log = unknown('source_stale', now)
             if self._logs and fresh and not stop.is_set():
                 log = self._logs.read(identity, self._verifier, now=now, stop=stop)
             completed = self.clock()
@@ -72,13 +80,15 @@ class LocalDiagnostics:
 
             # Kernel identity was independently checked at collection completion.
             add('daemon_state', 'running', completed, source='host')
+            if not coherent:
+                return DiagnosticCollection(AdapterResult(readings, ()), completed, log)
             if state.get('warm_models') or state.get('current_model'):
                 add('model_state', 'resident', baseline.observed_at)
             connection = state.get('coordinator_connection')
             try:
                 _require(type(connection) is dict and type(connection.get('connected')) is bool)
                 since = _epoch(connection.get('since'))
-                _require(timestamp(since) <= timestamp(baseline.observed_at))
+                _require(birth <= timestamp(since) <= timestamp(baseline.observed_at))
                 add('coordinator_reachable', 'reachable' if connection['connected'] else 'unreachable',
                     baseline.observed_at)
                 if not connection['connected']:

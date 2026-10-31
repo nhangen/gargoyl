@@ -13,7 +13,7 @@ Inspected Darkbloom release sources:
 - 0.10.6: `84ddfdba6bb704bf1c68f97c7060289079380ceb`.
 
 The relevant `DaemonStateFile`, `DaemonState+Coding`, `ProcessIdentity`,
-`ServingReadiness`, `LogsCommand`, `ProviderLogger` and build-identity source files
+`ServingReadiness`, `LogsCommand`, `ProviderLogger` and the generated log-subsystem identity interface
 are unchanged between these tags. The installed binary changed independently from
 0.10.5 to 0.10.6 during investigation; its observed SHA-256 at that point was
 `4474b0605343b502f58c45e7e696dba575d4802eb56cd30802ab9b526371c7c3`.
@@ -56,7 +56,8 @@ The shared reader's owner/private-directory, regular single-link file,
 no-symlink traversal, permission, size, strict JSON, duplicate-key, depth and
 finite/timestamp checks remain in force. No raw state is retained.
 
-The state PID and kernel birth timestamp must match an independent native query
+Structured claims must be written within the verified process lifetime; connection
+and trust times cannot predate that process. The state PID and kernel birth timestamp must match an independent native query
 for the configured image and current UID, checked before and after log acquisition.
 A PID alone cannot establish identity. This is kernel birth/UID/image-path evidence,
 not code-signing attestation, coordinator authorization or repair authority. Missing,
@@ -115,7 +116,10 @@ Observed means **visible matching records returned by the bounded query**, not
 complete logging coverage or distinct request/error episodes. Zero visible records
 is not proof of an error-free connection. Redacted messages cannot establish causes,
 protocol compatibility or routing impact. Positive counts are diagnostic warnings
-only, separate from collector-read errors and model/memory evidence. The existing
+only, separate from collector-read errors and model/memory evidence. The default 15-field snapshot and prior ingestion grants remain unchanged. Optional
+eligibility is emitted only when supplied. Native host-source liveness and
+daemon-source connection/eligibility need explicit grants if used with an existing
+fleet receiver; this local-only deployment provisions none. The existing
 v1 wire schema is unchanged; log aggregates are a validated local-only report.
 
 ## Operational and test limits

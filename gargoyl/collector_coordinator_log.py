@@ -26,7 +26,7 @@ def validate_log_report(value):
     if (type(value) is not dict or set(value) != keys or type(value['freshness_seconds']) is not int or value['freshness_seconds'] != TTL
             or value['state'] not in {'observed', 'unknown'}
             or value['reason'] not in {'not_configured', 'target_unverified', 'cleanup_unconfirmed',
-                'query_unavailable', 'permission_denied', 'visible_records_only', 'target_or_state_unverified'}):
+                'query_unavailable', 'permission_denied', 'source_stale', 'visible_records_only', 'target_or_state_unverified'}):
         raise ValueError('log evidence unavailable')
     observed = timestamp(value['observed_at'])
     if value['state'] == 'unknown':
@@ -51,7 +51,7 @@ def parse_records(payload, *, pid, owner_uid, start, end):
     """Strict NDJSON metadata allowlist; message content supplies only a redaction bit."""
     if type(payload) is not bytes or len(payload) > LIMIT:
         raise ValueError('log evidence unavailable')
-    seen = set()
+    seen = {}
     events = []
     raw_count = 0
     finished = False
@@ -97,13 +97,16 @@ def parse_records(payload, *, pid, owner_uid, start, end):
             metadata.append(value)
         raw_count += 1
         key = (event, *metadata)
-        if key in seen:
-            continue
-        seen.add(key)
         message = record.get('eventMessage')
         if type(message) is not str:
             raise ValueError('log evidence unavailable')
-        events.append((event, '<private>' in message))
+        redacted = '<private>' in message
+        if key in seen:
+            if seen[key] != redacted:
+                raise ValueError('log evidence unavailable')
+            continue
+        seen[key] = redacted
+        events.append((event, redacted))
         if len(events) > 512:
             raise ValueError('log evidence unavailable')
     if not finished:
@@ -175,6 +178,10 @@ def _capture(argv, stop):
     return bytes(output) if succeeded and clean else None, clean
 
 
+
+def process_birth(identity):
+    return datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=identity['born_us'])
+
 def _system_log_valid():
     info = os.lstat('/usr/bin/log')
     return stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022
@@ -214,7 +221,7 @@ class CoordinatorLogReader:
                 self._identity, self._cached, self._due = None, None, 0
                 return unknown('target_unverified', now)
             start = max(timestamp(now) - timedelta(seconds=300),
-                        datetime.fromtimestamp(identity['born_us'] / 1e6, timezone.utc))
+                        process_birth(identity))
             if timestamp(end) < timestamp(now) or (timestamp(end) - timestamp(now)).total_seconds() > 3.5:
                 raise ValueError
             values = parse_records(payload, pid=identity['pid'], owner_uid=identity['owner_uid'],

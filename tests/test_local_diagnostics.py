@@ -60,6 +60,13 @@ class LogEvidenceTests(unittest.TestCase):
             self.assertNotIn(sensitive, json.dumps(result))
         self.assertEqual(self.parse(payload([])), dict(count=0, redacted_count=0, latest_event_at=None))
 
+    def test_duplicate_consumed_fields_are_validated_and_conflicts_are_order_independent(self):
+        for records in ([record(), record(eventMessage=None)],
+                        [record(), record(eventMessage='not redacted')],
+                        [record(eventMessage='not redacted'), record()]):
+            with self.assertRaises(ValueError):
+                self.parse(payload(records))
+
     def test_scope_loss_time_unknown_schema_and_partial_output_refuse(self):
         cases = [dict(processID=1235), dict(userID=UID+1), dict(category='loop'),
                  dict(subsystem='other'), dict(eventType='lossEvent'), dict(messageType='Info'),
@@ -172,9 +179,10 @@ class StructuredDiagnosticTests(unittest.TestCase):
     def write(self):
         self.path.write_text(json.dumps(self.data))
 
-    def collector(self, verifier=lambda _: True):
+    def collector(self, verifier=lambda _: True, *, coordinator_errors=False):
         with patch('gargoyl.collector_local_diagnostics.MacOSProcessVerifier', return_value=verifier):
-            return LocalDiagnostics(executable=IMAGE, owner_uid=UID, clock=lambda: NOW)
+            return LocalDiagnostics(executable=IMAGE, owner_uid=UID, clock=lambda: NOW,
+                                    coordinator_errors=coordinator_errors)
 
     def test_verified_process_and_structured_reports_have_independent_timestamps_and_sources(self):
         result = self.collector().collect(str(self.path), now=NOW)
@@ -241,6 +249,38 @@ class StructuredDiagnosticTests(unittest.TestCase):
             result = self.collector().collect(str(self.path), now=NOW).result.readings
             self.assertEqual(result['daemon_state']['value'], 'running')
             self.assertNotIn('routing_eligible', result)
+
+    def test_prebirth_claims_are_withheld_without_erasing_independent_liveness(self):
+        self.data['process_identity']['start_time_micros'] = (EPOCH-1)*1000000
+        self.data['written_at'] = EPOCH-2
+        self.write()
+        readings = self.collector().collect(str(self.path), now=NOW).result.readings
+        self.assertEqual(readings['daemon_state']['value'], 'running')
+        self.assertEqual(readings['requests_total']['value'], 1)
+        for metric in ('model_state', 'coordinator_reachable', 'routing_eligible'):
+            self.assertNotIn(metric, readings)
+        self.data['written_at'] = EPOCH
+        self.write()
+        readings = self.collector().collect(str(self.path), now=NOW).result.readings
+        self.assertIn('model_state', readings)
+        self.assertNotIn('coordinator_reachable', readings)  # Connection predates process.
+        self.data['coordinator_connection']['since'] = EPOCH-0.5
+        self.write()
+        readings = self.collector().collect(str(self.path), now=NOW).result.readings
+        self.assertIn('coordinator_reachable', readings)
+        self.assertNotIn('routing_eligible', readings)  # Trust receipt predates process.
+
+    def test_configured_stale_source_is_not_mislabeled_unconfigured(self):
+        self.data['written_at'] = EPOCH-61
+        self.data['trust']['received_at'] = EPOCH-100
+        self.write()
+        collector = self.collector(coordinator_errors=True)
+        with patch.object(collector._logs, 'read') as query:
+            result = collector.collect(str(self.path), now=NOW)
+            self.assertEqual(result.log_report['reason'], 'source_stale')
+            self.assertEqual(result.result.readings['daemon_state']['state'], 'observed')
+            self.assertEqual(result.result.readings['model_state']['state'], 'stale')
+            query.assert_not_called()
 
     def test_hold_or_lifecycle_drain_cannot_report_current_positive_eligibility(self):
         for field, value in (('addon_hold', {'holds': ['synthetic']}),
