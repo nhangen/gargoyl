@@ -59,3 +59,7 @@ Epic #4 remains open for authenticated clicks, authoritative host preflight,
 actual bounded host adapters, production identity separation and live acceptance.
 These tests prove local synthetic control flow only. Parent coordinates review,
 CI and integration; no installation or live repair is authorized here.
+
+The separately versioned [pre-drained restart v2](pre-drained-restart-v2.md)
+implements policy gating, signed proof verification and an atomic host journal for
+controlled integration. It does not unlock v1 plans or ship a production backend.
