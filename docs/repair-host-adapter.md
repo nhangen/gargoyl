@@ -56,3 +56,7 @@ producer invocation, host enrollment, signing-key provisioning, deployment,
 installation, credential reads, access changes or repair has been performed.
 The operator must separately authorize an actual target and trust its executable,
 environment, working directory and dependencies before any real invocation.
+
+For owner-local JSON refresh without any producer command, see
+[`DaemonStateRefreshAdapter`](repair-state-refresh.md). It uses the same
+`status_refresh` identity and unchanged runtime authority/audit requirements.
