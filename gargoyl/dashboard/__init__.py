@@ -111,9 +111,10 @@ def render_dashboard(snapshots, expected_hosts, now=None):
                                                   'routing_eligible', 'attestation_state'))))
         parts.append('</div><h3>Coordinator and protocol confidence</h3><div class="scroll">')
         parts.append(table(''.join(rows(metric, [item for item in host['latest'][metric]
-                                                if item['source'] == 'coordinator'])
+                                                if item['source'] == 'coordinator' or
+                                                (metric == 'coordinator_reachable' and item['source'] == 'daemon')])
                                    for metric in ('coordinator_reachable', 'routing_eligible'))))
-        parts.append('</div><p>Protocol confidence: <strong>unknown</strong>. '
+        parts.append('</div><p>Daemon-reported connection state is not independent coordinator confirmation.</p><p>Protocol confidence: <strong>unknown</strong>. '
                      'No supported protocol-compatibility evidence is collected. Reachability, '
                      'eligibility and a reported absence of errors cannot establish it.</p>')
         diagnostic = host['diagnostics']
@@ -129,6 +130,8 @@ def render_dashboard(snapshots, expected_hosts, now=None):
             parts.append('<p>Coordinator diagnostic detail: <strong>unknown</strong>. '
                          'No unambiguous current normalized coordinator error observation is available. '
                          'This does not establish an error-free connection.</p>')
+        parts.append('<p>This diagnostic assessment covers normalized error-code reports. Optional local '
+                     'coordinator log-record counts are displayed separately.</p>')
         parts.append('<p>Low or zero traffic alone is not a failure signal. Demand and routing '
                      'effects cannot be distinguished from counters alone. No restart is inferred.</p>')
         parts.append('<h3>Model and memory evidence</h3><p>These observations are separate from '

@@ -205,12 +205,12 @@ class MonitorTests(unittest.TestCase):
         original = self.monitor.tick
         calls = 0
 
-        def fail_second():
+        def fail_second(**kwargs):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError('PRIVATE_FAILURE_MUST_NOT_APPEAR')
-            return original()
+            return original(**kwargs)
 
         self.monitor.tick = fail_second
         with self.assertRaises(OSError):

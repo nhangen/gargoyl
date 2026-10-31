@@ -135,3 +135,14 @@ lines are ignored within the existing UTF-8/control/64 KiB limits. Only normaliz
 authorization and traffic text are discarded. Running proves neither app-attest
 nor overall health. Tests replace the supplied installation details with synthetic
 values and execute no real producer command.
+
+## Optional owner-local native diagnostics
+
+See [local diagnostic collection](../docs/local-diagnostic-collection.md). An
+explicit macOS composition reuses the strict state-file reader and independent
+native identity verifier. `collect` also accepts host-source daemon liveness,
+daemon-source coordinator connection claims and daemon-source routing eligibility,
+with all existing value/freshness validation. Other source substitutions remain
+rejected. Log aggregates are validated local-only memory data, not wire fields
+or raw error text. No status/doctor, credentials, provider lifecycle or repair
+operation is used. Default collection remains counter-only.
