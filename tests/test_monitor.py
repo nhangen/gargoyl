@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import errno
 import gc
 import http.client
@@ -17,7 +18,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from gargoyl.cli import main
-from gargoyl.monitor import LocalMonitor, MonitorViewer, run_monitor, status
+from gargoyl.monitor import (
+    LocalMonitor,
+    MonitorViewer,
+    run_monitor,
+    status,
+    traffic_window,
+)
 
 HOST = '00000000-0000-4000-8000-000000000001'
 NOW = '2026-10-30T12:00:00Z'
@@ -99,6 +106,65 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(snapshot['fields']['heartbeat_age_seconds']['state'], 'observed')
         self.write(epoch=EPOCH+1)
         self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'invalid_state')
+
+    def test_recent_counter_change_requires_fresh_continuous_evidence(self):
+        self.write(requests=7, epoch=EPOCH-10)
+        self.monitor.tick()
+        self.write(requests=11, epoch=EPOCH)
+        self.monitor.tick()
+        page = self.monitor.render_page(NOW)
+        self.assertIn('Recent counter change: 4 requests · 0 tokens over 10s', page)
+        self.assertIn('not confirmed paid work', page)
+        self.write(requests=1, epoch=EPOCH)
+        self.monitor.tick()
+        self.assertIn('Recent counter change: unknown', self.monitor.render_page(NOW))
+        self.path.unlink()
+        self.monitor.tick()
+        self.assertIn('Recent counter change: unknown', self.monitor.render_page(NOW))
+        self.assertIn('Recent counter change: unknown', self.monitor.render_page('2026-10-30T12:02:00Z'))
+
+    def test_recent_counter_change_can_show_zero_without_fabricating_traffic(self):
+        self.write(requests=7, epoch=EPOCH-10)
+        self.monitor.tick()
+        self.write(requests=7, epoch=EPOCH)
+        self.monitor.tick()
+        self.assertIn('Recent counter change: 0 requests · 0 tokens over 10s',
+                      self.monitor.render_page(NOW))
+        self.assertIn('Recent counter change: unknown',
+                      self.monitor.render_page('2026-10-30T12:02:00Z'))
+
+    def test_counter_window_rejects_inconsistent_tokens_and_times(self):
+        self.write(requests=7, epoch=EPOCH-10)
+        first = self.monitor.tick()
+        self.write(requests=11, epoch=EPOCH)
+        last = self.monitor.tick()
+        self.assertEqual(traffic_window([first, last], NOW), (4, 0, 10))
+        for field, changes in (
+            ('tokens_total', dict(value=41)),
+            ('tokens_total', dict(timestamp='2026-10-30T11:59:59Z')),
+            ('requests_total', dict(timestamp=first['fields']['requests_total']['timestamp'])),
+        ):
+            with self.subTest(field=field, changes=changes):
+                altered = copy.deepcopy(last)
+                altered['fields'][field].update(changes)
+                self.assertIsNone(traffic_window([first, altered], NOW))
+        self.assertIsNone(traffic_window([last, first], NOW))
+
+    def test_counter_window_recovers_after_missing_observation(self):
+        self.write(requests=7, epoch=EPOCH-20)
+        self.monitor.tick()
+        self.path.unlink()
+        self.monitor.tick()
+        self.write(requests=100, epoch=EPOCH-10)
+        self.monitor.tick()
+        self.assertIn('Recent counter change: unknown', self.monitor.render_page(NOW))
+        self.write(requests=103, epoch=EPOCH)
+        self.monitor.tick()
+        page = self.monitor.render_page(NOW)
+        self.assertIn('Recent counter change: 3 requests · 0 tokens over 10s', page)
+        self.assertIn('Coordinator error query', page)
+        self.assertIn('Provider restart unavailable', page)
+        self.assertIn('Repairs disabled', page)
 
     def test_protections_preserved(self):
         self.directory.chmod(0o755)
