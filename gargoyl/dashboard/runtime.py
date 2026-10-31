@@ -47,6 +47,7 @@ class EvidenceViewer(HTTPServer):
     """
 
     allow_reuse_address = False
+    supports_report = False
 
     def __init__(self, reader, expected_hosts, *, clock=utc_now, port=0, refresh_seconds=30):
         if type(port) is not int or not 0 <= port <= 65535:
@@ -86,10 +87,10 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-    def _respond(self, status, body):
+    def _respond(self, status, body, *, content_type='text/html; charset=utf-8'):
         payload = body.encode('utf-8')
         self.send_response(status)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(payload)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
@@ -114,7 +115,8 @@ class _Handler(BaseHTTPRequestHandler):
         if origins is not None and origins != ['http://' + authority]:
             self.send_error(403)
             return
-        if self.path != '/':
+        report = self.path == '/report.json' and self.server.supports_report
+        if self.path != '/' and not report:
             self.send_error(404)
             return
         # Header reads may have shortened the socket timeout. Restore the bounded
@@ -123,6 +125,10 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             now = self.server.clock()
             timestamp(now)
+            if report:
+                payload = self.server.render_report(now)
+                self._respond(200, payload, content_type='application/json; charset=utf-8')
+                return
             page = self.server.render_page(now)
             page = page.replace('Read-only snapshot view. Regenerate after collection and at least every minute.',
                                 'Read-only stored evidence. This page refreshes automatically; evaluation time below identifies the current report.')
