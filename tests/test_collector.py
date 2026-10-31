@@ -35,6 +35,38 @@ class CollectorTests(unittest.TestCase):
             self.assertIsNone(missing["fields"][name]["value"])
             self.assertEqual(missing["fields"][name]["state"], "unknown")
 
+    def test_default_snapshots_preserve_prior_exact_ingestion_grants(self):
+        import hashlib
+
+        from gargoyl.ingestion import IngestionService, Principal
+
+        # Fixed prior contract, deliberately not derived from collect/SOURCES.
+        grants = frozenset({('daemon_state', 'daemon'), ('doctor_state', 'doctor'),
+            ('launchd_state', 'launchd'), ('model_state', 'daemon'),
+            ('memory_pressure', 'host'), ('thermal_pressure', 'host'),
+            ('memory_headroom_bytes', 'host'), ('attestation_state', 'daemon'),
+            ('attestation_age_seconds', 'daemon'), ('coordinator_reachable', 'coordinator'),
+            ('requests_total', 'daemon'), ('tokens_total', 'daemon'),
+            ('heartbeat_age_seconds', 'collector'), ('error_code', 'collector'),
+            ('clock_skew_seconds', 'collector')})
+        accepted = []
+
+        class Store:
+            def accept(self, snapshot, *, now):
+                accepted.append(snapshot)
+                return 'accepted'
+
+        peer = b'synthetic-verified-peer'
+        service = IngestionService(Store(), {hashlib.sha256(peer).hexdigest():
+            Principal(frozenset({IDENTITY}), grants)})
+        original = collect(IDENTITY, NOW, {})
+        self.assertEqual(frozenset((metric, f['source']) for metric, f in original['fields'].items()), grants)
+        self.assertEqual(service.accept(boundary_payload(original, IDENTITY), peer, now=NOW), 'accepted')
+        optional = collect(IDENTITY, NOW, {'routing_eligible': observation('eligible')})
+        with self.assertRaises(PermissionError):
+            service.accept(boundary_payload(optional, IDENTITY), peer, now=NOW)
+        self.assertEqual(accepted, [original])  # No implicit grant/enrollment expansion.
+
     def test_prohibited_input_rejected_without_echo(self):
         for key in ("prompt", "completion", "credentials", "api_key", "raw_logs", "customer_id", "ip_address"):
             for readings in ({key: "synthetic-marker"}, {"daemon_state": dict(observation(), **{key: "synthetic-marker"})}):
@@ -46,7 +78,7 @@ class CollectorTests(unittest.TestCase):
                 collect(IDENTITY, NOW, {"daemon_state": observation(value)})
 
     def test_wrong_source_and_future_observation_rejected(self):
-        for field in (observation(source="host"), observation(time="2026-01-01T00:00:01Z")):
+        for field in (observation(source="console"), observation(time="2026-01-01T00:00:01Z")):
             with self.assertRaises(PolicyError):
                 collect(IDENTITY, NOW, {"daemon_state": field})
 

@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import errno
 import gc
 import http.client
@@ -17,7 +18,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from gargoyl.cli import main
-from gargoyl.monitor import LocalMonitor, MonitorViewer, run_monitor, status
+from gargoyl.monitor import (
+    LocalMonitor,
+    MonitorViewer,
+    run_monitor,
+    status,
+    traffic_window,
+)
 
 HOST = '00000000-0000-4000-8000-000000000001'
 NOW = '2026-10-30T12:00:00Z'
@@ -64,6 +71,33 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(self.monitor.tick()['fields']['requests_total']['value'], 99)
         self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'none')
 
+    def test_repair_explanations_ignore_telemetry_authorization_claims(self):
+        # Daemon 0.10.5 lifecycle fields are unsigned local observations, not
+        # v2 target/drain/replay authority. Even apparently healthy/drained
+        # source content must not expose a repair action.
+        data = json.loads(self.path.read_text())
+        data.update(process_identity=dict(pid=123, start_time_micros=1),
+                    lifecycle=dict(request_id="fixture", outcome="drained",
+                                   remaining=0, coordinator_acknowledged=True),
+                    repair_available=True)
+        self.path.write_text(json.dumps(data))
+        for state in ("fresh", "stale", "missing"):
+            with self.subTest(state=state):
+                if state == "stale":
+                    data["written_at"] = EPOCH - 61
+                    data["started_at"] = EPOCH - 100
+                    self.path.write_text(json.dumps(data))
+                elif state == "missing":
+                    self.path.unlink()
+                self.monitor.tick()
+                page = self.monitor.render_page(NOW)
+                for reason in ("Target unverified", "Drain unverified",
+                               "Repeat safety unverified", "Repair authorization unavailable",
+                               "read-only reconciliation", "Provider restart unavailable"):
+                    self.assertIn(reason, page)
+                for control in ("<form", "<button", "<input", "onclick=", "repair_available"):
+                    self.assertNotIn(control, page)
+
     def test_source_time_stays_stale_and_future_rejected(self):
         self.write(epoch=EPOCH-61)
         snapshot = self.monitor.tick()
@@ -98,6 +132,39 @@ class MonitorTests(unittest.TestCase):
                       self.monitor.render_page(NOW))
         self.assertIn('Recent counter change: unknown',
                       self.monitor.render_page('2026-10-30T12:02:00Z'))
+
+    def test_counter_window_rejects_inconsistent_tokens_and_times(self):
+        self.write(requests=7, epoch=EPOCH-10)
+        first = self.monitor.tick()
+        self.write(requests=11, epoch=EPOCH)
+        last = self.monitor.tick()
+        self.assertEqual(traffic_window([first, last], NOW), (4, 0, 10))
+        for field, changes in (
+            ('tokens_total', dict(value=41)),
+            ('tokens_total', dict(timestamp='2026-10-30T11:59:59Z')),
+            ('requests_total', dict(timestamp=first['fields']['requests_total']['timestamp'])),
+        ):
+            with self.subTest(field=field, changes=changes):
+                altered = copy.deepcopy(last)
+                altered['fields'][field].update(changes)
+                self.assertIsNone(traffic_window([first, altered], NOW))
+        self.assertIsNone(traffic_window([last, first], NOW))
+
+    def test_counter_window_recovers_after_missing_observation(self):
+        self.write(requests=7, epoch=EPOCH-20)
+        self.monitor.tick()
+        self.path.unlink()
+        self.monitor.tick()
+        self.write(requests=100, epoch=EPOCH-10)
+        self.monitor.tick()
+        self.assertIn('Recent counter change: unknown', self.monitor.render_page(NOW))
+        self.write(requests=103, epoch=EPOCH)
+        self.monitor.tick()
+        page = self.monitor.render_page(NOW)
+        self.assertIn('Recent counter change: 3 requests · 0 tokens over 10s', page)
+        self.assertIn('Coordinator error query', page)
+        self.assertIn('Provider restart unavailable', page)
+        self.assertIn('Repairs disabled', page)
 
     def test_protections_preserved(self):
         self.directory.chmod(0o755)
@@ -153,6 +220,17 @@ class MonitorTests(unittest.TestCase):
                 self.assertIn('http-equiv="refresh"', body)
                 self.assertIn('100', body)
                 self.assertIn('Repairs disabled', body)
+                self.assertIn('Provider restart unavailable', body)
+                self.assertIn('Repeat safety unverified', body)
+                for method, target, expected in (("POST", "/", 501),
+                                                 ("POST", "/repair/restart", 501),
+                                                 ("GET", "/repair/restart", 404)):
+                    connection.close()
+                    connection = http.client.HTTPConnection('127.0.0.1', ports[0], timeout=3)
+                    connection.request(method, target)
+                    rejected = connection.getresponse()
+                    self.assertEqual(rejected.status, expected)
+                    rejected.read()
                 self.assertNotIn('MUST_NEVER_APPEAR', body)
                 connection.close()
             finally:
@@ -193,12 +271,12 @@ class MonitorTests(unittest.TestCase):
         original = self.monitor.tick
         calls = 0
 
-        def fail_second():
+        def fail_second(**kwargs):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError('PRIVATE_FAILURE_MUST_NOT_APPEAR')
-            return original()
+            return original(**kwargs)
 
         self.monitor.tick = fail_second
         with self.assertRaises(OSError):
