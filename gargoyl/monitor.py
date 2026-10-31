@@ -81,6 +81,11 @@ class LocalMonitor:
 
 
 class MonitorViewer(EvidenceViewer):
+    # Permit the same loopback endpoint to restart while previous HTTP
+    # connections are in TIME_WAIT. This does not enable SO_REUSEPORT or
+    # permit replacing another active listener.
+    allow_reuse_address = True
+
     def render_page(self, now):
         return self.reader.render_page(now)
 
