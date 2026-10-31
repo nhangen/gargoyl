@@ -313,7 +313,7 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(monitor.owner_uid, 2**32-2)
         read.assert_not_called()
 
-    def exchange(self, viewer, *, host=None, origin=None):
+    def exchange(self, viewer, *, host=None, origin=None, path='/'):
         viewer.timeout = 3
         worker = threading.Thread(target=viewer.handle_request)
         worker.start()
@@ -321,7 +321,7 @@ class MonitorTests(unittest.TestCase):
         try:
             with socket.create_connection(('127.0.0.1', viewer.server_port), timeout=3) as client:
                 authority = host or f'127.0.0.1:{viewer.server_port}'
-                request = f'GET / HTTP/1.1\r\nHost: {authority}\r\n'
+                request = f'GET {path} HTTP/1.1\r\nHost: {authority}\r\n'
                 if origin is not None:
                     request += f'Origin: {origin}\r\n'
                 client.sendall((request + '\r\n').encode('ascii'))
@@ -334,6 +334,26 @@ class MonitorTests(unittest.TestCase):
             worker.join(6)
         self.assertFalse(worker.is_alive())
         return bytes(payload)
+
+    def test_normalized_export_uses_memory_preserves_freshness_and_http_guards(self):
+        for count in range(70):
+            self.write(requests=count)
+            self.monitor.tick()
+        with patch.object(self.monitor, 'tick', side_effect=AssertionError('must not collect')):
+            data = json.loads(self.monitor.export_report('2026-10-30T12:02:00Z'))
+        self.assertEqual(len(data['snapshots']), 64)
+        self.assertEqual(data['dashboard']['hosts'][0]['latest']['requests_total'][0]['state'], 'stale')
+        self.assertFalse(data['automatic_repair_enabled'])
+        self.assertNotIn('MUST_NEVER_APPEAR', json.dumps(data))
+        with MonitorViewer(self.monitor, [HOST], clock=lambda: NOW) as viewer:
+            response = self.exchange(viewer, path='/report.json')
+            head, body = response.split(b'\r\n\r\n', 1)
+            self.assertIn(b'200 OK', head)
+            self.assertIn(b'application/json', head)
+            self.assertEqual(len(json.loads(body)['snapshots']), 64)
+            self.assertNotIn(b'http-equiv', body)
+            self.assertTrue(self.exchange(viewer, path='/report.json', host='evil.invalid').startswith(b'HTTP/1.0 403'))
+            self.assertTrue(self.exchange(viewer, path='/report.json', origin='https://evil.invalid').startswith(b'HTTP/1.0 403'))
 
     def test_immediate_same_port_restart_after_real_http_exchange(self):
         self.monitor.tick()

@@ -342,8 +342,9 @@ section > p, details > p, details > ul { margin: 10px 0; max-width: 75ch; }
 @media (max-width: 600px) { main { padding: 20px 14px; } .topbar { padding: 12px 14px; } .host-evidence h2 { font-size: 18px; } }
 """
 
-def page_start(title):
+def page_start(title, *, include_hosts=False):
     from html import escape
+    hosts = '<li><a href="#hosts-table">Jump to hosts</a></li>' if include_hosts else ''
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             '<title>' + escape(title, quote=True) + '</title><style>' + STYLE + '</style></head>'
@@ -351,7 +352,7 @@ def page_start(title):
             '<header class="topbar"><a class="brand" href="#main" aria-label="Gargoyl evidence">'
             '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path d="M21 31l8 3-8 1z M43 31l-8 3 8 1z" fill="currentColor"/></svg>gargoyl</a>'
             '<span class="pill">Read-only evidence</span></header>'
-            '<nav class="nav" aria-label="Sections"><ul><li><a href="#main">Evidence</a></li></ul></nav>'
+            '<nav class="nav" aria-label="Sections"><ul><li><a href="#main">Evidence</a></li>' + hosts + '</ul></nav>'
             '<main id="main">')
 
 

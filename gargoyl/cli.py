@@ -69,8 +69,13 @@ def _emit(kind, observed, result, *, completed=None, cleanup=None, interrupted=F
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'tools':
+        from gargoyl.operator_tools import main as tools_main
+        return tools_main(argv[1:])
     parser = _Parser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('tools', help='Explicit read-only inspection and interactive manual operator tools.')
     inspect = commands.add_parser('inspect', help='Parse supplied bytes; execute nothing.')
     inspect.add_argument('source', choices=(*KINDS, 'state'))
     inspect.add_argument('--input', required=True, help='Text: file or stdin (-); state: absolute file path.')

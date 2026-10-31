@@ -145,7 +145,7 @@ def render_overview(dashboard):
             'aria-label="Evidence legend">' + ''.join('<span class="ev ev-' + state + '">'
             + state + '</span>' for state in ('observed', 'stale', 'unknown', 'blocked'))
             + '<span class="adv">adverse reported value</span></div>'
-            '<div class="table-wrap" tabindex="0" role="region" aria-label="Host overview table">'
+            '<div id="hosts-table" class="table-wrap" tabindex="0" role="region" aria-label="Host overview table">'
             '<table class="fleet"><caption class="sr-only">Newest per-source evidence; inspect host for original reports</caption>'
             '<thead><tr><th scope="col">Host</th>' + ''.join('<th scope="col">' + label + '</th>'
             for _, label in columns) + '</tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>'
@@ -169,7 +169,7 @@ def render_dashboard(snapshots, expected_hosts, now=None):
                        f'<td>{e(item["collected_at"])}; TTL {e(item["freshness_seconds"])}s</td></tr>' for item in items)
     def table(content):
         return '<table><thead><tr><th>Metric</th><th>Evidence state</th><th>Value</th><th>Source</th><th>Source timestamp</th><th>Collection / freshness</th></tr></thead><tbody>' + content + '</tbody></table>'
-    parts = [page_start('Gargoyl fleet evidence'),
+    parts = [page_start('Gargoyl fleet evidence', include_hosts=True),
              '<h1>Fleet evidence</h1><p>Read-only snapshot view. Regenerate after collection and at least every minute. Missing evidence never means healthy.</p>',
              f'<p>Evaluated at {e(dashboard["evaluated_at"])}</p>',
              render_overview(dashboard), '<div id="local-collection"></div>']

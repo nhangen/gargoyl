@@ -15,8 +15,9 @@
       gargoyl
     </a>
     <div class="asof">
+      <span class="pill">Synthetic prototype · fixed example data</span>
       <span>As of <strong class="mono">2026-10-30 14:02:30Z</strong></span>
-      <span>Refreshes every 30 s</span>
+      <span>Static example · no auto-refresh</span>
       <span class="pill">Read-only · 127.0.0.1</span>
     </div>
   </header>
@@ -32,7 +33,7 @@
   <main id="main">
     <div class="page-head">
       <div>
-        <h1>Fleet</h1>
+        <h1>Fleet</h1><p><a href="#fleet-title">Jump to hosts</a></p>
         <p>Five expected hosts. Every cell is one field from its newest report. Missing evidence stays unknown. There is no overall health score.</p>
       </div>
       <div class="legend" role="group" aria-label="Legend">
@@ -69,13 +70,13 @@
           </li>
           <li>
             <span class="st st-unknown">outcome unknown</span>
-            <span class="what"><span class="mono">3f9a…c21e</span> diagnostics capture needs recovery</span>
+            <span class="what"><a class="mono" href="host-3f9a.html">3f9a…c21e</a> diagnostics capture needs recovery</span>
             <span class="why">Claimed at 13:20:44Z with no completion recorded. Side effects may have occurred, so check its evidence before planning anything else.</span>
             <a class="go btn" href="audit.html">View audit</a>
           </li>
           <li>
             <span class="st st-stale">stale</span>
-            <span class="what"><span class="mono">b07d…41a8</span> model state 43 min old</span>
+            <span class="what"><a class="mono" href="host-b07d.html">b07d…41a8</a> model state 43 min old</span>
             <span class="why">Last reported <code>resident</code> by the daemon; its 15-minute freshness window has passed.</span>
           </li>
         </ul>
@@ -104,7 +105,7 @@
           </thead>
           <tbody>
             <tr>
-              <th scope="row" class="host"><span class="mono" title="3f9a2c4e-8b1d-4f6a-9c3e-1d7b5a20c21e">3f9a…c21e</span></th>
+              <th scope="row" class="host"><a href="host-3f9a.html" title="">3f9a…c21e</a></th>
               <td><span class="ev ev-observed">12 s</span></td>
               <td><span class="ev ev-observed">running</span></td>
               <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">/</span><span class="ev ev-observed">eligible</span></span><span class="cell-note">agree</span></td>
@@ -134,7 +135,7 @@
               <td><span class="ev ev-unknown">unknown</span></td>
             </tr>
             <tr>
-              <th scope="row" class="host"><span class="mono" title="b07d5e12-9a4c-4d3b-b6f0-8e21c7a941a8">b07d…41a8</span></th>
+              <th scope="row" class="host"><a href="host-b07d.html" title="">b07d…41a8</a></th>
               <td><span class="ev ev-observed">15 s</span></td>
               <td><span class="ev ev-observed">running</span></td>
               <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">/</span><span class="ev ev-observed">eligible</span></span><span class="cell-note">agree</span></td>
