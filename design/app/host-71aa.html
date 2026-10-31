@@ -23,7 +23,7 @@
 
   <nav class="nav" aria-label="Sections">
     <ul>
-      <li><a href="index.html" aria-current="page">Fleet <span class="count">5 hosts</span></a></li>
+      <li><a href="index.html" aria-current="location">Fleet <span class="count">5 hosts</span></a></li>
       <li><a href="repair.html">Repair preview</a></li>
       <li><a href="audit.html">Audit history <span class="count">4</span></a></li>
     </ul>
@@ -155,7 +155,7 @@
             <tbody>
               <tr><td>coordinator</td><th scope="row"><code>requests_total</code></th><td class="num mono">18 120</td><td class="mono">14:00:00Z</td></tr>
               <tr><td>console</td><th scope="row"><code>confirmed_paid_microunits</code></th><td class="num mono">4 812 300</td><td class="mono">13:00:00Z</td></tr>
-              <tr><td colspan="4" class="muted">Request windows differ by source, so totals aren't compared. Microunits carry no currency.</td></tr>
+              <tr><td colspan="4" class="muted">The contract carries no request windows, so totals aren't compared. Microunits carry no currency.</td></tr>
             </tbody>
           </table>
         </div>
@@ -181,8 +181,8 @@
         </div>
       </details>
       <details>
-        <summary>All normalized evidence <span class="faint" style="font-weight:400">· 17 fields</span></summary>
-        <div class="body"><p class="muted">Every field, source, state, value, timestamp and TTL from this host, including thermal pressure, launchd, doctor and clock skew.</p></div>
+        <summary>All normalized evidence <span class="faint" style="font-weight:400">· 15 fields</span></summary>
+        <div class="body"><p class="muted">Every field, source, state, value, timestamp and TTL from this host, including thermal pressure, launchd, doctor and clock skew. Usage counters and paid units appear in their own section above.</p></div>
       </details>
     </section>
 

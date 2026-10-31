@@ -15,9 +15,9 @@
       gargoyl
     </a>
     <div class="asof">
-      <span>As of <strong class="mono">2026-10-30 14:02:30Z</strong></span>
-      <span>Refreshes every 30 s</span>
-      <span class="pill">Read-only · 127.0.0.1</span>
+      <span>Preview evaluated <strong class="mono">2026-10-30 14:02:30Z</strong></span>
+      <span>Doesn't auto-refresh</span>
+      <span class="pill">Read-only</span>
     </div>
   </header>
 
@@ -30,7 +30,7 @@
   </nav>
 
   <main id="main">
-    <p class="crumbs"><a href="index.html">Fleet</a> / <a href="host.html">71aa…0b5d</a> / Repair preview</p>
+    <p class="crumbs"><a href="index.html">Fleet</a> / <a href="host-71aa.html">71aa…0b5d</a> / Repair preview</p>
     <div class="page-head">
       <div>
         <h1>Repair preview for <span class="mono" style="font-size:inherit">71aa…0b5d</span></h1>
@@ -41,35 +41,35 @@
     <section aria-labelledby="runbooks-title">
       <div class="section-head">
         <h2 id="runbooks-title">Runbooks</h2>
-        <p>Blocked runbooks list the evidence they're missing. Gargoyl never fills those gaps with guesses.</p>
+        <p>Three runbooks stay blocked in v1 whatever evidence exists, because the evidence they need isn't supported yet. Gargoyl never fills those gaps with guesses.</p>
       </div>
-      <nav class="runbooks" aria-labelledby="runbooks-title">
-        <a class="runbook" href="repair.html" aria-current="true">
+      <ul class="runbooks">
+        <li><a class="runbook" href="repair.html" aria-current="true">
           <span class="name">Status refresh <code class="faint">status_refresh v1</code></span>
-          <span class="desc">Re-read the provider's local state and publish fresh observations. Doesn't restart anything.</span>
+          <span class="desc">Re-read the provider's local daemon state and publish fresh observations. Doesn't restart anything.</span>
           <span class="st st-observed">can preview</span>
-        </a>
-        <a class="runbook" href="repair.html">
+        </a></li>
+        <li class="runbook">
           <span class="name">Diagnostics capture <code class="faint">diagnostics_capture v1</code></span>
-          <span class="desc">Capture bounded local diagnostics. No raw logs leave the host.</span>
+          <span class="desc">Run the fixed <code>doctor</code> check and publish its normalized result. Raw output is never kept.</span>
           <span class="st st-observed">can preview</span>
-        </a>
-        <a class="runbook" href="repair.html">
+        </li>
+        <li class="runbook">
           <span class="name">Drained provider restart <code class="faint">drained_provider_restart v1</code></span>
-          <span class="desc">Missing evidence: in-flight work, drain acknowledgement.</span>
+          <span class="desc">Blocked in v1: no supported evidence yet for in-flight work or drain acknowledgement.</span>
           <span class="st st-blocked">blocked</span>
-        </a>
-        <a class="runbook" href="repair.html">
+        </li>
+        <li class="runbook">
           <span class="name">Model load retry <code class="faint">model_load_retry v1</code></span>
-          <span class="desc">Missing evidence: in-flight work, selected model, model memory requirement.</span>
+          <span class="desc">Blocked in v1: no supported evidence yet for in-flight work, the selected model or its memory requirement.</span>
           <span class="st st-blocked">blocked</span>
-        </a>
-        <a class="runbook" href="repair.html">
+        </li>
+        <li class="runbook">
           <span class="name">Stale state reconciliation <code class="faint">stale_state_reconciliation v1</code></span>
-          <span class="desc">Missing evidence: an approved reconciliation scope.</span>
+          <span class="desc">Blocked in v1: no approved reconciliation scope exists yet.</span>
           <span class="st st-blocked">blocked</span>
-        </a>
-      </nav>
+        </li>
+      </ul>
     </section>
 
     <section aria-labelledby="plan-title">
@@ -80,8 +80,8 @@
       <dl class="facts">
         <div><dt>Target host</dt><dd class="digest">71aa04c9-2f6e-4b8d-a1c7-5e93f2d80b5d</dd></div>
         <div><dt>Runbook</dt><dd><code>status_refresh</code> v1 · timeout 5 s</dd></div>
-        <div><dt>Runbook digest</dt><dd class="digest">sha256:4c1e…a09f</dd></div>
-        <div><dt>Plan digest</dt><dd class="digest">sha256:91b7…3d22</dd></div>
+        <div><dt>Runbook digest</dt><dd class="digest">4c1e…a09f</dd></div>
+        <div><dt>Plan digest</dt><dd class="digest">91b7…3d22</dd></div>
         <div><dt>Evaluated</dt><dd class="mono">14:02:30Z</dd></div>
         <div><dt>Expires</dt><dd class="mono">14:03:30Z</dd></div>
       </dl>
@@ -97,7 +97,7 @@
           <thead><tr><th scope="col">Check</th><th scope="col">Result</th><th scope="col">Required</th><th scope="col">Meaning</th></tr></thead>
           <tbody>
             <tr><th scope="row"><code>artifact_verified</code></th><td><span class="ev ev-observed">passed</span></td><td>yes</td><td class="muted">Runbook signature and pinned version verified against the trusted catalog.</td></tr>
-            <tr><th scope="row"><code>evidence_fresh</code></th><td><span class="ev ev-observed">passed</span></td><td>no</td><td class="muted">Informational for this runbook. A status refresh is allowed even when evidence is stale.</td></tr>
+            <tr><th scope="row"><code>evidence_fresh</code></th><td><span class="ev ev-observed">passed</span></td><td>no</td><td class="muted">Not a blocking catalog check for this runbook.</td></tr>
           </tbody>
         </table>
       </div>
@@ -120,17 +120,17 @@
 
     <section aria-labelledby="confirm-title">
       <div class="section-head">
-        <h2 id="confirm-title">Confirm <span class="planned-tag">· planned interaction</span></h2>
-        <p>The current viewer has no controls. This is the intended confirmation step once authenticated confirmation exists.</p>
+        <h2 id="confirm-title">Confirmation <span class="planned-tag">· planned, not in the viewer</span></h2>
+        <p>The viewer has no controls. This mock-up shows the intended step once authenticated confirmation exists (epic #4).</p>
       </div>
-      <div class="confirm">
-        <label for="confirm-host">Type <code>71aa</code> to confirm the target host</label>
-        <div class="row">
-          <input class="input" id="confirm-host" value="" placeholder="71aa" disabled aria-describedby="confirm-help">
-          <a class="btn btn-primary" aria-disabled="true" role="link">Run status refresh on 71aa…0b5d</a>
+      <figure class="confirm" aria-label="Mock-up of the planned confirmation step">
+        <p class="confirm-title">Type <code>71aa</code> to confirm the target host</p>
+        <div class="row" aria-hidden="true">
+          <span class="input mock">71aa</span>
+          <span class="btn mock">Run status refresh on 71aa…0b5d</span>
         </div>
-        <p id="confirm-help" class="muted">Your confirmation is bound to you, this host, runbook version 1, both digests and this plan. It's single-use and expires with the plan. If the evidence changes before the run starts, the run is refused.</p>
-      </div>
+        <figcaption class="muted">The confirmation names this host, runbook version 1, both digests and this plan, and is single-use. It can expire before the plan does. Who may confirm is decided by a separate authorization check, not by the confirmation itself.</figcaption>
+      </figure>
     </section>
 
     <footer class="page-foot">A preview establishes what would run, not who may run it. Authentication, authorization and an available host adapter are checked separately at run time. Design prototype with synthetic data.</footer>

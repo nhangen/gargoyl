@@ -15,9 +15,9 @@
       gargoyl
     </a>
     <div class="asof">
-      <span>As of <strong class="mono">2026-10-30 14:02:30Z</strong></span>
-      <span>Refreshes every 30 s</span>
-      <span class="pill">Read-only · 127.0.0.1</span>
+      <span>Read at <strong class="mono">2026-10-30 14:02:30Z</strong></span>
+      <span>Doesn't auto-refresh</span>
+      <span class="pill">Read-only</span>
     </div>
   </header>
 
@@ -33,7 +33,7 @@
     <div class="page-head">
       <div>
         <h1>Audit history</h1>
-        <p>Every repair attempt, as recorded. Outcomes are reported history, not independently verified facts, and no outcome grants permission to run again.</p>
+        <p>Every claimed repair attempt, as recorded. Attempts refused before a claim, such as blocked preflights, aren't recorded here. Outcomes are reported history, not independently verified facts, and no outcome grants permission to run again.</p>
       </div>
     </div>
 
@@ -50,10 +50,10 @@
         <table>
           <thead><tr><th scope="col">Started</th><th scope="col">Host</th><th scope="col">Runbook</th><th scope="col">Outcome</th><th scope="col">Reason</th><th scope="col">Stage</th><th scope="col">Actor</th></tr></thead>
           <tbody>
-            <tr><td class="mono nowrap">14:00:12Z</td><td class="mono"><a href="host.html">71aa…0b5d</a></td><td><code>status_refresh</code> v1</td><td><span class="st st-observed">succeeded</span></td><td class="mono">completed</td><td>completion</td><td class="mono">a7c0…11e4</td></tr>
-            <tr><td class="mono nowrap">13:41:03Z</td><td class="mono"><a href="host.html#b07d">b07d…41a8</a></td><td><code>drained_provider_restart</code> v1</td><td><span class="st st-blocked">blocked</span></td><td class="mono">preconditions_blocked</td><td>preflight</td><td class="mono">a7c0…11e4</td></tr>
-            <tr><td class="mono nowrap">13:20:44Z</td><td class="mono"><a href="host.html#3f9a">3f9a…c21e</a></td><td><code>diagnostics_capture</code> v1</td><td><span class="st st-unknown">outcome unknown</span></td><td class="mono">recovery_required</td><td>claim</td><td class="mono">a7c0…11e4</td></tr>
-            <tr><td class="mono nowrap">12:55:09Z</td><td class="mono"><a href="host.html#9d40">9d40…77e2</a></td><td><code>status_refresh</code> v1</td><td><span class="st st-failed">failed</span></td><td class="mono">operation_failed</td><td>execution</td><td class="mono">a7c0…11e4</td></tr>
+            <tr><td class="mono nowrap">14:00:12Z</td><td class="mono"><a href="host-71aa.html">71aa…0b5d</a></td><td><code>status_refresh</code> v1</td><td><span class="st st-observed">succeeded</span></td><td class="mono">completed</td><td>completion</td><td class="mono">a7c0…11e4</td></tr>
+            <tr><td class="mono nowrap">13:41:03Z</td><td class="mono"><span class="mono">b07d…41a8</span></td><td><code>status_refresh</code> v1</td><td><span class="st st-unknown">cancelled</span></td><td class="mono">cancelled</td><td>execution</td><td class="mono">a7c0…11e4</td></tr>
+            <tr><td class="mono nowrap">13:20:44Z</td><td class="mono"><span class="mono">3f9a…c21e</span></td><td><code>diagnostics_capture</code> v1</td><td><span class="st st-unknown">outcome unknown</span></td><td class="mono">recovery_required</td><td>claim</td><td class="mono">a7c0…11e4</td></tr>
+            <tr><td class="mono nowrap">12:55:09Z</td><td class="mono"><a href="host-9d40.html">9d40…77e2</a></td><td><code>status_refresh</code> v1</td><td><span class="st st-failed">failed</span></td><td class="mono">operation_failed</td><td>execution</td><td class="mono">a7c0…11e4</td></tr>
           </tbody>
         </table>
       </div>
@@ -66,8 +66,8 @@
         <div class="body">
           <dl class="facts">
             <div><dt>Outcome (reported)</dt><dd><span class="st st-observed">succeeded</span> completed</dd></div>
-            <div><dt>Runbook</dt><dd><code>status_refresh</code> v1 · <span class="digest">sha256:4c1e…a09f</span></dd></div>
-            <div><dt>Plan digest</dt><dd class="digest">sha256:7e02…c418</dd></div>
+            <div><dt>Runbook</dt><dd><code>status_refresh</code> v1 · <span class="digest">4c1e…a09f</span></dd></div>
+            <div><dt>Plan digest</dt><dd class="digest">7e02…c418</dd></div>
             <div><dt>Confirmed</dt><dd class="mono">13:59:58Z</dd></div>
             <div><dt>Finished</dt><dd class="mono">14:00:13Z</dd></div>
             <div><dt>Click ID</dt><dd class="digest">c3d1…0a7b</dd></div>

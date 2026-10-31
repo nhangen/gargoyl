@@ -47,29 +47,35 @@
     <section aria-labelledby="attention-title">
       <div class="section-head">
         <h2 id="attention-title">Needs attention</h2>
-        <p>Collector incidents, local / coordinator mismatches, conflicts and diagnostic warnings.</p>
+        <p>Collector incidents, local / coordinator mismatches, conflicts, diagnostic warnings and repairs needing recovery.</p>
       </div>
       <div class="attention">
         <ul>
           <li>
             <span class="st st-unknown">no heartbeat</span>
-            <span class="what"><a class="mono" href="host.html#e5c2">e5c2…9f03</a> has never reported</span>
-            <span class="why">Expected host with no collector heartbeat. Every field is unknown, not assumed running.</span>
+            <span class="what"><a class="mono" href="host-e5c2.html">e5c2…9f03</a> has no collector heartbeat</span>
+            <span class="why">Expected host with no heartbeat in the retained evidence. Every field is unknown, not assumed running.</span>
           </li>
           <li>
             <span class="st st-mismatch">routing</span>
-            <span class="what"><a class="mono" href="host.html">71aa…0b5d</a> eligible locally, ineligible at the coordinator</span>
-            <span class="why">Both reports are fresh and disagree. Coordinator error <code>timeout</code> observed at 2 distinct times; root cause unknown.</span>
-            <a class="go btn" href="host.html">Inspect host</a>
+            <span class="what"><a class="mono" href="host-71aa.html">71aa…0b5d</a> eligible locally, ineligible at the coordinator</span>
+            <span class="why">Both reports are fresh and disagree. Coordinator error <code>timeout</code> observed at 2 distinct source times (not a count of errors); root cause unknown.</span>
+            <a class="go btn" href="host-71aa.html">Inspect host</a>
           </li>
           <li>
             <span class="st st-unknown">conflict</span>
-            <span class="what"><a class="mono" href="host.html#9d40">9d40…77e2</a> attestation reports disagree</span>
+            <span class="what"><a class="mono" href="host-9d40.html">9d40…77e2</a> attestation reports disagree</span>
             <span class="why">Two daemon reports at 13:58:04Z carry different values. Neither is treated as authoritative.</span>
           </li>
           <li>
+            <span class="st st-unknown">outcome unknown</span>
+            <span class="what"><span class="mono">3f9a…c21e</span> diagnostics capture needs recovery</span>
+            <span class="why">Claimed at 13:20:44Z with no completion recorded. Side effects may have occurred, so check its evidence before planning anything else.</span>
+            <a class="go btn" href="audit.html">View audit</a>
+          </li>
+          <li>
             <span class="st st-stale">stale</span>
-            <span class="what"><a class="mono" href="host.html#b07d">b07d…41a8</a> model state 43 min old</span>
+            <span class="what"><span class="mono">b07d…41a8</span> model state 43 min old</span>
             <span class="why">Last reported <code>resident</code> by the daemon; its 15-minute freshness window has passed.</span>
           </li>
         </ul>
@@ -79,7 +85,7 @@
     <section aria-labelledby="fleet-title">
       <div class="section-head">
         <h2 id="fleet-title">Hosts</h2>
-        <p>Hosts are opaque IDs assigned at enrollment. Select one for per-source evidence.</p>
+        <p>Hosts are opaque IDs assigned at enrollment. Linked hosts open their per-source evidence.</p>
       </div>
       <div class="table-wrap" tabindex="0" role="region" aria-label="Hosts (scrollable table)">
         <table class="fleet">
@@ -98,54 +104,54 @@
           </thead>
           <tbody>
             <tr>
-              <th scope="row" class="host"><a href="host.html#3f9a" title="3f9a2c4e-8b1d-4f6a-9c3e-1d7b5a20c21e">3f9a…c21e</a></th>
+              <th scope="row" class="host"><span class="mono" title="3f9a2c4e-8b1d-4f6a-9c3e-1d7b5a20c21e">3f9a…c21e</span></th>
               <td><span class="ev ev-observed">12 s</span></td>
               <td><span class="ev ev-observed">running</span></td>
               <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">/</span><span class="ev ev-observed">eligible</span></span><span class="cell-note">agree</span></td>
               <td><span class="ev ev-observed">valid</span></td>
               <td><span class="ev ev-observed">resident</span></td>
               <td><span class="ev ev-observed">normal</span></td>
-              <td><span class="ev ev-unknown">no warning</span></td>
+              <td><span class="ev ev-unknown">unknown</span></td>
             </tr>
             <tr>
-              <th scope="row" class="host"><a href="host.html" title="71aa04c9-2f6e-4b8d-a1c7-5e93f2d80b5d">71aa…0b5d</a></th>
+              <th scope="row" class="host"><a href="host-71aa.html" title="71aa04c9-2f6e-4b8d-a1c7-5e93f2d80b5d">71aa…0b5d</a></th>
               <td><span class="ev ev-observed">8 s</span></td>
               <td><span class="ev ev-observed">running</span></td>
               <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">≠</span><span class="ev ev-observed"><span class="adv">ineligible</span></span></span><span class="cell-note"><span class="st st-mismatch">mismatch</span></span></td>
               <td><span class="ev ev-observed">valid</span></td>
               <td><span class="ev ev-observed">resident</span></td>
               <td><span class="ev ev-observed"><span class="adv">warning</span></span></td>
-              <td><span class="st st-warning">timeout ×2</span></td>
+              <td><span class="st st-warning">timeout</span><span class="cell-note">repeated observations</span></td>
             </tr>
             <tr>
-              <th scope="row" class="host"><a href="host.html#9d40" title="9d40b6a1-3c5f-4e2a-8f71-c0a4e93d77e2">9d40…77e2</a></th>
+              <th scope="row" class="host"><a href="host-9d40.html" title="9d40b6a1-3c5f-4e2a-8f71-c0a4e93d77e2">9d40…77e2</a></th>
               <td><span class="ev ev-observed">21 s</span></td>
               <td><span class="ev ev-observed">running</span></td>
               <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">/</span><span class="ev ev-unknown">no report</span></span><span class="cell-note">cannot compare</span></td>
               <td><span class="ev ev-unknown">conflict</span><span class="cell-note">2 reports disagree</span></td>
               <td><span class="ev ev-observed">loading</span></td>
               <td><span class="ev ev-observed">normal</span></td>
-              <td><span class="ev ev-unknown">no warning</span></td>
+              <td><span class="ev ev-unknown">unknown</span></td>
             </tr>
             <tr>
-              <th scope="row" class="host"><a href="host.html#b07d" title="b07d5e12-9a4c-4d3b-b6f0-8e21c7a941a8">b07d…41a8</a></th>
+              <th scope="row" class="host"><span class="mono" title="b07d5e12-9a4c-4d3b-b6f0-8e21c7a941a8">b07d…41a8</span></th>
               <td><span class="ev ev-observed">15 s</span></td>
               <td><span class="ev ev-observed">running</span></td>
               <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">/</span><span class="ev ev-observed">eligible</span></span><span class="cell-note">agree</span></td>
               <td><span class="ev ev-observed">valid</span></td>
               <td><span class="ev ev-stale">resident</span><span class="cell-note">43 m old · TTL 15 m</span></td>
               <td><span class="ev ev-observed">normal</span></td>
-              <td><span class="ev ev-unknown">no warning</span></td>
+              <td><span class="ev ev-unknown">unknown</span></td>
             </tr>
             <tr>
-              <th scope="row" class="host"><a href="host.html#e5c2" title="e5c2f7d8-1b3a-4c9e-9d26-a7f40b1e9f03">e5c2…9f03</a></th>
+              <th scope="row" class="host"><a href="host-e5c2.html" title="e5c2f7d8-1b3a-4c9e-9d26-a7f40b1e9f03">e5c2…9f03</a></th>
               <td><span class="ev ev-unknown">missing</span></td>
               <td><span class="ev ev-unknown">no report</span></td>
               <td><span class="pair"><span class="ev ev-unknown">no report</span><span class="sep">/</span><span class="ev ev-unknown">no report</span></span></td>
               <td><span class="ev ev-unknown">no report</span></td>
               <td><span class="ev ev-unknown">no report</span></td>
               <td><span class="ev ev-unknown">no report</span></td>
-              <td><span class="ev ev-unknown">no warning</span></td>
+              <td><span class="ev ev-unknown">unknown</span></td>
             </tr>
           </tbody>
         </table>
