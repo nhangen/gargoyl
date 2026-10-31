@@ -73,6 +73,32 @@ class MonitorTests(unittest.TestCase):
         self.write(epoch=EPOCH+1)
         self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'invalid_state')
 
+    def test_recent_counter_change_requires_fresh_continuous_evidence(self):
+        self.write(requests=7, epoch=EPOCH-10)
+        self.monitor.tick()
+        self.write(requests=11, epoch=EPOCH)
+        self.monitor.tick()
+        page = self.monitor.render_page(NOW)
+        self.assertIn('Recent counter change: 4 requests · 0 tokens over 10s', page)
+        self.assertIn('not confirmed paid work', page)
+        self.write(requests=1, epoch=EPOCH)
+        self.monitor.tick()
+        self.assertIn('Recent counter change: unknown', self.monitor.render_page(NOW))
+        self.path.unlink()
+        self.monitor.tick()
+        self.assertIn('Recent counter change: unknown', self.monitor.render_page(NOW))
+        self.assertIn('Recent counter change: unknown', self.monitor.render_page('2026-10-30T12:02:00Z'))
+
+    def test_recent_counter_change_can_show_zero_without_fabricating_traffic(self):
+        self.write(requests=7, epoch=EPOCH-10)
+        self.monitor.tick()
+        self.write(requests=7, epoch=EPOCH)
+        self.monitor.tick()
+        self.assertIn('Recent counter change: 0 requests · 0 tokens over 10s',
+                      self.monitor.render_page(NOW))
+        self.assertIn('Recent counter change: unknown',
+                      self.monitor.render_page('2026-10-30T12:02:00Z'))
+
     def test_protections_preserved(self):
         self.directory.chmod(0o755)
         self.assertEqual(self.monitor.tick()['fields']['error_code']['value'], 'permission_denied')

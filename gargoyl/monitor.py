@@ -19,6 +19,41 @@ from gargoyl.dashboard.runtime import EvidenceViewer, utc_now
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
 
 
+def traffic_window(samples, now):
+    """Compare fresh contiguous counter observations without asserting billing or uptime."""
+    if len(samples) < 2:
+        return None
+    recent = []
+    for sample in reversed(samples):
+        fields = sample['fields']
+        request = fields['requests_total']
+        tokens = fields['tokens_total']
+        if (fields['error_code']['value'] != 'none'
+                or effective_state(request, now) != 'observed'
+                or effective_state(tokens, now) != 'observed'
+                or request['timestamp'] != tokens['timestamp']
+                or request['value'] is None or tokens['value'] is None):
+            break
+        recent.append((request, tokens))
+    if len(recent) < 2:
+        return None
+    recent.reverse()
+    for (previous, previous_tokens), (current, current_tokens) in zip(recent, recent[1:]):
+        if (timestamp(current['timestamp']) < timestamp(previous['timestamp'])
+                or (current['timestamp'] == previous['timestamp']
+                    and (current['value'] != previous['value']
+                         or current_tokens['value'] != previous_tokens['value']))
+                or current['value'] < previous['value']
+                or current_tokens['value'] < previous_tokens['value']):
+            return None
+    first, first_tokens = recent[0]
+    last, last_tokens = recent[-1]
+    elapsed = (timestamp(last['timestamp']) - timestamp(first['timestamp'])).total_seconds()
+    if elapsed <= 0:
+        return None
+    return last['value'] - first['value'], last_tokens['value'] - first_tokens['value'], elapsed
+
+
 class LocalMonitor:
     """Single collection owner, locked detached reads; at most 64 observations."""
 
@@ -66,6 +101,14 @@ class LocalMonitor:
             summary += 'A current collector heartbeat does not establish a current source.</p>'
             summary += f'<p>Request evidence: <strong>{escape(source_state)}</strong> · age {age:.0f}s · TTL 60s. Unknown timestamps describe collection, not a successful source read.</p>'
             summary += '<p>Requests total: <strong>' + escape(str(fields['requests_total']['value']) if fields['requests_total']['value'] is not None else 'unknown') + '</strong> · Tokens total: <strong>' + escape(str(fields['tokens_total']['value']) if fields['tokens_total']['value'] is not None else 'unknown') + '</strong>. Cumulative source claims.</p>'
+            window = traffic_window(samples, now)
+            if window is None:
+                summary += '<p>Recent counter change: unknown (not enough fresh, continuous evidence).</p>'
+            else:
+                requests, tokens, elapsed = window
+                summary += (f'<p>Recent counter change: {requests} requests · {tokens} tokens '
+                            f'over {elapsed:.0f}s of source timestamps. Counter changes are '
+                            'not confirmed paid work; an undetected reset can affect this comparison.</p>')
             summary += '<details><summary>Recent traffic observations</summary><div class="scroll"><table><thead><tr><th>Collected at</th><th>Requests total</th><th>Tokens total</th><th>Source timestamp</th><th>Read error</th></tr></thead><tbody>'
             for sample in reversed(samples):
                 f = sample['fields']
