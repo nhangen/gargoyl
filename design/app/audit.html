@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audit history · Gargoyl</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="Gargoyl fleet overview">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path class="brand-eyes" d="M21 31l8 3-8 1z M43 31l-8 3 8 1z"/></svg>
+      gargoyl
+    </a>
+    <div class="asof">
+      <span>As of <strong class="mono">2026-10-30 14:02:30Z</strong></span>
+      <span>Refreshes every 30 s</span>
+      <span class="pill">Read-only · 127.0.0.1</span>
+    </div>
+  </header>
+
+  <nav class="nav" aria-label="Sections">
+    <ul>
+      <li><a href="index.html">Fleet <span class="count">5 hosts</span></a></li>
+      <li><a href="repair.html">Repair preview</a></li>
+      <li><a href="audit.html" aria-current="page">Audit history <span class="count">4</span></a></li>
+    </ul>
+  </nav>
+
+  <main id="main">
+    <div class="page-head">
+      <div>
+        <h1>Audit history</h1>
+        <p>Every repair attempt, as recorded. Outcomes are reported history, not independently verified facts, and no outcome grants permission to run again.</p>
+      </div>
+    </div>
+
+    <section aria-labelledby="unknown-title">
+      <div class="callout danger">
+        <div class="callout-title" id="unknown-title"><span class="st st-unknown">outcome unknown</span> Diagnostics capture on 3f9a…c21e needs recovery</div>
+        <p>The run was claimed at 13:20:44Z, but no completion was recorded. Side effects may have occurred. Gargoyl won't retry, reset or resume it; inspect the host's current evidence before planning anything else.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="log-title">
+      <div class="section-head"><h2 id="log-title">Attempts</h2><p>Newest first. Actors and hosts are opaque IDs.</p></div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Attempts (scrollable table)">
+        <table>
+          <thead><tr><th scope="col">Started</th><th scope="col">Host</th><th scope="col">Runbook</th><th scope="col">Outcome</th><th scope="col">Reason</th><th scope="col">Stage</th><th scope="col">Actor</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nowrap">14:00:12Z</td><td class="mono"><a href="host.html">71aa…0b5d</a></td><td><code>status_refresh</code> v1</td><td><span class="st st-observed">succeeded</span></td><td class="mono">completed</td><td>completion</td><td class="mono">a7c0…11e4</td></tr>
+            <tr><td class="mono nowrap">13:41:03Z</td><td class="mono"><a href="host.html#b07d">b07d…41a8</a></td><td><code>drained_provider_restart</code> v1</td><td><span class="st st-blocked">blocked</span></td><td class="mono">preconditions_blocked</td><td>preflight</td><td class="mono">a7c0…11e4</td></tr>
+            <tr><td class="mono nowrap">13:20:44Z</td><td class="mono"><a href="host.html#3f9a">3f9a…c21e</a></td><td><code>diagnostics_capture</code> v1</td><td><span class="st st-unknown">outcome unknown</span></td><td class="mono">recovery_required</td><td>claim</td><td class="mono">a7c0…11e4</td></tr>
+            <tr><td class="mono nowrap">12:55:09Z</td><td class="mono"><a href="host.html#9d40">9d40…77e2</a></td><td><code>status_refresh</code> v1</td><td><span class="st st-failed">failed</span></td><td class="mono">operation_failed</td><td>execution</td><td class="mono">a7c0…11e4</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="receipt-title">
+      <h2 id="receipt-title" class="sr-only">Receipt detail</h2>
+      <details open>
+        <summary>Receipt · status_refresh on 71aa…0b5d · 14:00:12Z</summary>
+        <div class="body">
+          <dl class="facts">
+            <div><dt>Outcome (reported)</dt><dd><span class="st st-observed">succeeded</span> completed</dd></div>
+            <div><dt>Runbook</dt><dd><code>status_refresh</code> v1 · <span class="digest">sha256:4c1e…a09f</span></dd></div>
+            <div><dt>Plan digest</dt><dd class="digest">sha256:7e02…c418</dd></div>
+            <div><dt>Confirmed</dt><dd class="mono">13:59:58Z</dd></div>
+            <div><dt>Finished</dt><dd class="mono">14:00:13Z</dd></div>
+            <div><dt>Click ID</dt><dd class="digest">c3d1…0a7b</dd></div>
+          </dl>
+          <p class="muted">The preflight recorded with this receipt is kept even if the runbook is later revoked or replaced. A succeeded outcome doesn't authorize another run.</p>
+        </div>
+      </details>
+    </section>
+
+    <footer class="page-foot">Design prototype with synthetic data.</footer>
+  </main>
+</div>
+</body>
+</html>

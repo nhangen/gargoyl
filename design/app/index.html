@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet · Gargoyl</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="Gargoyl fleet overview">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path class="brand-eyes" d="M21 31l8 3-8 1z M43 31l-8 3 8 1z"/></svg>
+      gargoyl
+    </a>
+    <div class="asof">
+      <span>As of <strong class="mono">2026-10-30 14:02:30Z</strong></span>
+      <span>Refreshes every 30 s</span>
+      <span class="pill">Read-only · 127.0.0.1</span>
+    </div>
+  </header>
+
+  <nav class="nav" aria-label="Sections">
+    <ul>
+      <li><a href="index.html" aria-current="page">Fleet <span class="count">5 hosts</span></a></li>
+      <li><a href="repair.html">Repair preview</a></li>
+      <li><a href="audit.html">Audit history <span class="count">4</span></a></li>
+    </ul>
+  </nav>
+
+  <main id="main">
+    <div class="page-head">
+      <div>
+        <h1>Fleet</h1>
+        <p>Five expected hosts. Every cell is one field from its newest report. Missing evidence stays unknown. There is no overall health score.</p>
+      </div>
+      <div class="legend" aria-label="Legend">
+        <span class="ev ev-observed">observed</span>
+        <span class="ev ev-stale">stale</span>
+        <span class="ev ev-unknown">unknown</span>
+        <span class="ev ev-blocked">blocked</span>
+        <span class="ev"><span class="adv">adverse value</span></span>
+      </div>
+    </div>
+
+    <section aria-labelledby="attention-title">
+      <div class="section-head">
+        <h2 id="attention-title">Needs attention</h2>
+        <p>Collector incidents, local / coordinator mismatches, conflicts and diagnostic warnings.</p>
+      </div>
+      <div class="attention">
+        <ul>
+          <li>
+            <span class="st st-unknown">no heartbeat</span>
+            <span class="what"><a class="mono" href="host.html#e5c2">e5c2…9f03</a> has never reported</span>
+            <span class="why">Expected host with no collector heartbeat. Every field is unknown, not assumed running.</span>
+          </li>
+          <li>
+            <span class="st st-mismatch">routing</span>
+            <span class="what"><a class="mono" href="host.html">71aa…0b5d</a> eligible locally, ineligible at the coordinator</span>
+            <span class="why">Both reports are fresh and disagree. Coordinator error <code>timeout</code> observed at 2 distinct times; root cause unknown.</span>
+            <a class="go btn" href="host.html">Inspect host</a>
+          </li>
+          <li>
+            <span class="st st-unknown">conflict</span>
+            <span class="what"><a class="mono" href="host.html#9d40">9d40…77e2</a> attestation reports disagree</span>
+            <span class="why">Two daemon reports at 13:58:04Z carry different values. Neither is treated as authoritative.</span>
+          </li>
+          <li>
+            <span class="st st-stale">stale</span>
+            <span class="what"><a class="mono" href="host.html#b07d">b07d…41a8</a> model state 43 min old</span>
+            <span class="why">Last reported <code>resident</code> by the daemon; its 15-minute freshness window has passed.</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section aria-labelledby="fleet-title">
+      <div class="section-head">
+        <h2 id="fleet-title">Hosts</h2>
+        <p>Hosts are opaque IDs assigned at enrollment. Select one for per-source evidence.</p>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Hosts (scrollable table)">
+        <table class="fleet">
+          <caption class="sr-only">Newest evidence per field for each expected host</caption>
+          <thead>
+            <tr>
+              <th scope="col">Host</th>
+              <th scope="col">Collector heartbeat</th>
+              <th scope="col">Daemon</th>
+              <th scope="col">Routing · local / coordinator</th>
+              <th scope="col">Attestation</th>
+              <th scope="col">Model</th>
+              <th scope="col">Memory</th>
+              <th scope="col">Coordinator diagnostics</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row" class="host"><a href="host.html#3f9a" title="3f9a2c4e-8b1d-4f6a-9c3e-1d7b5a20c21e">3f9a…c21e</a></th>
+              <td><span class="ev ev-observed">12 s</span></td>
+              <td><span class="ev ev-observed">running</span></td>
+              <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">/</span><span class="ev ev-observed">eligible</span></span><span class="cell-note">agree</span></td>
+              <td><span class="ev ev-observed">valid</span></td>
+              <td><span class="ev ev-observed">resident</span></td>
+              <td><span class="ev ev-observed">normal</span></td>
+              <td><span class="ev ev-unknown">no warning</span></td>
+            </tr>
+            <tr>
+              <th scope="row" class="host"><a href="host.html" title="71aa04c9-2f6e-4b8d-a1c7-5e93f2d80b5d">71aa…0b5d</a></th>
+              <td><span class="ev ev-observed">8 s</span></td>
+              <td><span class="ev ev-observed">running</span></td>
+              <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">≠</span><span class="ev ev-observed"><span class="adv">ineligible</span></span></span><span class="cell-note"><span class="st st-mismatch">mismatch</span></span></td>
+              <td><span class="ev ev-observed">valid</span></td>
+              <td><span class="ev ev-observed">resident</span></td>
+              <td><span class="ev ev-observed"><span class="adv">warning</span></span></td>
+              <td><span class="st st-warning">timeout ×2</span></td>
+            </tr>
+            <tr>
+              <th scope="row" class="host"><a href="host.html#9d40" title="9d40b6a1-3c5f-4e2a-8f71-c0a4e93d77e2">9d40…77e2</a></th>
+              <td><span class="ev ev-observed">21 s</span></td>
+              <td><span class="ev ev-observed">running</span></td>
+              <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">/</span><span class="ev ev-unknown">no report</span></span><span class="cell-note">cannot compare</span></td>
+              <td><span class="ev ev-unknown">conflict</span><span class="cell-note">2 reports disagree</span></td>
+              <td><span class="ev ev-observed">loading</span></td>
+              <td><span class="ev ev-observed">normal</span></td>
+              <td><span class="ev ev-unknown">no warning</span></td>
+            </tr>
+            <tr>
+              <th scope="row" class="host"><a href="host.html#b07d" title="b07d5e12-9a4c-4d3b-b6f0-8e21c7a941a8">b07d…41a8</a></th>
+              <td><span class="ev ev-observed">15 s</span></td>
+              <td><span class="ev ev-observed">running</span></td>
+              <td><span class="pair"><span class="ev ev-observed">eligible</span><span class="sep">/</span><span class="ev ev-observed">eligible</span></span><span class="cell-note">agree</span></td>
+              <td><span class="ev ev-observed">valid</span></td>
+              <td><span class="ev ev-stale">resident</span><span class="cell-note">43 m old · TTL 15 m</span></td>
+              <td><span class="ev ev-observed">normal</span></td>
+              <td><span class="ev ev-unknown">no warning</span></td>
+            </tr>
+            <tr>
+              <th scope="row" class="host"><a href="host.html#e5c2" title="e5c2f7d8-1b3a-4c9e-9d26-a7f40b1e9f03">e5c2…9f03</a></th>
+              <td><span class="ev ev-unknown">missing</span></td>
+              <td><span class="ev ev-unknown">no report</span></td>
+              <td><span class="pair"><span class="ev ev-unknown">no report</span><span class="sep">/</span><span class="ev ev-unknown">no report</span></span></td>
+              <td><span class="ev ev-unknown">no report</span></td>
+              <td><span class="ev ev-unknown">no report</span></td>
+              <td><span class="ev ev-unknown">no report</span></td>
+              <td><span class="ev ev-unknown">no warning</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="page-foot">
+      Protocol compatibility with the coordinator is unknown for every host: no supported evidence is collected yet. Agreement between local and coordinator reports is not proof of dispatch. Design prototype with synthetic data.
+    </footer>
+  </main>
+</div>
+</body>
+</html>
