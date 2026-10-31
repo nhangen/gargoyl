@@ -28,7 +28,10 @@ than replayed. HTTP serving runs independently of polling. The browser reloads
 every two seconds, including error responses. The existing bounded header reads,
 Host/Origin checks, CSP and no-store policy apply. Only numeric IPv4 loopback is
 bound; no remote interface option exists. A busy port fails without replacing or
-signaling an existing process. `--port 0` chooses an ephemeral port printed at startup.
+signaling an existing process. The monitor enables `SO_REUSEADDR` to restart
+its same loopback port after prior HTTP connections enter `TIME_WAIT`;
+`SO_REUSEPORT` remains disabled, and an active listener cannot be displaced.
+`--port 0` chooses an ephemeral port printed at startup.
 
 In another terminal:
 
@@ -92,7 +95,9 @@ implemented; no login/boot service is running as a result of installation.
 requests, independent repeated polling, Host rejection, missing/malformed recovery,
 stale/future timestamps, ownership protection, bounded history, restart and actual
 SIGINT/SIGTERM shutdown. Fixtures contain synthetic private text that must never
-appear in HTML. These tests do not read the real daemon or execute repairs.
+appear in HTML. Real HTTP/socket regressions also verify immediate same-port
+restart, refusal to displace an active listener, preserved Host/Origin rejection,
+and disabled `SO_REUSEPORT`. These tests do not read the real daemon or execute repairs.
 
 A prepared, inactive [LaunchAgent example](examples/dev.gargoyl.monitor.plist)
 contains the MBP-26 arguments. Replace its absolute venv placeholder before any

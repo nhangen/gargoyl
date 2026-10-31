@@ -1,10 +1,12 @@
 import contextlib
+import errno
 import gc
 import http.client
 import io
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -15,7 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from gargoyl.cli import main
-from gargoyl.monitor import LocalMonitor, run_monitor, status
+from gargoyl.monitor import LocalMonitor, MonitorViewer, run_monitor, status
 
 HOST = '00000000-0000-4000-8000-000000000001'
 NOW = '2026-10-30T12:00:00Z'
@@ -206,6 +208,50 @@ class MonitorTests(unittest.TestCase):
             monitor = LocalMonitor('/private/source.json', 2**32-2, HOST)
         self.assertEqual(monitor.owner_uid, 2**32-2)
         read.assert_not_called()
+
+    def exchange(self, viewer, *, host=None, origin=None):
+        viewer.timeout = 3
+        worker = threading.Thread(target=viewer.handle_request)
+        worker.start()
+        payload = bytearray()
+        try:
+            with socket.create_connection(('127.0.0.1', viewer.server_port), timeout=3) as client:
+                authority = host or f'127.0.0.1:{viewer.server_port}'
+                request = f'GET / HTTP/1.1\r\nHost: {authority}\r\n'
+                if origin is not None:
+                    request += f'Origin: {origin}\r\n'
+                client.sendall((request + '\r\n').encode('ascii'))
+                # Read through the server FIN before closing the client, leaving
+                # the server endpoint in TIME_WAIT rather than relying on a race.
+                while block := client.recv(65536):
+                    payload.extend(block)
+                    self.assertLess(len(payload), 1048576)
+        finally:
+            worker.join(6)
+        self.assertFalse(worker.is_alive())
+        return bytes(payload)
+
+    def test_immediate_same_port_restart_after_real_http_exchange(self):
+        self.monitor.tick()
+        with MonitorViewer(self.monitor, [HOST], clock=lambda: NOW) as first:
+            port = first.server_port
+            self.assertTrue(self.exchange(first).startswith(b'HTTP/1.0 200'))
+        # No sleep, alternate port, or system TCP tuning: restart the same
+        # listener immediately after an actual server-closed HTTP connection.
+        with MonitorViewer(self.monitor, [HOST], clock=lambda: NOW, port=port) as restarted:
+            self.assertTrue(self.exchange(restarted).startswith(b'HTTP/1.0 200'))
+
+    def test_active_listener_cannot_be_displaced_and_guards_remain(self):
+        self.monitor.tick()
+        with MonitorViewer(self.monitor, [HOST], clock=lambda: NOW) as viewer:
+            with self.assertRaises(OSError) as refused:
+                MonitorViewer(self.monitor, [HOST], clock=lambda: NOW, port=viewer.server_port)
+            self.assertEqual(refused.exception.errno, errno.EADDRINUSE)
+            self.assertTrue(self.exchange(viewer, host='evil.invalid').startswith(b'HTTP/1.0 403'))
+            self.assertTrue(self.exchange(viewer, origin='https://evil.invalid').startswith(b'HTTP/1.0 403'))
+            self.assertTrue(self.exchange(viewer).startswith(b'HTTP/1.0 200'))
+            self.assertEqual(viewer.server_address[0], '127.0.0.1')
+            self.assertEqual(viewer.socket.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT), 0)
 
     def test_configuration_and_restart_clear_memory(self):
         self.monitor.tick()
