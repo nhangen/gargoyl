@@ -125,3 +125,13 @@ error is not a coordinator protocol error. No raw-log collection is added.
 Normalized coordinator errors supplied by other supported evidence paths remain
 warnings, not restart triggers. Low or zero traffic alone is not failure. See
 [diagnostic confidence](diagnostic-confidence.md) for evidence and limitations.
+
+## Optional read-only diagnostic sources
+
+[Owner-local diagnostic collection](local-diagnostic-collection.md) adds explicit
+`--provider-executable` and `--coordinator-errors` options. Native process evidence,
+selected daemon status claims and bounded coordinator Error/Fault record counts
+are collected without invoking provider status/doctor or reading credentials.
+This opt-in mode preserves original source/trust times and may show stale
+eligibility alongside current liveness. Unknown or redacted causes remain unknown.
+Repairs remain disabled; no raw logs are retained or exported.

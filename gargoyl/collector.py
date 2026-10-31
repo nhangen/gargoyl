@@ -23,7 +23,7 @@ SOURCES = {
     "memory_pressure": "host", "thermal_pressure": "host",
     "memory_headroom_bytes": "host", "attestation_state": "daemon",
     "attestation_age_seconds": "daemon", "coordinator_reachable": "coordinator",
-    "requests_total": "daemon", "tokens_total": "daemon",
+    "requests_total": "daemon", "tokens_total": "daemon", "routing_eligible": "daemon",
 }
 ERROR_CODES = frozenset({"timeout", "unavailable", "invalid_state", "permission_denied"})
 
@@ -55,7 +55,12 @@ def collect(identity, now, readings, *, errors=(), reference_time=None, ttl=60):
             fields[metric] = _observation(None, source, now, ttl, "unknown")
         else:
             field = readings[metric]
-            if type(field) is not dict or field.get("source") != source:
+            allowed = {source}
+            if metric == "daemon_state":
+                allowed.add("host")
+            if metric == "coordinator_reachable":
+                allowed.add("daemon")
+            if type(field) is not dict or field.get("source") not in allowed:
                 raise PolicyError("collector provenance rejected")
             fields[metric] = field
     fields["heartbeat_age_seconds"] = _observation(0, "collector", now, ttl)

@@ -13,6 +13,8 @@ from collections import deque
 from html import escape
 
 from gargoyl.collector import collect
+from gargoyl.collector_coordinator_log import validate_log_report
+from gargoyl.collector_local_diagnostics import LocalDiagnostics
 from gargoyl.collector_state_file import read_daemon_state, validate_daemon_state_source
 from gargoyl.dashboard import render_dashboard
 from gargoyl.dashboard.runtime import EvidenceViewer, utc_now
@@ -20,10 +22,33 @@ from gargoyl.repair_view import render_restart_unavailable
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
 
 
+def render_log_report(report, now):
+    content = '<section aria-label="Coordinator error query"><h2>Coordinator error query</h2>'
+    if report is None:
+        return content + '<p>Unknown: narrowly scoped log collection is not configured.</p></section>'
+    report = validate_log_report(report)
+    state = report['state']
+    if (timestamp(now) < timestamp(report['observed_at']) or
+            (timestamp(now) - timestamp(report['observed_at'])).total_seconds() > report['freshness_seconds']):
+        state = 'stale' if timestamp(now) >= timestamp(report['observed_at']) else 'unknown'
+    content += '<p>Query evidence: <strong>' + escape(state) + '</strong> · ' + escape(report['reason']) + '</p>'
+    if state == 'observed':
+        content += ('<p>' + ('Diagnostic warning: ' if report['count'] else '')
+                    + str(report['count']) + ' visible coordinator Error/Fault records; '
+                    + str(report['redacted_count']) + ' contain redacted messages. '
+                    + 'Last visible event: ' + escape(report['latest_event_at'] or 'unknown') + '.</p>')
+        content += '<p>Query window: ' + escape(report['window_start']) + ' to ' + escape(report['window_end']) + '.</p>'
+    else:
+        content += '<p>Counts and recency are unknown. No previous successful query supplies current evidence.</p>'
+    return (content + '<p>Only fixed metadata aggregates are retained in memory. Message text is discarded. '
+            'Visible records are not complete log coverage, proof of an error-free connection, '
+            'a protocol diagnosis or a restart trigger. Redacted causes remain unknown.</p></section>')
+
+
 class LocalMonitor:
     """Single collection owner, locked detached reads; at most 64 observations."""
 
-    def __init__(self, source, owner_uid, identity, *, interval=5, clock=utc_now):
+    def __init__(self, source, owner_uid, identity, *, interval=5, clock=utc_now, diagnostics=None):
         host_id(identity)
         validate_daemon_state_source(source, owner_uid)
         if (type(interval) not in (int, float) or not math.isfinite(interval)
@@ -31,15 +56,25 @@ class LocalMonitor:
             raise ValueError('invalid monitor configuration')
         self.source, self.owner_uid, self.identity = source, owner_uid, identity
         self.interval, self.clock = interval, clock
+        self.diagnostics = diagnostics
+        self._log_report = None
         self._lock = threading.Lock()
         self._history = deque(maxlen=64)
         self._collections = 0
 
-    def tick(self):
+    def tick(self, *, stop_event=None):
         now = self.clock()
-        result = read_daemon_state(self.source, expected_owner_uid=self.owner_uid, now=now)
-        snapshot = collect(self.identity, now, result.result.readings, errors=result.result.errors)
+        log_report = None
+        if self.diagnostics is not None:
+            result = self.diagnostics.collect(self.source, now=now, stop=stop_event)
+            now, log_report = result.collected_at, validate_log_report(result.log_report)
+            adapted = result.result
+        else:
+            result = read_daemon_state(self.source, expected_owner_uid=self.owner_uid, now=now)
+            adapted = result.result
+        snapshot = collect(self.identity, now, adapted.readings, errors=adapted.errors)
         with self._lock:
+            self._log_report = log_report
             self._history.append(snapshot)
             self._collections += 1
         return validate_snapshot(snapshot)
@@ -54,6 +89,7 @@ class LocalMonitor:
         with self._lock:
             samples = [validate_snapshot(item) for item in self._history]
             count = self._collections
+            log_report = dict(self._log_report) if self._log_report is not None else None
         page = render_dashboard(samples[-1:], [self.identity], now)
         summary = ('<section aria-label="Live collection"><h2>Local collection</h2>'
                    f'<p>{count} completed polls · {self.interval:g}s interval · '
@@ -77,6 +113,7 @@ class LocalMonitor:
             summary += '</tbody></table></div></details>'
         else:
             summary += '<p>Waiting for first observation. Source state is unknown.</p>'
+        summary += render_log_report(log_report, now)
         summary += '<p>Up to 64 normalized observations remain in this process. Restart clears history. No earnings or daemon liveness are inferred.</p></section>'
         return page.replace('<h1>Fleet evidence</h1>', '<h1>Gargoyl local monitor</h1>' + summary + render_restart_unavailable())
 
@@ -97,7 +134,7 @@ def run_monitor(monitor, *, port=8765, stop=None, ready=None):
     viewer = MonitorViewer(monitor, [monitor.identity], port=port, refresh_seconds=2)
     thread = threading.Thread(target=viewer.serve_forever, name='gargoyl-viewer', daemon=True)
     try:
-        monitor.tick()
+        monitor.tick(stop_event=stop)
         thread.start()
         if ready:
             ready(viewer.server_port)
@@ -107,7 +144,7 @@ def run_monitor(monitor, *, port=8765, stop=None, ready=None):
             if remaining > 0:
                 stop.wait(min(remaining, 0.2))
                 continue
-            monitor.tick()
+            monitor.tick(stop_event=stop)
             now = time.monotonic()
             due += (math.floor(max(0, now - due) / monitor.interval) + 1) * monitor.interval
         return 0
@@ -141,7 +178,13 @@ def main(args):
         return status(args.port)
     if type(args.port) is not int or not 0 <= args.port <= 65535:
         raise ValueError('invalid monitor port')
-    monitor = LocalMonitor(args.input, args.owner_uid, args.host, interval=args.interval)
+    if args.coordinator_errors and not args.provider_executable:
+        raise ValueError('diagnostic configuration unavailable')
+    diagnostics = (LocalDiagnostics(executable=args.provider_executable, owner_uid=args.owner_uid,
+                                   clock=utc_now, coordinator_errors=args.coordinator_errors)
+                   if args.provider_executable else None)
+    monitor = LocalMonitor(args.input, args.owner_uid, args.host, interval=args.interval,
+                           diagnostics=diagnostics)
 
     class SignalStop:
         requested = False

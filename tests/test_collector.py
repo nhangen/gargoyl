@@ -25,7 +25,7 @@ class CollectorTests(unittest.TestCase):
                   1024, "valid", 10, "reachable"]
         readings = {name: observation(value, source) for (name, source), value in zip(SOURCES.items(), values)}
         snapshot = collect(IDENTITY, NOW, readings)
-        self.assertEqual(len(snapshot["fields"]), 15)
+        self.assertEqual(len(snapshot["fields"]), 16)
         self.assertEqual(snapshot["fields"]["memory_headroom_bytes"]["value"], 1024)
         self.assertEqual(snapshot["fields"]["clock_skew_seconds"]["state"], "unknown")
         readings["daemon_state"]["value"] = "stopped"
@@ -46,7 +46,7 @@ class CollectorTests(unittest.TestCase):
                 collect(IDENTITY, NOW, {"daemon_state": observation(value)})
 
     def test_wrong_source_and_future_observation_rejected(self):
-        for field in (observation(source="host"), observation(time="2026-01-01T00:00:01Z")):
+        for field in (observation(source="console"), observation(time="2026-01-01T00:00:01Z")):
             with self.assertRaises(PolicyError):
                 collect(IDENTITY, NOW, {"daemon_state": field})
 

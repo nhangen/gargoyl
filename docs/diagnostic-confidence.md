@@ -44,15 +44,13 @@ coordinator errors. Warning state never enters repair preflight or triggers acti
 
 ## Installed collection limitation
 
-The local daemon-state reader currently normalizes counters and model-residency
-claims only. It does not establish native provider liveness, routing eligibility,
-coordinator connectivity, protocol compatibility or coordinator-error recurrence.
-Its `error_code` describes the **collector source read**, not Darkbloom's protocol.
-Consequently the running local view can have fresh counters and unknown local or
-coordinator confidence. This change adds no collector, raw-log access, status/API
-polling, credentials, permissions or upstream dependency. Fleet callers may already
-supply additional supported normalized evidence; no synthetic evidence is inserted
-into the live monitor.
+Default counter-only mode does not establish provider liveness, eligibility or
+coordinator errors. The optional [owner-local diagnostic collector](local-diagnostic-collection.md)
+can add independently checked native liveness, selected status claims and a
+separate local-only bounded coordinator-error query. These aggregates are not
+v1 error-code observations. Unsupported evidence stays unknown, and stale trust
+receipts are not refreshed by healthy polling. No source-read error is reclassified
+as a coordinator protocol error; protocol compatibility remains unknown.
 
 ## Motivation and attribution
 
