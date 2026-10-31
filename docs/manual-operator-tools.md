@@ -72,7 +72,7 @@ invoke or test a restart against the live provider.
 ## Durable intent, progress and unknown outcomes
 
 The manual CLI uses a fixed private `~/.gargoyl-manual-restart` directory, exclusive
-installation-wide lock and atomic fsync-before-invocation last-operation record.
+installation-wide lock and atomic fsync-before-invocation last-operation record, including syncing the parent directory on first use.
 It records only normalized identity, version, phase/times and outcome. A second
 process cannot submit while the first holds the lock. An unresolved durable intent
 or unknown outcome blocks all later invocations; changing CLI arguments cannot
@@ -82,7 +82,7 @@ The bounded record retains the last operation, not a complete audit history.
 Progress says what is known: intent saved, upstream command running, verification,
 and terminal/unknown outcome. Raw child output is discarded. Detailed upstream
 phase and accepted-work counts remain unknown. CLI exit 0 alone is insufficient:
-Gargoyl also requires a different native PID/birth and fresh matching daemon state.
+Gargoyl also requires a different native PID/birth, unchanged pinned version and fresh matching daemon state.
 It reports upstream CLI success plus independently observed replacement, not an
 independent protocol/earnings verdict or an exactly-once guarantee.
 

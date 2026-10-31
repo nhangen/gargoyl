@@ -169,6 +169,40 @@ class ManualRestartTests(unittest.TestCase):
         self.assertEqual(spawn.call_args.kwargs["stderr"], subprocess.DEVNULL)
         self.assertEqual(child.send_signal.call_count, 1)
 
+    def test_first_use_parent_sync_precedes_invocation_and_failure_refuses(self):
+        real_sync = os.fsync
+        parent_inode = Path(self.path).parent.stat().st_ino
+        seen = []
+
+        def sync(fd):
+            seen.append(os.fstat(fd).st_ino)
+            return real_sync(fd)
+
+        with patch("gargoyl.manual_restart.os.fsync", side_effect=sync):
+            with ManualJournal(self.path) as journal:
+
+                def invoke():
+                    self.assertIn(parent_inode, seen)
+                    self.assertEqual(read_operation(self.path)["state"], "intent")
+                    return 0
+
+                self.run_operation(journal, invoke=invoke)
+        other = str(Path(self.path).parent / "unpersisted")
+        with patch("gargoyl.manual_restart.os.fsync", side_effect=OSError("fixture")):
+            with self.assertRaises(OSError):
+                ManualJournal(other)
+        self.assertFalse((Path(other) / "operation.json").exists())
+
+    def test_inconsistent_replacement_version_is_unknown(self):
+        replacement = copy.deepcopy(REPLACEMENT)
+        replacement["version"] = "0.10.5"
+        with ManualJournal(self.path) as journal:
+            with self.assertRaises(ValueError):
+                self.run_operation(
+                    journal, inspect=Mock(side_effect=[TARGET, replacement])
+                )
+            self.assertEqual(journal.read()["state"], "unknown")
+
     def test_cli_requires_interactive_terminal_never_calls_provider_on_pipe(self):
         with (
             patch("sys.stdin.isatty", return_value=False),

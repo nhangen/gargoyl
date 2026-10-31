@@ -41,6 +41,14 @@ class ManualJournal:
         )
         if not p.exists():
             p.mkdir(mode=0o700)
+        # Establish the directory entry itself durably, including first use.
+        parent = os.open(p.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            owner = os.fstat(parent)
+            _require(owner.st_uid == os.getuid() and not owner.st_mode & 0o022)
+            os.fsync(parent)
+        finally:
+            os.close(parent)
         self.fd = os.open(p, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         self.lock = None
         try:
@@ -201,7 +209,11 @@ def run_restart(
             "Command finished. Checking replacement evidence; exit status alone is not success."
         )
         replacement = inspect_target()
-        _require(code == 0 and replacement["process"] != target["process"])
+        _require(
+            code == 0
+            and replacement["process"] != target["process"]
+            and replacement["version"] == target["version"]
+        )
         record.update(
             state="completed",
             reason="cli_success_and_replacement_observed",
