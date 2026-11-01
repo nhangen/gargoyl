@@ -185,7 +185,9 @@ The unpublished private root package is not sent for a PyPI lookup; all declared
 third-party requirements are included. This is advisory checking of current
 resolution, not a lockfile or proof that future resolutions are identical.
 The existing protected release-artifact check waits for all platform and audit
-jobs; its name and the repository's required checks are unchanged.
+jobs and always runs an explicit prerequisite-result check, so failed, skipped
+or cancelled platform/audit jobs cannot leave the protected release check
+skipped. Its name and the repository's required checks are unchanged.
 
 Artifact verification computes the SHA256 of the supplied wheel and tests that
 wheel in isolation. This establishes integrity relative to the supplied artifact,
