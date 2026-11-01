@@ -182,6 +182,15 @@ def executable_stamp(executable):
     return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
 
 
+def gate_allows(prior):
+    """Shared restart gate for the CLI, operator console and native app.
+
+    A completed or explicitly reconciled prior record reopens the gate; intent and
+    unknown records keep every surface blocked until read-only reconciliation.
+    """
+    return prior is None or prior["state"] in {"completed", "reconciled"}
+
+
 def run_restart(
     journal, target, *, inspect_target, invoke, confirm, progress, clock=utc_now,
     invoke_with_child=False,
@@ -192,7 +201,7 @@ def run_restart(
     A failed/abandoned invocation is never automatically retried or cleared.
     """
     prior = journal.read()
-    _require(prior is None or prior["state"] in {"completed", "reconciled"})
+    _require(gate_allows(prior))
     _require(confirm(target) is True)
     current = inspect_target()
     _require(

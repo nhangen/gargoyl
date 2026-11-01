@@ -39,6 +39,7 @@ from gargoyl.dashboard.theme import PAGE_END, page_start
 from gargoyl.manual_restart import (
     ManualJournal,
     executable_stamp,
+    gate_allows,
     installation_preflight,
     invoke_restart,
     observed_target,
@@ -601,7 +602,7 @@ class ConsoleRestart:
         record = self.record() if record is None else record
         if record and record.get('unreadable'):
             return False, 'The manual restart record is unreadable or has unsafe permissions. Restart is blocked.'
-        if record and record['state'] not in ('completed', 'reconciled'):
+        if not gate_allows(record):
             return False, ('The last manual restart (from this console or the terminal) has no verified outcome. '
                            'Reconcile before another restart.')
         return True, None

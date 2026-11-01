@@ -147,7 +147,13 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
             body += '<p>No manual operation recorded. This is not proof that a restart is currently available.</p>'
         else:
             verified = record['state'] == 'completed' and record['reason'] == 'cli_success_and_replacement_observed'
-            body += '<p><span class="st ' + ('st-observed' if verified else 'st-warning') + '">' + ('Verified replacement observed' if verified else 'Unresolved — native retry blocked') + '</span></p><dl class="facts">'
+            if verified:
+                badge, headline = 'st-observed', 'Verified replacement observed'
+            elif record['state'] == 'reconciled':
+                badge, headline = 'st-unknown', 'Reconciled read-only — outcome unproven; restart gate reopened'
+            else:
+                badge, headline = 'st-warning', 'Unresolved — native retry blocked'
+            body += '<p><span class="st ' + badge + '">' + headline + '</span></p><dl class="facts">'
             facts = [("Operation", record['operation_id']), ("State", record['state']), ("Reason", record['reason']), ("Started", record['started_at']), ("Target PID", record['target']['process']['pid'])]
             if 'finished_at' in record:
                 facts.append(("Finished", record['finished_at']))
@@ -155,8 +161,9 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
                 facts.append(("Replacement PID", record['replacement']['process']['pid']))
             body += ''.join('<div><dt>' + e(k) + '</dt><dd class="mono">' + e(v) + '</dd></div>' for k, v in facts) + '</dl>'
         body += ('<p>Review the exact target and interruption with Restart provider… in the native toolbar. '
-                 'One shared durable journal prevents concurrent submissions. Intent, unknown and externally '
-                 'reconciled records remain blocked in the native app. This view never clears the gate.</p>'
+                 'One shared durable journal prevents concurrent submissions. Intent and unknown records block '
+                 'the native app, the console and the CLI alike until read-only reconciliation; a reconciled '
+                 'record reopens the shared gate. This view never reconciles or clears anything.</p>'
                  '<p>Accepted work may drain for 10 minutes; startup may take 3 minutes. No force or automatic '
                  'retry. An interrupted or uncertain command may leave the provider draining or unavailable. '
                  'Darkbloom has no durable request ledger; exactly-once execution is not claimed.</p>'

@@ -94,16 +94,20 @@ class NativeViewTests(unittest.TestCase):
             self.assertNotIn('<form', page)
         data = dict(record, state='reconciled', reason='reconciled_read_only',
                     reconciled_at=record['finished_at'], observation='provider_unobservable')
-        self.assertIn('Unresolved — native retry blocked', render_view('operation', None, data, now=NOW))
+        page = render_view('operation', None, data, now=NOW)
+        self.assertIn('Reconciled read-only', page)
+        self.assertIn('restart gate reopened', page)
+        self.assertNotIn('native retry blocked', page)
+        self.assertNotIn('Verified replacement observed', page)
         page = render_view('operation', None, None, journal_available=False, now=NOW)
         self.assertIn('Operation record unavailable', page)
         self.assertNotIn('No manual operation recorded', page)
 
-    def test_native_restart_refuses_all_unresolved_and_reconciled_states_before_preflight(self):
+    def test_native_restart_refuses_unresolved_states_before_preflight(self):
         from unittest.mock import Mock
 
         from gargoyl.gui_runtime import graphical_restart
-        for state in ('intent', 'unknown', 'reconciled'):
+        for state in ('intent', 'unknown'):
             journal = Mock()
             journal.read.return_value = dict(state=state)
             preflight = Mock()

@@ -92,8 +92,11 @@ status, and Restart provider…. Export opens the standard Mac Save dialog. Star
 and Stop affect only Gargoyl's configured monitor. Restart provider opens the
 existing exact-target/interruption review followed by Mac owner authentication;
 no page link can invoke it. Progress stays in the native status area and outcome
-in the shared journal. Intent, unknown, and externally reconciled records remain
-blocked by the native app. The operation view cannot reconcile or clear them.
+in the shared journal. The native app applies the same gate as `gargoyl tools
+restart` and the operator console: intent and unknown records block a new restart
+until read-only reconciliation, and a reconciled record (an explicit, journaled
+operator action) reopens the gate everywhere. The operation view cannot reconcile
+or clear anything itself.
 Actual provider restart is not exercised by UI acceptance tests.
 
 The read-only pages are reconstructed by a fixed same-owner worker from validated
