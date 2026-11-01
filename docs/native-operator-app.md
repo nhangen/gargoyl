@@ -8,6 +8,13 @@ for bounded normalized evidence; raw provider logs and credentials are excluded.
 The browser dashboard remains read-only. No pairing command or secret URL is
 part of this flow.
 
+The yellow titlebar control and **Window → Minimize** (Command-M) use the native
+window minimization action. Reopening restores a minimized window explicitly.
+**Help → Window diagnostics…** shows the last 16 in-memory window events, including
+actual AppKit minimize/restore callbacks and reopening. This separates successful
+minimization followed by reopening from a failed action. It contains no provider
+data and does not write logs or change monitoring.
+
 ## Manual restart
 
 Choose **Restart provider…**. Gargoyl verifies the current MBP-26 installation

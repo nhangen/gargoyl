@@ -37,6 +37,15 @@ struct CompletionGate {
         finalized = true; return true
     }
 }
+struct WindowHistory {
+    private(set) var events: [String] = []
+    mutating func record(_ event: String, miniaturized: Bool, visible: Bool, reopeningVisibleWindows: Bool? = nil) {
+        let sequence = (events.last.flatMap { Int($0.split(separator:" ")[0]) } ?? 0) + 1
+        let reopened = reopeningVisibleWindows.map { " hasVisibleWindows=\($0)" } ?? ""
+        events.append("\(sequence) \(event) miniaturized=\(miniaturized) visible=\(visible)\(reopened)")
+        events = Array(events.suffix(16))
+    }
+}
 final class Worker {
     let process = Process()
     let input = Pipe()
@@ -96,6 +105,7 @@ final class Worker {
 
 final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     var window: NSWindow!
+    var windowHistory = WindowHistory()
     var web: WKWebView!
     let status = NSTextField(wrappingLabelWithString: "Read-only evidence. Provider restart requires Mac confirmation; automatic repair is off.")
     var restartButton: NSButton!
@@ -119,10 +129,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         let viewItem = NSMenuItem(); menu.addItem(viewItem); let viewMenu = NSMenu(title:"View"); viewItem.submenu = viewMenu
         let fullScreen = viewMenu.addItem(withTitle:"Enter Full Screen",action:#selector(NSWindow.toggleFullScreen(_:)),keyEquivalent:"f"); fullScreen.keyEquivalentModifierMask = [.command,.control]
         let windowItem = NSMenuItem(); menu.addItem(windowItem); let windowMenu = NSMenu(title:"Window"); windowItem.submenu = windowMenu
-        windowMenu.addItem(withTitle:"Minimize",action:#selector(NSWindow.performMiniaturize(_:)),keyEquivalent:"m")
+        let minimizeItem = windowMenu.addItem(withTitle:"Minimize",action:#selector(NSWindow.performMiniaturize(_:)),keyEquivalent:"m")
         windowMenu.addItem(withTitle:"Zoom",action:#selector(NSWindow.performZoom(_:)),keyEquivalent:"")
         NSApp.windowsMenu = windowMenu
+        let helpItem = NSMenuItem(); menu.addItem(helpItem); let helpMenu = NSMenu(title:"Help"); helpItem.submenu = helpMenu
+        let diagnostics = helpMenu.addItem(withTitle:"Window diagnostics…",action:#selector(windowDiagnostics),keyEquivalent:""); diagnostics.target = self
         window = NSWindow(contentRect: NSRect(x:0,y:0,width:1180,height:820), styleMask:[.titled,.closable,.miniaturizable,.resizable], backing:.buffered, defer:false)
+        window.isReleasedWhenClosed = false
+        minimizeItem.target = window
         window.title = previewOnly ? "Gargoyl — Read-only preview" : "Gargoyl"
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.minSize = NSSize(width:390,height:600); window.delegate = self
@@ -267,7 +281,24 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         }
         return .terminateNow
     }
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { window.makeKeyAndOrderFront(nil); return true }
+    func recordWindow(_ event: String, reopeningVisibleWindows: Bool? = nil) {
+        windowHistory.record(event,miniaturized:window.isMiniaturized,visible:window.isVisible,reopeningVisibleWindows:reopeningVisibleWindows)
+    }
+    func windowWillMiniaturize(_ notification: Notification) { recordWindow("willMiniaturize") }
+    func windowDidMiniaturize(_ notification: Notification) { recordWindow("didMiniaturize") }
+    func windowDidDeminiaturize(_ notification: Notification) { recordWindow("didDeminiaturize") }
+    func windowWillClose(_ notification: Notification) { recordWindow("willClose") }
+    @objc func windowDiagnostics() {
+        let alert = NSAlert(); alert.messageText = "Native window diagnostics"
+        alert.informativeText = "Window: Gargoyl. Minimize enabled: \(window.styleMask.contains(.miniaturizable)). Current miniaturized: \(window.isMiniaturized).\n\n" + windowHistory.events.joined(separator:"\n") + "\n\nEvents are bounded in-memory UI diagnostics only. Closing or minimizing this window does not stop monitoring or Darkbloom."
+        alert.addButton(withTitle:"Done"); alert.beginSheetModal(for:window)
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        recordWindow("reopen",reopeningVisibleWindows:flag)
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        return false
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { return false }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) else { decisionHandler(.cancel); return }
@@ -319,6 +350,13 @@ if CommandLine.arguments.contains("--self-test") {
         if eofFirst { completion.eof = true } else { completion.ended = true }; precondition(!completion.finish())
         completion.eof = true; completion.ended = true; precondition(completion.finish()); precondition(!completion.finish())
     }
+    var windowEvents = WindowHistory()
+    windowEvents.record("didMiniaturize",miniaturized:true,visible:false)
+    windowEvents.record("didDeminiaturize",miniaturized:false,visible:true)
+    precondition(windowEvents.events[0].contains("miniaturized=true"))
+    precondition(windowEvents.events[1].contains("miniaturized=false"))
+    for _ in 0..<30 { windowEvents.record("reopen",miniaturized:false,visible:true,reopeningVisibleWindows:true) }
+    precondition(windowEvents.events.count == 16 && windowEvents.events.last!.hasPrefix("32 "))
     print("Native navigation and authorization-state fixtures passed; no OS authentication requested.")
     exit(0)
 }
