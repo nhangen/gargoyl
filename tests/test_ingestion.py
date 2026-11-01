@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 from test_telemetry import snapshot
@@ -38,7 +39,7 @@ class EvidenceTests(unittest.TestCase):
         return store
 
     def mutate(self, sql, parameters=()):
-        with sqlite3.connect(self.directory / "evidence.sqlite3") as db:
+        with closing(sqlite3.connect(self.directory / "evidence.sqlite3")) as db, db:
             db.execute(sql, parameters)
 
     def test_configured_hosts_is_immutable_and_contains_no_ciphers(self):
@@ -179,7 +180,7 @@ class EvidenceTests(unittest.TestCase):
             )
         )
         self.assertEqual(store.snapshots(now=LATER), [snapshot()])
-        with sqlite3.connect(self.directory / "evidence.sqlite3") as db:
+        with closing(sqlite3.connect(self.directory / "evidence.sqlite3")) as db, db:
             self.assertEqual(
                 db.execute("SELECT count(*) FROM commit_child").fetchone()[0], 0
             )

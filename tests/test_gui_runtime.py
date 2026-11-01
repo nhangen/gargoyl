@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from test_manual_restart import REPLACEMENT, TARGET
+from test_manual_restart import NOW, REPLACEMENT, TARGET
 
 from gargoyl.gui_runtime import (
     control_monitor,
@@ -15,7 +15,16 @@ from gargoyl.gui_runtime import (
     graphical_restart,
     read_confirmation,
 )
-from gargoyl.manual_restart import ManualJournal, read_operation
+from gargoyl.manual_restart import (
+    ManualJournal,
+    read_operation,
+    reconcile_operation,
+    restart_gate_allows,
+    run_restart,
+)
+from gargoyl.operator_console import ConsoleRestart
+
+LATER = "2026-10-31T12:20:00Z"  # past RECONCILE_UNIDENTIFIED_SECONDS
 
 
 class GraphicalRestartTests(unittest.TestCase):
@@ -124,6 +133,75 @@ class GraphicalRestartTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.run_gui(journal, invoke=action)
             action.assert_not_called()
+
+    def write_record(self, path, state):
+        """Leave a real journal at `path` in `state` using only the public journal API."""
+        with ManualJournal(path) as journal:
+            with self.assertRaises(ValueError):  # unverified replacement -> unknown
+                run_restart(
+                    journal,
+                    TARGET,
+                    inspect_target=Mock(side_effect=[TARGET, TARGET]),
+                    invoke=Mock(return_value=0),
+                    confirm=Mock(return_value=True),
+                    progress=lambda text: None,
+                    clock=lambda: NOW,
+                )
+            if state == "reconciled":
+                reconcile_operation(
+                    journal,
+                    inspect_target=Mock(return_value=TARGET),
+                    alive=lambda child: False,
+                    clock=lambda: LATER,
+                )
+            elif state == "intent":
+                record = journal.read()
+                del record["finished_at"]
+                journal.write(
+                    dict(record, state="intent", reason="invocation_not_confirmed")
+                )
+        self.assertEqual(read_operation(path)["state"], state)
+
+    def test_reconciled_record_reopens_native_cli_and_console_gates_alike(self):
+        def console(path):
+            return ConsoleRestart(
+                executable="/unused", directory=path, preflight=Mock(),
+                inspect=Mock(), observe=Mock(),
+            )
+
+        for state in ("intent", "unknown"):
+            with self.subTest(state=state):
+                path = self.path + "-" + state
+                self.write_record(path, state)
+                self.assertFalse(restart_gate_allows(read_operation(path)))
+                opened, reason = console(path).gate()
+                self.assertFalse(opened)
+                self.assertIn("Reconcile before another restart", reason)
+                action = Mock()
+                with ManualJournal(path) as journal:
+                    with self.assertRaisesRegex(ValueError, "unresolved operation"):
+                        self.run_gui(journal, invoke=action, preflight=Mock())
+                    with self.assertRaises(ValueError):
+                        run_restart(
+                            journal, TARGET, inspect_target=Mock(), invoke=action,
+                            confirm=Mock(return_value=True), progress=lambda text: None,
+                        )
+                action.assert_not_called()
+                self.assertEqual(read_operation(path)["state"], state)
+
+        self.write_record(self.path, "reconciled")
+        self.assertTrue(restart_gate_allows(read_operation(self.path)))
+        self.assertEqual(console(self.path).gate(), (True, None))
+        with ManualJournal(self.path) as journal:
+            self.assertEqual(self.run_gui(journal)["state"], "completed")
+        self.write_record(self.path, "reconciled")
+        with ManualJournal(self.path) as journal:
+            record = run_restart(
+                journal, TARGET, inspect_target=Mock(side_effect=[TARGET, REPLACEMENT]),
+                invoke=Mock(return_value=0), confirm=Mock(return_value=True),
+                progress=lambda text: None, clock=lambda: LATER,
+            )
+        self.assertEqual(record["state"], "completed")
 
     def test_broken_progress_after_approval_does_not_cancel_or_repeat(self):
         def deliver(value):

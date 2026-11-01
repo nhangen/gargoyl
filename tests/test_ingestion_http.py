@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from ingestion_test_support import test_pki
@@ -320,7 +321,7 @@ class HTTPSIngestionTests(unittest.TestCase):
         )
 
     def test_persistence_failure_returns_503(self):
-        with sqlite3.connect(self.root / "receiver" / "evidence.sqlite3") as db:
+        with closing(sqlite3.connect(self.root / "receiver" / "evidence.sqlite3")) as db, db:
             db.execute(
                 "CREATE TRIGGER fail_write BEFORE INSERT ON evidence BEGIN SELECT RAISE(ABORT, 'synthetic-marker'); END"
             )
