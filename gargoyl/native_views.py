@@ -7,7 +7,7 @@ from gargoyl.collector_coordinator_log import validate_log_report
 from gargoyl.dashboard import render_dashboard
 from gargoyl.dashboard.theme import PAGE_END, page_start
 from gargoyl.manual_restart import restart_gate_allows, validate_record
-from gargoyl.telemetry import effective_state, timestamp, validate_snapshot
+from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
 
 HOST = "00000000-0000-4000-8000-000000000001"
 VIEWS = ("fleet", "tools", "evidence", "history", "operation", "details")
@@ -53,10 +53,11 @@ def valid_view(view):
     return view in VIEWS or fleet_mode(view)
 
 
-def render_view(view, evidence, record, *, journal_available=True, now=None, inventory=None, local=None, local_alias="This Mac", aliases=None, aliases_available=True):
+def render_view(view, evidence, record, *, journal_available=True, now=None, inventory=None, local=None, local_alias="This Mac", aliases=None, aliases_available=True, local_host_id=HOST):
     """Inputs are reconstructed normalized export and validated journal; never raw HTML."""
     if not valid_view(view):
         raise ValueError("unsupported view")
+    host_id(local_host_id)
     now = now or datetime.now(timezone.utc).isoformat()
     timestamp(now)
     if evidence is not None:
@@ -65,12 +66,12 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         if type(samples) is not list or len(samples) > 64:
             raise ValueError("history limit")
         samples = [validate_snapshot(sample) for sample in samples]
-        if any(sample['host_id'] != HOST for sample in samples):
+        if any(sample['host_id'] != local_host_id for sample in samples):
             raise ValueError("host differs")
         evidence = dict(evidence, snapshots=samples)
     if view.startswith("fleet"):
         from gargoyl.fleet_views import render_fleet
-        html = native_document(render_fleet(view, inventory, evidence, local, local_alias, now, nav("fleet"), aliases=aliases, aliases_available=aliases_available))
+        html = native_document(render_fleet(view, inventory, evidence, local, local_alias, now, nav("fleet"), aliases=aliases, aliases_available=aliases_available, local_host_id=local_host_id))
         if len(html.encode()) > 500000:
             raise ValueError("view limit")
         return html
@@ -78,7 +79,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         record = validate_record(record)
     if view == "evidence" and evidence is not None:
         # Re-evaluate TTL at viewing time, not the monitor's earlier evaluation time.
-        html = render_dashboard(evidence['snapshots'][-1:], [HOST], now,
+        html = render_dashboard(evidence['snapshots'][-1:], [local_host_id], now,
                                 extra_nav=nav(view), badge="Native operator console")
         notice = ('<p>Native evidence view. Use Refresh to load current evidence and re-evaluate '
                   'freshness. No provider command is run.</p>')
@@ -168,7 +169,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
                  'does not prove a current phase or remaining work. Protocol health remains separate.</p></section>')
     elif view == "details":
         body += ('<section><h2>Local collection boundaries</h2><dl class="facts">'
-                 '<div><dt>Internal local telemetry ID (not a provider ID)</dt><dd class="mono">' + HOST + '</dd></div>'
+                 '<div><dt>Internal local telemetry ID (not a provider ID)</dt><dd class="mono">' + e(local_host_id) + '</dd></div>'
                  '<div><dt>Monitor</dt><dd>IPv4 loopback · port 8766 · read-only report</dd></div>'
                  '<div><dt>History</dt><dd>At most 64 normalized samples; memory only</dd></div>'
                  '<div><dt>Owner confirmation</dt><dd>Native Mac authentication and private worker pipe</dd></div>'

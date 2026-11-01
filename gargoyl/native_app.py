@@ -197,7 +197,7 @@ func scrollNativeFragment(_ action: WKNavigationAction, in web: WKWebView, cance
 
 func ownerActive() -> Bool {
     var uid: uid_t = 0; var gid: gid_t = 0
-    return SCDynamicStoreCopyConsoleUser(nil, &uid, &gid) != nil && uid == 501 && geteuid() == 501
+    return SCDynamicStoreCopyConsoleUser(nil, &uid, &gid) != nil && uid == geteuid() && geteuid() != 0
 }
 
 func allowedNavigation(_ url: URL?, mainFrame: Bool) -> Bool {
@@ -265,7 +265,7 @@ final class Worker {
         else { throw NSError(domain: "Gargoyl", code: 1) }
         let executable = URL(fileURLWithPath: path)
         let attributes = try FileManager.default.attributesOfItem(atPath: executable.resolvingSymlinksInPath().path)
-        guard let owner = attributes[.ownerAccountID] as? NSNumber, [0,501].contains(owner.intValue),
+        guard let owner = attributes[.ownerAccountID] as? NSNumber, [0,Int(geteuid())].contains(owner.intValue),
               let permissions = attributes[.posixPermissions] as? NSNumber, permissions.intValue & 0o022 == 0
         else { throw NSError(domain: "Gargoyl", code: 2) }
         process.executableURL = executable
@@ -824,13 +824,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
               let digest = request["preview_digest"] as? String, digest.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,
               let target = request["target"] as? [String:Any], let process = target["process"] as? [String:Any],
               let pid = process["pid"] as? Int, pid > 0, let birth = process["born_us"] as? Int64,
-              process["owner_uid"] as? Int == 501, let version = target["version"] as? String, ["0.10.5","0.10.6"].contains(version)
+              process["owner_uid"] as? Int == Int(geteuid()), let version = target["version"] as? String, ["0.10.5","0.10.6"].contains(version)
         else { restartWorker?.reply(request,approved:false); show("Restart preview is unavailable or invalid."); return }
         pending = request
         approvalGate = ApprovalGate(request:id,digest:digest,expires:expiry)
         approvalTimer = Timer.scheduledTimer(withTimeInterval:90,repeats:false) { [weak self] _ in self?.cancelApproval("Confirmation expired. No restart was authorized.") }
-        let alert = NSAlert(); alert.messageText = "Restart Darkbloom on MBP-26?"
-        alert.informativeText = "Current provider: PID \(pid), birth \(birth), version \(version), owner 501.\nExecutable: ~/.darkbloom/Darkbloom.app/Contents/MacOS/darkbloom\nCommand: restart --timeout 600 --startup-timeout 180 (no force).\n\nThe current provider in this installation will refuse new work, drain accepted work, then restart with existing settings. It may be unavailable while restarting. Darkbloom temporarily disables startup/watchdog, removes recovery history, changes termination allowance and restores configured recovery. Replacement can resume configured coordinator traffic/authorization and existing startup/update behavior. Existing model/settings are reused; no credentials or configuration are supplied. A timeout can leave it draining or disabled. No force or automatic retry is permitted.\n\nThis is installation-scoped consent, not an atomic lock to the displayed process. The target is checked again before execution. One operation may take up to 840 seconds plus cleanup. An uncertain result remains blocked.\n\nThe next step is your Mac’s authentication prompt."
+        let alert = NSAlert(); alert.messageText = "Restart Darkbloom on this Mac?"
+        alert.informativeText = "Current provider: PID \(pid), birth \(birth), version \(version), owner \(geteuid()).\nExecutable: ~/.darkbloom/Darkbloom.app/Contents/MacOS/darkbloom\nCommand: restart --timeout 600 --startup-timeout 180 (no force).\n\nThe current provider in this installation will refuse new work, drain accepted work, then restart with existing settings. It may be unavailable while restarting. Darkbloom temporarily disables startup/watchdog, removes recovery history, changes termination allowance and restores configured recovery. Replacement can resume configured coordinator traffic/authorization and existing startup/update behavior. Existing model/settings are reused; no credentials or configuration are supplied. A timeout can leave it draining or disabled. No force or automatic retry is permitted.\n\nThis is installation-scoped consent, not an atomic lock to the displayed process. The target is checked again before execution. One operation may take up to 840 seconds plus cleanup. An uncertain result remains blocked.\n\nThe next step is your Mac’s authentication prompt."
         alert.addButton(withTitle:"Continue to Mac confirmation"); alert.addButton(withTitle:"Cancel")
         consentSheet = alert.window
         alert.beginSheetModal(for:window) { [weak self, weak worker] response in
@@ -841,7 +841,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             var error: NSError?
             guard context.canEvaluatePolicy(.deviceOwnerAuthentication,error:&error) else { self.cancelApproval("Mac owner authentication is unavailable. Restart remains blocked."); return }
             self.context = context
-            context.evaluatePolicy(.deviceOwnerAuthentication,localizedReason:"authorize one manual Darkbloom restart on MBP-26") { success, _ in
+            context.evaluatePolicy(.deviceOwnerAuthentication,localizedReason:"authorize one manual Darkbloom restart on this Mac") { success, _ in
                 DispatchQueue.main.async {
                     guard self.restartWorker === worker, self.pending?["request_id"] as? String == id else { return }
                     guard var gate = self.approvalGate else { return }

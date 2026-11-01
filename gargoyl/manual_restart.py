@@ -23,7 +23,9 @@ from gargoyl.collector_state_file import (
     _require,
     validate_daemon_state_source,
 )
+from gargoyl.darkbloom_compatibility import SUPPORTED_VERSIONS
 from gargoyl.dashboard.runtime import utc_now
+from gargoyl.pilot_configuration import load_pilot_configuration
 from gargoyl.repair_process_identity import MacOSProcessVerifier
 from gargoyl.telemetry import timestamp
 
@@ -147,7 +149,7 @@ def observed_target(source, executable, uid, *, now=None, verifier=None):
     parsed = _parse(payload, now, 60)
     _require((timestamp(now) - timestamp(parsed.observed_at)).total_seconds() <= 60)
     data = json.loads(payload)
-    _require(data["version"] in {"0.10.5", "0.10.6"})
+    _require(data["version"] in SUPPORTED_VERSIONS)
     identity = data.get("process_identity")
     _require(
         type(identity) is dict
@@ -416,15 +418,12 @@ def installation_preflight(executable, source, uid):
     import plistlib
     import sys
 
-    _require(
-        sys.platform == "darwin"
-        and uid == os.getuid() == 501
-        and os.uname().nodename == "MBP-2026.local"
-    )
     home = owner_home()
+    policy = load_pilot_configuration(home=home).require_local(uid)
+    _require(sys.platform == "darwin")
     _require(
-        executable == str(home / ".darkbloom/Darkbloom.app/Contents/MacOS/darkbloom")
-        and source == str(home / ".darkbloom/daemon-state.json")
+        executable == policy.provider_executable
+        and source == policy.source
     )
     stamp = executable_stamp(executable)
     p = home / "Library/LaunchAgents/io.darkbloom.provider.plist"
@@ -471,6 +470,7 @@ def installation_preflight(executable, source, uid):
         )
         index += 2
     target = observed_target(source, executable, uid)
+    _require(target["version"] in policy.versions)
     version = subprocess.run(
         [executable, "--version"],
         stdin=subprocess.DEVNULL,
@@ -558,7 +558,7 @@ def validate_record(data):
             _require(
                 type(target) is dict
                 and set(target) == {"process", "version", "observed_at"}
-                and target["version"] in {"0.10.5", "0.10.6"}
+                and target["version"] in SUPPORTED_VERSIONS
             )
             process_identity(target["process"])
             timestamp(target["observed_at"])
