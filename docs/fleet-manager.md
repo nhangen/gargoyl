@@ -1,117 +1,119 @@
-# Account fleet manager foundation
+# Native account fleet manager
 
-The installed Gargoyl monitor currently collects one Mac, `MBP-2026.local`.
-The pilot plan names MBP26, `studio64-1` and `studio64-2`, but those names are not
-an enrolled inventory and have no verified mapping to Darkbloom provider IDs.
-The existing pilot UUID is an internal telemetry label, not an account provider ID.
-No other Mac is currently monitored by Gargoyl.
+Gargoyl's native app reads actual owned-provider inventory from Darkbloom's
+`GET /v1/me/providers`. Source IDs are preserved in every row and detail view.
+The local collector observes this Mac directly; other machines currently have
+coordinator reports, not independent remote process observations. The internal
+pilot UUID is never substituted for a Darkbloom provider ID. No production view
+contains fixture fleet entries.
 
-This change adds a native graphical account connection, inventory filters and
-provider details, backed by a bounded account protocol, private metadata cache,
-session lifecycle and public-identity association. The native app opens on Your
-fleet; local evidence remains a separate view. No production view contains
-fixture fleet entries. The network dashboard remains local-telemetry-only.
+## Graphical operation
 
-Choose Connect fleet in the native toolbar. The native sheet shows a one-time
-code with Copy code and Open official Darkbloom sign-in controls. Review the
-read-only scope on the official site and approve there; the app then loads actual
-owned-provider IDs. Disconnect fleet ends only account reads. Refresh updates the
-visible view; account collection polls every 30 seconds with bounded backoff.
-No terminal or copied secret URL is part of normal operation.
+Choose **Connect fleet…**, review the read-only scope and optional Remember
+choice, then continue. Copy the private native sheet's one-time code and open the
+official account page. Approve **Authorize Desktop** there. No terminal or secret
+URL is part of normal operation. The grant can view Macs, summary and earnings;
+Gargoyl requests only owned-provider metadata. It cannot control providers.
 
-## Verified service and grant
+The fleet screen shows coverage, source labels, actual IDs, reported status,
+retrieval freshness and source heartbeat evidence separately. Filter by heartbeat
+recency or open a provider for details. Account reads run every 30 seconds, with
+bounded backoff for transport errors. Refresh updates the visible view. Missing,
+future, disconnected, stale or partial evidence never establishes healthy or zero
+providers. Low traffic and coordinator warnings never trigger repair.
 
-The official provider documentation identifies `api.darkbloom.dev` and the console
-at `console.darkbloom.dev`. Live bounded negotiation with
-`POST /v1/device/code` acknowledged `purpose=desktop_account` and a scoped
-`desktop-account-` device code; the verification origin was the official console.
-Codes were discarded, not approved or persisted. A refreshed, already signed-in
-official console showed four owned records, three reported online. Names on that
-surface were hardware labels, not the planned studio aliases. This verifies the
-account has inventory; Gargoyl API acceptance still requires completion of its
-scoped graphical grant. No browser cookies or existing tokens were extracted.
+**Edit local aliases…** lets you choose an actual provider ID and save a friendly
+name on this Mac. Source labels and IDs remain visible. A hardware model is
+explicitly a hardware label; a missing name falls back to the actual ID. Aliases
+never alter public identity matching, action targets, provider settings or source
+records. Leave an alias blank to remove it. There is no inferred mapping of
+`studio64-1`/`studio64-2` to identical-looking machines; the operator must identify
+the actual IDs. Aliases stay out of the network dashboard and telemetry export.
 
-Version-matched Darkbloom 0.10.6 source is commit
-`84ddfdba6bb704bf1c68f97c7060289079380ceb`. Its documented account grant permits
-fleet/summary/earnings reads and self-revocation, not provider control. Gargoyl
-only requests the owned-provider endpoint. Coordinator enforcement is documented
-upstream; it has not been tested by attempting any forbidden mutation.
+## Heartbeat evidence
 
-Both the device-code response and resulting token must acknowledge
-`desktop_account`, with their scoped prefixes. A missing/downgraded purpose or
-legacy provider token is refused. The transport permits only the two device-flow
-POSTs and authenticated `GET /v1/me/providers`, fixed HTTPS authority, verified TLS,
-no redirects/cookies and bounded response bytes/depth. A caller deadline includes
-stalled DNS/body reads. At most one daemon IO can remain outstanding; no replacement
-starts until it ends. The private session process exits on GUI pipe EOF.
+Version-matched Darkbloom 0.10.6 source at
+`84ddfdba6bb704bf1c68f97c7060289079380ceb` reads textual `last_heartbeat`, falling
+back to textual `last_seen` (`DesktopAccountCloud.swift`). It parses ISO-8601
+with fractional seconds, then without fractions. Its cloud projection converts
+that date to Unix seconds; this does not establish numeric units in the raw API.
 
-The intended normal flow is graphical: Connect Darkbloom, review the read-only
-scope, open the official linking page, and complete account approval there. Codes
-are shown only in the private native sheet, never a secret URL or terminal flow.
-No provider setup, enrollment, configuration or lifecycle command is involved.
+The fleet-only adapter accepts bounded ISO-8601 timestamps with 1–9 fractional
+digits and explicit timezone, converts to UTC and truncates sub-microsecond
+precision for its normalized cache. The strict v1 telemetry timestamp validator
+is unchanged. Numeric units are never guessed. The cache retains only fixed
+reason/source enums and fractional-digit count, distinguishing not reported,
+unsupported type, invalid timestamp and reported evidence. Older cached records
+remain readable but are explicitly unclassified until refreshed. A successful
+API read is not a provider heartbeat.
 
-## Separate metadata contract
+The prior three unknown timestamps were not enough to prove missing source data
+or a precision mismatch. Live format metadata after the updated collector runs
+must establish the cause; tests alone do not. No raw account payload is retained.
 
-Account inventory is a separate owner-local contract, not an extension to v1
-host telemetry, ingestion or export. Actual `id` values are preserved. A source
-name is retained only if supplied; a hardware model is explicitly a hardware
-label, and a missing name falls back to the actual provider ID. Hostnames and
-pilot UUIDs never stand in for provider IDs.
+## Optional remembered sign-in
 
-Only allowlisted ID/name/status/version/heartbeat fields and a digest of the
-public attestation identifier survive normalization. Raw account payloads,
-credentials, financial values, model names, IP addresses and arbitrary detail
-fields are not persisted. Unknown/malformed records make coverage partial;
-duplicate IDs fail closed. Pagination indicators are not silently treated as a
-complete inventory. No routing failure or restart is inferred from these reports.
+Remember is off by default. With explicit consent, the native app saves only its
+validated read-only account session in a fixed generic-password item in this
+Mac's **file-based login Keychain**. Swift owns Keychain access; the shared Python
+interpreter receives no Keychain ACL or access group. No custom broad ACL,
+iCloud synchronization, provisioning entitlement or new signing credential is
+configured. The backend distinction follows [Apple’s Mac Keychain guidance](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains). Standard macOS app access controls apply; an ad-hoc app update may
+cause a new access prompt or denial. Gargoyl fails closed rather than broadening
+access. This does not claim data-protection `ThisDeviceOnly` semantics or automatic
+locking when the screen locks.
 
-Retrieval freshness and source heartbeat freshness are independent. Missing,
-future, disconnected, stale or incomplete data never establishes healthy or zero
-providers. Source-reported status is not independent remote process liveness.
+A credential is saved only after acknowledged `desktop_account` authorization
+and the first validated fleet read. Tokens move only over the trusted same-owner
+native/worker private pipes for opted-in Remember/Resume, never through argv,
+environment, HTML, URLs, diagnostics, logs or plaintext files. Stored purpose,
+record identity and original expiry are validated before reuse. The local expiry
+is conservatively bounded by the start of the original 30-day account grant; no
+restore extends it. Memory-only sessions remain bounded to 24 hours. Opted-in and
+restored readers stop at their original grant limit, without another device grant.
 
-A fixed private cache directory uses same-owner/no-symlink checks, atomic writes,
-0700/0600 modes, at most 256 records/512KiB and a 24-hour maximum usable age. Expired
-metadata is removed on the next read; nothing can run cleanup while the app is
-not running. A new account connection clears the previous cache. The cache is
-owner-private local metadata, not the encrypted v1 telemetry spool; it is not
-exposed on the public loopback dashboard or included in existing telemetry export.
-User-requested account labels remain private and are not exported by default.
+Quitting with a saved sign-in permits graphical resume on reopen.
+**Resume saved sign-in** retries a locked/denied Keychain read without creating a
+new grant. A bounded read-only wait handles the previous reader still exiting;
+it never retries device authorization. Denied/locked storage or network errors
+never fall back to plaintext or erase a valid saved credential. Expired or
+server-rejected sessions stop; cleanup targets only their matching saved record,
+so a newer replacement is not deleted.
 
-Access tokens stay in session-process memory only. No credentials, device codes,
-refresh tokens or keys are persisted. Closing the window may preserve collection
-while the application remains running. Quitting, disconnecting, losing the active
-owner or reaching the 24-hour session limit discards access; another sign-in is
-required. Client disconnect does not claim server revocation of an unused grant.
-No login-persistence settings or existing credentials are changed.
+**Disconnect fleet** ends memory collection. It does not mean saved sign-in was
+forgotten. **Forget saved sign-in…** removes only Gargoyl's selected login Keychain
+item after native confirmation; the current memory session may continue until
+Disconnect or Quit. Local deletion does not claim remote grant revocation.
 
-## Local association and acceptance
+The previously installed memory-only worker has no supported credential handover.
+Do not inspect its memory or invent a migration: preserve it during development,
+then perform one fresh graphical sign-in after the reviewed update and approved
+Keychain setup. Real storage/read/delete acceptance must be recorded separately
+from fake-adapter tests; building the code does not activate persistence.
 
-Protected daemon public attestation identity is read through existing strict
-ownership, no-symlink, size/freshness and native process checks. The current Mac's
-public identity was available in a bounded live read; raw identity was withheld.
-An exact, unique identity-digest match with fresh authenticated inventory may
-associate the local Mac. Missing/stale/ambiguous evidence remains unmatched.
-Association is for display only and never authorizes a repair or remote command.
+## Privacy and protocol boundaries
 
-Tests use controlled account responses and temporary caches. Live evidence so far
-covers scope negotiation, protected local public identity availability and the
-fresh official console inventory. A completed Gargoyl grant/API inventory and
-rendered native real-data acceptance must be recorded separately before claiming
-the installed fleet manager is connected. Controlled tests do not prove a live
-account grant or remote process health.
+Fixed HTTPS authority and exact device-flow/owned-provider endpoints use verified
+TLS, no redirects/cookies, bounded response bytes/depth, and caller deadlines.
+Only acknowledged `desktop_account` grants and scoped token prefixes are accepted;
+legacy provider grants are refused. The official verification page must be
+`https://console.darkbloom.dev/link?purpose=desktop_account`. Bare `/link` selects
+provider linking and causes “authorization purpose does not match this code”.
+Darkbloom 0.10.6's CHANGELOG and desktop external-link tests document that context.
+Gargoyl constructs only the fixed nonsecret purpose URL; it never forwards
+server-supplied codes/query values and refuses contradictory/repeated purposes.
 
-## Account linking purpose
+Inventory and aliases are separate owner-private contracts, not v1 ingestion or
+export extensions. Only allowlisted IDs/names/status/version/heartbeat evidence
+and a public-identity digest survive normalization. Financial values, model names,
+IPs, credentials and arbitrary payload detail are dropped. Duplicate IDs fail
+closed; unknown records/pagination make coverage partial. The private inventory
+cache uses same-owner/no-symlink checks, atomic 0700/0600 storage, at most 256 records
+and 512KiB, and 24-hour maximum usable age with deletion on next read. Nothing can
+run cleanup while the app is stopped. Aliases have separate bounded private
+storage and persist until edited/removed.
 
-The official verification page must be opened as
-`https://console.darkbloom.dev/link?purpose=desktop_account`. The non-secret
-purpose parameter selects the read-only account approval; opening bare `/link`
-selects provider linking and rejects an account code with “authorization purpose
-does not match this code”. This behavior is documented in Darkbloom 0.10.6
-commit `84ddfdba6bb704bf1c68f97c7060289079380ceb`, `CHANGELOG.md` under
-“Console desktop sign-in approval”, and its desktop external-link tests.
-
-Gargoyl constructs only this fixed official URL. It never forwards server-supplied
-query values, codes or tokens to a URL. A contradictory or duplicated purpose in
-a verification response is refused. After a rejected attempt, cancel it and use
-a fresh scoped graphical connection after the corrected app is installed; never
-switch to a provider-purpose grant to work around a mismatch.
+Local association requires fresh protected daemon public attestation identity,
+verified native process identity and an exact unique account match. Hostnames
+and aliases never establish association or authorize repair. The public loopback
+dashboard remains local-telemetry-only, and automatic repair stays disabled.

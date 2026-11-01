@@ -41,6 +41,33 @@ def instant(value):
         return None
 
 
+def heartbeat(raw):
+    """Fleet API ISO-8601 evidence; never guesses numeric timestamp units."""
+    field = "last_heartbeat" if raw.get("last_heartbeat") is not None else "last_seen"
+    value = raw.get(field)
+    if value is None:
+        return None, "not_reported", "none", None
+    if type(value) is not str:
+        return None, "unsupported_type", field, None
+    pattern = r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,9}))?(Z|[+-][0-9]{2}:[0-9]{2})"
+    match = re.fullmatch(pattern, value) if len(value) <= 64 else None
+    if match is None:
+        return None, "invalid_timestamp", field, None
+    if match[3] != "Z" and (int(match[3][1:3]) > 23 or int(match[3][4:6]) > 59):
+        return None, "invalid_timestamp", field, None
+    precision = len(match[2] or "")
+    canonical = match[1] + (("." + match[2][:6]) if precision else "") + match[3]
+    try:
+        parsed = datetime.fromisoformat(canonical.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
+        normalized = parsed.isoformat()
+        timestamp(normalized)
+        return normalized, "reported", field, precision
+    except (ValueError, OverflowError):
+        return None, "invalid_timestamp", field, precision
+
+
 def provider_key(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -69,10 +96,8 @@ def normalize_inventory(value, fetched_at):
             "source_name" if name else ("hardware_label" if label else "provider_id")
         )
         key = text(raw.get("se_public_key"), 4096)
-        heartbeat = instant(
-            raw.get("last_heartbeat")
-            if raw.get("last_heartbeat") is not None
-            else raw.get("last_seen")
+        heartbeat_at, heartbeat_reason, heartbeat_source, heartbeat_precision = (
+            heartbeat(raw)
         )
         rows.append(
             dict(
@@ -80,7 +105,10 @@ def normalize_inventory(value, fetched_at):
                 name=label or identity,
                 name_kind=label_kind,
                 reported_status=text(raw.get("status"), 64),
-                heartbeat_at=heartbeat,
+                heartbeat_at=heartbeat_at,
+                heartbeat_reason=heartbeat_reason,
+                heartbeat_source=heartbeat_source,
+                heartbeat_precision=heartbeat_precision,
                 version=text(raw.get("version"), 64),
                 identity_digest=provider_key(key) if key else None,
             )
@@ -98,7 +126,7 @@ def normalize_inventory(value, fetched_at):
         or (total is not None and total > len(rows))
     )
     return dict(
-        schema=1,
+        schema=2,
         source=SOURCE,
         fetched_at=fetched_at,
         connection="connected",
@@ -124,7 +152,7 @@ def validate_inventory(value):
         type(value) is not dict
         or set(value) != keys
         or type(value["schema"]) is not int
-        or value["schema"] != 1
+        or value["schema"] not in {1, 2}
         or value["source"] != SOURCE
         or value["connection"]
         not in {"connected", "unavailable", "auth_required", "disconnected"}
@@ -137,19 +165,21 @@ def validate_inventory(value):
         raise FleetError("invalid_data")
     timestamp(value["fetched_at"])
     seen = set()
+    row_keys = {
+        "id",
+        "name",
+        "name_kind",
+        "reported_status",
+        "heartbeat_at",
+        "version",
+        "identity_digest",
+    }
+    if value["schema"] == 2:
+        row_keys |= {"heartbeat_reason", "heartbeat_source", "heartbeat_precision"}
     for row in value["providers"]:
         if (
             type(row) is not dict
-            or set(row)
-            != {
-                "id",
-                "name",
-                "name_kind",
-                "reported_status",
-                "heartbeat_at",
-                "version",
-                "identity_digest",
-            }
+            or set(row) != row_keys
             or text(row["id"]) is None
             or row["id"] in seen
             or text(row["name"]) is None
@@ -171,6 +201,28 @@ def validate_inventory(value):
             )
         ):
             raise FleetError("invalid_data")
+        if value["schema"] == 2:
+            if row["heartbeat_reason"] not in {
+                "reported",
+                "not_reported",
+                "unsupported_type",
+                "invalid_timestamp",
+            } or row["heartbeat_source"] not in {"last_heartbeat", "last_seen", "none"}:
+                raise FleetError("invalid_data")
+            precision = row["heartbeat_precision"]
+            if precision is not None and (
+                type(precision) is not int or not 0 <= precision <= 9
+            ):
+                raise FleetError("invalid_data")
+            if (row["heartbeat_at"] is not None) != (
+                row["heartbeat_reason"] == "reported"
+            ):
+                raise FleetError("invalid_data")
+            if (
+                row["heartbeat_source"] == "none"
+                and row["heartbeat_reason"] != "not_reported"
+            ):
+                raise FleetError("invalid_data")
         seen.add(row["id"])
     total = value["reported_total"]
     if total is not None and (

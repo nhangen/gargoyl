@@ -42,6 +42,8 @@ class NativeGateTests(unittest.TestCase):
                     "-framework",
                     "LocalAuthentication",
                     "-framework",
+                    "Security",
+                    "-framework",
                     "SystemConfiguration",
                     str(source),
                     "-o",
@@ -67,6 +69,23 @@ class NativeGateTests(unittest.TestCase):
                 + ")\n"
             )
             fake.chmod(0o700)
+            from test_fleet_state import NOW, response
+
+            from gargoyl.fleet_state import normalize_inventory
+            from gargoyl.native_views import render_view
+
+            fixture_html = root / "fleet.html"
+            fixture_html.write_text(
+                render_view(
+                    "fleet",
+                    None,
+                    None,
+                    inventory=normalize_inventory(response(), NOW),
+                    aliases={"provider-real-format-test-only": "Studio One"},
+                    now=NOW,
+                )
+            )
+
             hits = []
 
             class Handler(BaseHTTPRequestHandler):
@@ -84,6 +103,7 @@ class NativeGateTests(unittest.TestCase):
             try:
                 environment = dict(
                     os.environ,
+                    GARGOYL_TEST_FLEET_HTML=str(fixture_html),
                     GARGOYL_TEST_BLOCKED_RESOURCE=f"http://127.0.0.1:{server.server_port}",
                 )
                 if console_owner():

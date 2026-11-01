@@ -1,6 +1,7 @@
 """Private account inventory presentation. Never a provider-control surface."""
 
 import re
+from datetime import datetime
 from html import escape
 
 from gargoyl.dashboard import build_dashboard
@@ -24,17 +25,47 @@ def fleet_mode(view):
     )
 
 
+def compact_time(value):
+    return (
+        datetime.fromisoformat(value.replace("Z", "+00:00")).strftime(
+            "%Y-%m-%d %H:%M:%SZ"
+        )
+        if value
+        else None
+    )
+
+
 def e(value):
     return escape(str(value), quote=True)
 
 
-def render_fleet(view, inventory, evidence, local, alias, now, navigation):
+def render_fleet(
+    view,
+    inventory,
+    evidence,
+    local,
+    alias,
+    now,
+    navigation,
+    aliases=None,
+    aliases_available=True,
+):
+    from gargoyl.fleet_aliases import validate_aliases
+
+    aliases = validate_aliases(aliases or {})
+    label_kinds = {
+        "source_name": "Source name",
+        "hardware_label": "Hardware model",
+        "provider_id": "Provider ID fallback",
+    }
     if not fleet_mode(view):
         raise ValueError("unsupported fleet view")
     if inventory is not None:
         validate_inventory(inventory)
     matched = matching_provider(inventory, local, now)
     body = "<h1>Your fleet</h1><p>Account-owned provider records. Coordinator reports and this Mac’s direct observations stay separate. No remote control or automatic repair.</p>"
+    if not aliases_available:
+        body += "<p>Local aliases unavailable. Actual provider IDs and source labels remain visible.</p>"
     local_body = ""
     local_body += "<section><h2>This Mac · " + e(alias) + "</h2>"
     if evidence is None or not evidence["snapshots"]:
@@ -102,14 +133,34 @@ def render_fleet(view, inventory, evidence, local, alias, now, navigation):
             else:
                 row = selected[0]
                 report, heartbeat = evidence_state(inventory, row, now)
-                body += "<h3>" + e(row["name"]) + '</h3><dl class="facts">'
+                body += (
+                    "<h3>"
+                    + e(aliases.get(row["id"], row["name"]))
+                    + '</h3><dl class="facts">'
+                )
                 for label, value in [
                     ("Actual provider ID", row["id"]),
-                    ("Label source", row["name_kind"]),
+                    ("Local friendly alias", aliases.get(row["id"], "not set")),
+                    ("Source label", row["name"]),
+                    ("Label source", label_kinds[row["name_kind"]]),
                     ("Reported status", row["reported_status"] or "unknown"),
                     ("Report freshness", report),
                     ("Last heartbeat", row["heartbeat_at"] or "unknown"),
                     ("Heartbeat recency", heartbeat),
+                    (
+                        "Heartbeat evidence",
+                        row.get("heartbeat_reason", "unclassified cached evidence"),
+                    ),
+                    (
+                        "Heartbeat source field",
+                        row.get("heartbeat_source", "unclassified cached evidence"),
+                    ),
+                    (
+                        "Source fractional digits",
+                        row.get("heartbeat_precision")
+                        if row.get("heartbeat_precision") is not None
+                        else "unknown",
+                    ),
                     ("Reported version", row["version"] or "unknown"),
                     (
                         "Local association",
@@ -146,24 +197,39 @@ def render_fleet(view, inventory, evidence, local, alias, now, navigation):
                 if FLEET_FILTERS[view] is None
                 or evidence_state(inventory, r, now)[1] == FLEET_FILTERS[view]
             ]
-            body += '<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory"><table><thead><tr><th>Provider / actual ID</th><th>Label source</th><th>Coordinator report</th><th>Heartbeat</th><th>Local evidence</th></tr></thead><tbody>'
+            body += '<p class="fleet-scroll-hint">Scroll the table horizontally to see all evidence.</p><div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory"><table class="fleet-inventory"><thead><tr><th>Provider / actual ID</th><th>Label source</th><th>Coordinator report</th><th>Heartbeat</th><th>Local evidence</th></tr></thead><tbody>'
             for row in shown:
                 report, heartbeat = evidence_state(inventory, row, now)
                 body += (
                     '<tr><th><a href="gargoyl-view://fleet-node-'
                     + provider_key(row["id"])
                     + '/">'
-                    + e(row["name"])
-                    + '</a><br><span class="mono">'
+                    + e(aliases.get(row["id"], row["name"]))
+                    + "</a>"
+                    + (
+                        '<br><span class="muted">Local alias · source: '
+                        + e(row["name"])
+                        + "</span>"
+                        if row["id"] in aliases
+                        else ""
+                    )
+                    + '<br><span class="mono">'
                     + e(row["id"])
                     + "</span></th><td>"
-                    + e(row["name_kind"])
+                    + e(label_kinds[row["name_kind"]])
                     + "</td><td>"
                     + e(row["reported_status"] or "unknown")
                     + " · "
                     + e(report)
                     + "</td><td>"
-                    + e(row["heartbeat_at"] or "unknown")
+                    + e(
+                        compact_time(row["heartbeat_at"])
+                        or {
+                            "not_reported": "Not reported",
+                            "unsupported_type": "Unsupported timestamp type",
+                            "invalid_timestamp": "Invalid timestamp",
+                        }.get(row.get("heartbeat_reason"), "Unknown cached evidence")
+                    )
                     + "<br>"
                     + e(heartbeat)
                     + "</td><td>"
@@ -187,12 +253,18 @@ def render_fleet(view, inventory, evidence, local, alias, now, navigation):
                 )
         body += "</section>"
     body += '<section id="needs-attention"><h2>Coverage and limitations</h2><p>Missing or stale reports require fresh evidence. Account status is a coordinator report, not independent remote health. No repair is inferred.</p></section>'
+    body += '<p class="muted">Edit local aliases in the native toolbar. Aliases stay on this Mac, do not rename source records, and never change identity matching or action targets.</p>'
     body += local_body
     body += '<p class="muted">Account metadata is private to the native app. The public loopback dashboard and existing export remain local-telemetry-only. Fleet reads use no financial, model-name or provider-control endpoints.</p>'
-    return (
+    html = (
         page_start(
             "Your fleet · Gargoyl", extra_nav=navigation, badge="Private fleet manager"
         )
         + body
         + PAGE_END
+    )
+    return html.replace(
+        "</head>",
+        "<style>.fleet-inventory{min-width:800px}.fleet-scroll-hint{display:none}@media(max-width:600px){.fleet-scroll-hint{display:block}} .fleet-inventory th:first-child{min-width:250px}</style></head>",
+        1,
     )

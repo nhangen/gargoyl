@@ -50,6 +50,106 @@ class FleetSessionTests(unittest.TestCase):
         self.assertEqual(self.client.providers.call_count, 1)
         self.assertEqual(self.cache.read(NOW)["connection"], "disconnected")
 
+    def test_remember_transfers_one_credential_only_after_first_validated_read(self):
+        waits = [0]
+
+        def wait(seconds):
+            if seconds >= 30:
+                waits[0] += 1
+                if waits[0] == 2:
+                    raise SessionClosed
+
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=wait,
+            send=self.events.append,
+            client=self.client,
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+            remember=True,
+        )
+        credentials = [e for e in self.events if e["kind"] == "fleet-credential"]
+        self.assertEqual(len(credentials), 1)
+        self.assertEqual(credentials[0]["purpose"], "desktop_account")
+        self.assertEqual(credentials[0]["token"], self.client.poll.return_value)
+        self.assertEqual(self.client.providers.call_count, 2)
+        self.assertNotIn(
+            "private-test-token", Path(self.cache.directory, "fleet.json").read_text()
+        )
+
+    def test_remember_never_transfers_on_invalid_fleet_or_closed_owner(self):
+        self.client.providers.side_effect = FleetError("invalid_data")
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=lambda _: None,
+            send=self.events.append,
+            client=self.client,
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+            remember=True,
+        )
+        self.assertFalse(any(e["kind"] == "fleet-credential" for e in self.events))
+        self.assertIsNone(self.cache.read(NOW))
+
+    def test_restore_uses_saved_scope_without_device_grant_or_reexporting_token(self):
+        def wait(seconds):
+            if seconds >= 30:
+                raise SessionClosed
+
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=wait,
+            send=self.events.append,
+            client=self.client,
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+            initial_token="darkbloom-at-private-restored-token",
+            session_seconds=120,
+        )
+        self.client.begin.assert_not_called()
+        self.client.poll.assert_not_called()
+        self.assertEqual(
+            self.client.providers.call_args.args,
+            ("darkbloom-at-private-restored-token",),
+        )
+        self.assertNotIn("private-restored-token", json.dumps(self.events))
+        self.assertNotIn(
+            "private-restored-token",
+            Path(self.cache.directory, "fleet.json").read_text(),
+        )
+
+    def test_restore_refuses_broad_token_and_reads_arriving_after_expiry(self):
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=lambda _: None,
+            send=self.events.append,
+            client=self.client,
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+            initial_token="eigeninference-pt-broad",
+        )
+        self.client.providers.assert_not_called()
+        self.client.begin.assert_not_called()
+        self.assertIsNone(self.cache.read(NOW))
+        clock = Mock(side_effect=[0, 0, 2])
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=lambda _: None,
+            send=self.events.append,
+            client=self.client,
+            now=lambda: NOW,
+            monotonic=clock,
+            initial_token="darkbloom-at-private-restored-token",
+            session_seconds=1,
+        )
+        self.assertIsNone(self.cache.read(NOW))
+        self.assertFalse(any(e["kind"] == "fleet-updated" for e in self.events))
+
     def test_concurrent_sessions_refused_before_any_grant_request(self):
         with session_lock(self.cache):
             run_session(
@@ -61,7 +161,7 @@ class FleetSessionTests(unittest.TestCase):
             )
         self.client.begin.assert_not_called()
         self.assertEqual(
-            self.events, [{"kind": "fleet-unavailable", "reason": "unavailable"}]
+            self.events, [{"kind": "fleet-unavailable", "reason": "session_busy"}]
         )
 
     def test_closed_gui_after_network_response_cannot_commit_inventory(self):
