@@ -440,14 +440,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         let config = WKWebViewConfiguration(); config.defaultWebpagePreferences.allowsContentJavaScript = false
         config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self; web.uiDelegate = self
-        let scroll = NSScrollView(); scroll.hasHorizontalScroller = true; scroll.documentView = bar
+        let scroll = NSScrollView(); scroll.hasHorizontalScroller = true; scroll.scrollerStyle = .overlay; scroll.documentView = bar
         bar.frame = NSRect(x:0,y:0,width:bar.fittingSize.width,height:34)
         let stack = NSStackView(views:[scroll,fleetStatus,status,web]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(stack)
         scroll.translatesAutoresizingMaskIntoConstraints = false; status.translatesAutoresizingMaskIntoConstraints = false; fleetStatus.translatesAutoresizingMaskIntoConstraints = false; web.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo:content.leadingAnchor,constant:10),stack.trailingAnchor.constraint(equalTo:content.trailingAnchor,constant:-10),stack.topAnchor.constraint(equalTo:content.topAnchor,constant:10),stack.bottomAnchor.constraint(equalTo:content.bottomAnchor,constant:-10),
-            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:40),
+            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:52),
             fleetStatus.widthAnchor.constraint(equalTo:stack.widthAnchor),status.widthAnchor.constraint(equalTo:stack.widthAnchor),web.widthAnchor.constraint(equalTo:stack.widthAnchor),web.heightAnchor.constraint(greaterThanOrEqualToConstant:300)
         ])
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
@@ -469,7 +469,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         case #selector(connectFleet): return connectFleetButton?.isEnabled ?? false
         case #selector(disconnectFleet): return disconnectFleetButton?.isEnabled ?? false
         case #selector(forgetSavedFleet): return forgetFleetButton.isEnabled
-        case #selector(resumeSavedFleet): return !previewOnly && (connectFleetButton?.isEnabled ?? false)
+        case #selector(resumeSavedFleet): return !previewOnly && !keychainBusy && (connectFleetButton?.isEnabled ?? false)
         default: return true
         }
     }

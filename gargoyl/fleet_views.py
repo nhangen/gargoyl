@@ -169,9 +169,12 @@ def render_fleet(
                 facts.append((label, '<span class="ev ev-unknown">unknown</span> <span class="faint">· no report</span>'))
             for row in rows:
                 state = row["state"] if row["state"] in ("observed", "stale", "unknown", "blocked") else "unknown"
+                if row["value"] is None:
+                    state = "unknown"
                 facts.append((label, '<span class="ev ev-' + state + '">'
                               + e(row["value"] if row["value"] is not None else "unknown") + '</span> <span class="faint">'
-                              + e(row["source"]) + " · " + e(compact_time(row["timestamp"]) or "unknown time") + "</span>"))
+                              + e(state) + " · " + e(row["source"]) + " · "
+                              + e(compact_time(row["timestamp"]) or "unknown time") + "</span>"))
     facts.append((
         "Account association",
         ('<span class="mono">' + e(matched) + '</span><span class="fleet-sub">unique matching public identity</span>'

@@ -141,3 +141,34 @@ class FleetLayoutTests(unittest.TestCase):
         page = self.page(aliases={"provider-second-test-only": "Studio Two"})
         self.assertNotIn("Same label as another record", page)
         self.assertIn("Local alias · source name “Fixture Mac”", page)
+
+
+class FleetSafetyTests(unittest.TestCase):
+    def test_untrusted_cells_are_escaped(self):
+        raw = response()
+        provider = raw["providers"][0]
+        provider["id"] = "<i>id"
+        provider["status"] = "<i>status"
+        provider["version"] = "<i>version"
+        value = normalize_inventory(raw, NOW)
+        page = render_view("fleet", None, None, inventory=value, now=NOW, local_alias="<i>mac")
+        self.assertNotIn("<i>", page)
+        self.assertIn("&lt;i&gt;status", page)
+
+    def test_heartbeat_after_read_and_age_boundaries(self):
+        from gargoyl.fleet_views import _age
+
+        self.assertEqual([_age(v) for v in (119, 120, 7199, 7200, 172799, 172800)],
+                         ["119 s", "2 min", "119 min", "2 h", "47 h", "2 days"])
+        raw = response()
+        raw["providers"][0]["last_heartbeat"] = "2026-11-01T00:00:30Z"
+        value = normalize_inventory(raw, NOW)
+        page = render_view("fleet", None, None, inventory=value, now="2026-11-01T00:01:00Z")
+        self.assertNotIn("before read", page)
+
+    def test_local_evidence_states_freshness_in_words(self):
+        from test_dashboard import snapshot
+
+        old = snapshot(source="host", at="2026-01-01T00:00:00Z")
+        page = render_view("fleet", dict(evaluated_at=NOW, snapshots=[old]), None, now=NOW)
+        self.assertIn("stale · host", page)
