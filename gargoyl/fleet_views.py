@@ -73,11 +73,11 @@ def render_fleet(view, inventory, evidence, local, alias, now, navigation):
         + '.</p><p class="muted">This hostname is a local alias, not a provider name or ID.</p></section>'
     )
     if inventory is None:
-        body += "<section><h2>Connect your account</h2><p>No verified account inventory is available. Choose <strong>Connect fleet…</strong> in the native toolbar, then complete Darkbloom’s read-only approval in your browser. No provider grant fallback is accepted.</p><p>This is not an empty fleet result. Other machines have not been queried.</p></section>"
+        body += "<section id='fleet-overview'><h2>Connect your account</h2><p>No verified account inventory is available. Choose <strong>Connect fleet…</strong> in the native toolbar, then complete Darkbloom’s read-only approval in your browser. No provider grant fallback is accepted.</p><p>This is not an empty fleet result. Other machines have not been queried.</p></section>"
     else:
         rows = inventory["providers"]
         body += (
-            "<section><h2>Owned provider inventory</h2><p>Source: Darkbloom account API · last successful read "
+            "<section id='fleet-overview'><h2>Owned provider inventory</h2><p>Source: Darkbloom account API · last successful read "
             + e(inventory["fetched_at"])
             + " · session last reported "
             + e(inventory["connection"])
@@ -186,6 +186,7 @@ def render_fleet(view, inventory, evidence, local, alias, now, navigation):
                     + "</p>"
                 )
         body += "</section>"
+    body += '<section id="needs-attention"><h2>Coverage and limitations</h2><p>Missing or stale reports require fresh evidence. Account status is a coordinator report, not independent remote health. No repair is inferred.</p></section>'
     body += local_body
     body += '<p class="muted">Account metadata is private to the native app. The public loopback dashboard and existing export remain local-telemetry-only. Fleet reads use no financial, model-name or provider-control endpoints.</p>'
     return (
