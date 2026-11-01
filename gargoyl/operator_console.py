@@ -324,10 +324,10 @@ class OperatorTools:
                 outcome = ('<p class="tool-result"><span class="ev ev-' + e(result['state']) + '">'
                            + e(result['state']) + '</span> ' + e(result['summary']) + ' <small>Finished '
                            + e(_local_time(result['finished_at'])) + '</small></p>')
-            effect = 'st-warning' if kind == 'Changes service state' else 'st-unknown'
+            effect = 'st-warning' if kind == 'Changes service state' else 'st-info'
             available.append('<li class="tool"><div class="tool-main"><h3>' + e(name) + '</h3><p>' + text + '</p>'
-                             + outcome + '</div><span class="st ' + effect + '">' + e(kind) + '</span>'
-                             '<div class="tool-action">' + action + '</div></li>')
+                             '<p class="tool-effect"><span class="st ' + effect + '">' + e(kind) + '</span></p>'
+                             + outcome + '</div><div class="tool-action">' + action + '</div></li>')
         info = self.info
         details = (
             '<section id="local-details" aria-labelledby="details-title"><h2 id="details-title">Local details</h2>'
@@ -384,8 +384,8 @@ class OperatorTools:
             '<div><dt>Provider process</dt><dd>PID ' + e(target['pid']) + ', started ' + e(born)
             + ' · confirmed by the kernel</dd></div>'
             '<div><dt>Darkbloom</dt><dd>' + e(target['version']) + ' · launchd provider and watchdog running</dd></div>'
-            '<div><dt>Executable</dt><dd class="mono">' + e(self.executable) + '</dd></div>'
-            '<div><dt>Command</dt><dd class="mono">' + e(command) + '</dd></div>'
+            '<div class="wide"><dt>Executable</dt><dd class="mono">' + e(self.executable) + '</dd></div>'
+            '<div class="wide"><dt>Command</dt><dd class="mono nowrap-words">' + e(command) + '</dd></div>'
             '</dl></section>'
             '<section aria-labelledby="impact-title"><h2 id="impact-title">Expected interruption</h2><ul>'
             '<li>New work is refused as soon as the drain starts.</li>'
@@ -413,7 +413,8 @@ class OperatorTools:
             '<input type="hidden" name="target" value="' + e(target['token']) + '">'
             '<label for="confirm-host">Type <code>' + e(prefix) + '</code>, the start of the host ID, to confirm</label>'
             '<div class="row"><input class="input" id="confirm-host" name="confirm" autocomplete="off" '
-            'spellcheck="false" required maxlength="8" pattern="' + e(prefix) + '">'
+            'spellcheck="false" autocapitalize="none" autocorrect="off" required maxlength="8" pattern="'
+            + e(prefix) + '" title="Type the 8 characters shown">'
             '<button type="submit" class="btn btn-danger">Restart provider</button></div>'
             '<p class="muted">This page does not refresh. If the provider process changes before you submit, '
             'the restart is refused and you can review the new target.</p></form></section>' + status_link)
@@ -438,8 +439,10 @@ class OperatorTools:
             badge, headline = 'st-observed', 'Verified restart'
         elif state == 'reconciled':
             badge, headline = 'st-unknown', 'Reconciled'
-        else:
+        elif live['outcome'] in ('not_restarted_attention', 'forced_anomaly'):
             badge, headline = 'st-failed', 'Unresolved'
+        else:
+            badge, headline = 'st-warning', 'Unresolved'
         facts = '<dl class="facts">'
         if record:
             facts += ('<div><dt>Operation</dt><dd class="mono">' + e(record['operation_id'][:12]) + '</dd></div>'
@@ -447,20 +450,21 @@ class OperatorTools:
                       '<div><dt>Target process</dt><dd>PID ' + e(record['target']['process']['pid']) + '</dd></div>'
                       + ('<div><dt>Replacement process</dt><dd>PID ' + e(record['replacement']['process']['pid'])
                          + '</dd></div>' if record.get('replacement') else '')
-                      + 
-                      '<div><dt>Finished</dt><dd>' + e(_local_time(record['finished_at']) if record.get('finished_at') else '—')
-                      + '</dd></div>')
+                      + ('<div><dt>Finished</dt><dd>' + e(_local_time(record['finished_at'])) + '</dd></div>'
+                         if record.get('finished_at') else '')
+                      + ('<div><dt>Reconciled</dt><dd>' + e(_local_time(record['reconciled_at'])) + '</dd></div>'
+                         if record.get('reconciled_at') else ''))
         facts += '</dl>'
         body = refresh + head + '<p><span class="st ' + badge + '">' + e(headline) + '</span></p>' + facts
         if running:
             phase, remaining = live['phase']
             elapsed = int(live['elapsed'] or 0)
-            text = (f'Running for {elapsed // 60} min {elapsed % 60:02d} s of at most 14 min. '
+            text = (f'{elapsed // 60}:{elapsed % 60:02d} elapsed of 14:00 at most. '
                     + (PHASE_TEXT[phase] if phase != 'starting' else
                        'Darkbloom has not reported a phase yet.'))
             if phase == 'draining' and remaining:
-                text += f' {remaining} accepted request(s) remaining.'
-            body += ('<section aria-labelledby="progress-title"><h2 id="progress-title">Progress</h2><p>' + e(text)
+                text += f" {remaining} accepted request{'s' if remaining != 1 else ''} remaining."
+            body += ('<section aria-labelledby="progress-title"><h2 id="progress-title">Progress</h2><p role="status">' + e(text)
                      + '</p><p class="muted">Phases come from Darkbloom\'s own messages, which it may only write out '
                      'when the command finishes, so detailed phases can lag. The elapsed time is always current.</p>'
                      '<p class="muted">This page refreshes every 2 seconds. Stopping the monitor does not stop the '
@@ -470,25 +474,33 @@ class OperatorTools:
             if state == 'completed':
                 body += ('<p>Darkbloom reported success, and fresh provider state names a different process (PID '
                          + e(record['replacement']['process']['pid']) + ') confirmed by the kernel, on the same '
-                         'version. Protocol health and earnings are not independently proven.</p>')
+                         'version (' + e(record['replacement'].get('version') or record['target'].get('version') or 'unknown')
+                         + '). Protocol health and earnings are not independently proven. Check the <a href="'
+                         + e(self.base + '/#fleet-overview') + '">dashboard evidence</a> for fresh authorization. '
+                         'Manual restart is available again.</p>')
             elif state == 'reconciled':
-                body += '<p>' + e(OBSERVATION_TEXT[record['observation']]) + ' Recorded ' + e(_local_time(record['reconciled_at'])) + '. This records the present state; it does not prove what happened during the attempt.</p>'
+                detail = OUTCOME_TEXT.get(live['outcome']) if live['outcome'] else None
+                body += (('<p>Attempt outcome: ' + e(detail) + '</p>' if detail else '')
+                         + '<p>' + e(OBSERVATION_TEXT[record['observation']]) + ' This records the present state; '
+                         'it does not prove what happened during the attempt.</p>')
+                if record['observation'] != 'different_process_observed':
+                    body += ('<div class="callout warn"><p>Check the <a href="' + e(self.base + '/#fleet-overview')
+                             + '">dashboard</a> before restarting: the provider may still be draining with '
+                             'automatic restart disabled.</p></div>')
+                body += ('<p><a href="' + e(self.base + '/restart') + '">Manual restart</a> is available again.</p>')
             else:
                 detail = OUTCOME_TEXT.get(live['outcome']) if live['outcome'] else None
                 body += ('<p>' + e(detail or 'The outcome is unknown: it was not verified, or the restart was '
                          'started by another session (the CLI or an earlier monitor) that didn\'t record a result.')
-                         + '</p>' + (f"<p>Exit status {e(live['exit_code'])}.</p>" if live['exit_code'] is not None else ''))
+                         + '</p>' + (f"<p>Darkbloom exited with status {e(live['exit_code'])}"
+                            + (' (non-zero: not verified).' if live['exit_code'] else '.') + '</p>'
+                            if live['exit_code'] is not None else ''))
             body += '</section>'
             if state in ('intent', 'unknown'):
                 body += ('<section aria-labelledby="next-title"><h2 id="next-title">What to do next</h2><ol>'
                          '<li>Check the provider: <a href="' + e(self.base + '/#fleet-overview') + '">dashboard '
                          'evidence</a>, or run <a href="' + e(self.base + '/tools') + '">Daemon status</a> on the Tools page.</li>'
-                         '<li>If the drain timed out, Darkbloom left the provider draining with automatic restart '
-                         'disabled. Restarting again (after reconciling) waits for the drain again. '
-                         '<code>darkbloom restart --force</code> in a terminal would interrupt the remaining requests; '
-                         'Gargoyl never does that.</li>'
-                         '<li>If the provider was relaunched but not confirmed, it may still be starting: give it a few '
-                         'minutes and check again before reconciling.</li></ol></section>'
+                         + self._next_steps(live['outcome']) + '</ol></section>'
                          '<section aria-labelledby="reconcile-title"><h2 id="reconcile-title">Reconcile</h2>'
                          '<p>Restart stays blocked until you reconcile. Reconciling only reads the current provider '
                          'state and records it; it never restarts anything, and it is refused while the restart '
@@ -497,10 +509,30 @@ class OperatorTools:
                          '<input type="hidden" name="nonce" value="' + e(self.issue('reconcile')) + '">'
                          '<label for="reconcile-host">Type <code>' + e(self.monitor.identity[:8]) + '</code> to confirm</label>'
                          '<div class="row"><input class="input" id="reconcile-host" name="confirm" autocomplete="off" '
-                         'spellcheck="false" required maxlength="8">'
+                         'spellcheck="false" autocapitalize="none" autocorrect="off" required maxlength="8" pattern="'
+                         + e(self.monitor.identity[:8]) + '" title="Type the 8 characters shown">'
                          '<button type="submit" class="btn">Reconcile and record current state</button></div></form>'
                          + '</section>')
         return self._page('Restart status · Gargoyl', 'restart', body)
+
+    @staticmethod
+    def _next_steps(outcome):
+        steps = ''
+        if outcome in ('not_restarted_attention', 'unknown', None):
+            steps += ('<li>' + ('Darkbloom' if outcome == 'not_restarted_attention' else 'If the drain began, Darkbloom')
+                      + ' may have left the provider draining with automatic restart disabled. Restarting again '
+                      '(after reconciling) waits for the drain again. <code>darkbloom restart --force</code> in a '
+                      'terminal would interrupt the remaining requests; Gargoyl never does that.</li>')
+        if outcome in ('relaunched_unconfirmed', 'unknown', None):
+            steps += ('<li>' + ('The provider was relaunched but not confirmed' if outcome == 'relaunched_unconfirmed'
+                                else 'If the provider was relaunched but not confirmed')
+                      + ': it may still be starting. Give it a few minutes and check again before reconciling.</li>')
+        if outcome == 'refused_no_change':
+            steps += '<li>Darkbloom changed nothing. Fix what it refused on, then reconcile and try again.</li>'
+        if outcome == 'forced_anomaly':
+            steps += ('<li>Darkbloom reported a forced lifecycle, which Gargoyl never requests. Check the provider '
+                      'and Darkbloom logs (<code>darkbloom logs</code>) before reconciling.</li>')
+        return steps
 
 
 PHASE_TEXT = {

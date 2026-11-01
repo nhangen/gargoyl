@@ -78,6 +78,20 @@ class CliParsingTests(unittest.TestCase):
         self.assertEqual((events, unknown), ([('remaining', 3)], 1))
 
 
+class NextStepTests(unittest.TestCase):
+    def test_recovery_steps_match_the_outcome(self):
+        steps = OperatorTools._next_steps
+        self.assertIn('may have left the provider draining', steps('not_restarted_attention'))
+        self.assertNotIn('relaunched', steps('not_restarted_attention'))
+        self.assertIn('may still be starting', steps('relaunched_unconfirmed'))
+        self.assertNotIn('draining', steps('relaunched_unconfirmed'))
+        self.assertIn('changed nothing', steps('refused_no_change'))
+        self.assertNotIn('draining', steps('refused_no_change'))
+        for unknown in ('unknown', None):
+            self.assertIn('If the drain began', steps(unknown))
+            self.assertIn('If the provider was relaunched', steps(unknown))
+
+
 class BoundedRunTests(unittest.TestCase):
     def test_exit_status_timeout_and_output_limit(self):
         fake = FakeDarkbloom()
