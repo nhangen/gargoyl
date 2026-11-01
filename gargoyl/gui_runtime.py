@@ -1,0 +1,364 @@
+"""Private same-owner native-app worker. No HTTP actions or browser authority.
+
+The trusted native app authenticates owner presence; an inherited pipe binds its
+one confirmation to this worker. Same-UID malicious code is outside this boundary.
+"""
+
+import ctypes
+import hashlib
+import http.client
+import json
+import os
+import selectors
+import socket
+import stat
+import subprocess
+import sys
+import time
+import uuid
+
+from gargoyl.collector_coordinator_log import validate_log_report
+from gargoyl.dashboard import build_dashboard
+from gargoyl.manual_restart import (
+    ManualJournal,
+    executable_stamp,
+    installation_preflight,
+    invoke_restart,
+    observed_target,
+    owner_home,
+    read_operation,
+)
+from gargoyl.manual_restart import run_restart as execute_restart
+from gargoyl.telemetry import timestamp, validate_snapshot
+
+HOST = "00000000-0000-4000-8000-000000000001"
+POLICY = "native-manual-installation-v1"
+
+
+def console_owner():
+    if sys.platform != "darwin" or os.getuid() != 501:
+        return False
+    sc = ctypes.CDLL(
+        "/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration"
+    )
+    cf = ctypes.CDLL(
+        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+    )
+    sc.SCDynamicStoreCopyConsoleUser.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint),
+        ctypes.POINTER(ctypes.c_uint),
+    ]
+    sc.SCDynamicStoreCopyConsoleUser.restype = ctypes.c_void_p
+    cf.CFRelease.argtypes = [ctypes.c_void_p]
+    uid, gid = ctypes.c_uint(), ctypes.c_uint()
+    name = sc.SCDynamicStoreCopyConsoleUser(None, ctypes.byref(uid), ctypes.byref(gid))
+    if name:
+        cf.CFRelease(name)
+    return bool(name and uid.value == os.getuid() == 501)
+
+
+def emit(value):
+    """Progress delivery cannot abort an accepted operation when its window closes."""
+    try:
+        payload = (
+            json.dumps(value, allow_nan=False, separators=(",", ":")).encode() + b"\n"
+        )
+        os.write(sys.stdout.fileno(), payload)
+    except (OSError, ValueError):
+        pass
+
+
+def read_confirmation(stream, *, timeout=90, monotonic=time.monotonic):
+    deadline = monotonic() + timeout
+    payload = bytearray()
+    with selectors.DefaultSelector() as selector:
+        selector.register(stream, selectors.EVENT_READ)
+        while monotonic() < deadline:
+            events = selector.select(max(0, deadline - monotonic()))
+            if not events:
+                break
+            chunk = os.read(stream.fileno(), min(4097 - len(payload), 4096))
+            if not chunk:
+                break
+            payload.extend(chunk)
+            if len(payload) > 4096:
+                raise ValueError("confirmation too large")
+            if b"\n" in payload:
+                line, extra = bytes(payload).split(b"\n", 1)
+                if extra:
+                    raise ValueError("multiple confirmations")
+                return json.loads(line)
+    raise ValueError("confirmation unavailable")
+
+
+def graphical_restart(
+    *,
+    journal,
+    preflight,
+    inspect_target,
+    invoke,
+    receive,
+    owner=console_owner,
+    send=emit,
+    monotonic=time.monotonic,
+    wall_clock=time.time,
+):
+    """One pending preview, one native confirmation, shared CLI journal semantics."""
+    if not owner():
+        raise ValueError("inactive owner")
+    prior = journal.read()
+    if prior is not None and prior["state"] != "completed":
+        raise ValueError("unresolved operation")
+    target, stamp = preflight()
+    began_wall = wall_clock()
+    request = dict(
+        request_id=uuid.uuid4().hex,
+        target=target,
+        policy=POLICY,
+        expires_in_seconds=90,
+        expires_at=began_wall + 90,
+    )
+    digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
+    began = monotonic()
+    request["preview_digest"] = digest
+
+    def deliver(value):
+        try:
+            send(value)
+        except (OSError, ValueError):
+            pass
+
+    def confirm(current):
+        deliver(dict(kind="preview", **request))
+        reply = receive()
+        valid = (
+            type(reply) is dict
+            and set(reply) == {"request_id", "preview_digest", "approved"}
+            and reply["approved"] is True
+            and reply["request_id"] == request["request_id"]
+            and reply["preview_digest"] == digest
+            and 0 <= monotonic() - began <= 90
+            and 0 <= wall_clock() - began_wall <= 90
+            and owner()
+        )
+        if not valid:
+            return False
+        fresh, current_stamp = preflight()
+        return (
+            current_stamp == stamp
+            and fresh["process"] == target["process"]
+            and fresh["version"] == target["version"]
+        )
+
+    def once():
+        if not owner():
+            raise ValueError("owner changed")
+        fresh, current_stamp = preflight()
+        if current_stamp != stamp or fresh["process"] != target["process"]:
+            raise ValueError("installation changed")
+        return invoke()
+
+    result = execute_restart(
+        journal,
+        target,
+        inspect_target=inspect_target,
+        invoke=once,
+        confirm=confirm,
+        progress=lambda text: deliver(dict(kind="progress", text=text)),
+    )
+    deliver(dict(kind="result", state=result["state"], reason=result["reason"]))
+    return result
+
+
+def monitor_configuration():
+    import plistlib
+
+    home = owner_home()
+    path = home / "Library/LaunchAgents/dev.gargoyl.monitor.plist"
+    if str(path.resolve(strict=True)) != str(path):
+        raise ValueError("monitor configuration unavailable")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        s = os.fstat(fd)
+        if (
+            not stat.S_ISREG(s.st_mode)
+            or s.st_uid != 501
+            or s.st_nlink != 1
+            or s.st_mode & 0o022
+        ):
+            raise ValueError("monitor ownership unavailable")
+        payload = os.read(fd, 65537)
+        if len(payload) > 65536:
+            raise ValueError("monitor configuration limit")
+    finally:
+        os.close(fd)
+    value = plistlib.loads(payload)
+    expected = [
+        str(owner_home() / "Documents/Codex/2026-10-30/task-2/.venv/bin/gargoyl"),
+        "monitor",
+        "--input",
+        str(home / ".darkbloom/daemon-state.json"),
+        "--owner-uid",
+        "501",
+        "--host",
+        HOST,
+        "--interval",
+        "5",
+        "--port",
+        "8766",
+        "--provider-executable",
+        str(home / ".darkbloom/Darkbloom.app/Contents/MacOS/darkbloom"),
+        "--coordinator-errors",
+    ]
+    if (
+        value.get("Label") != "dev.gargoyl.monitor"
+        or value.get("ProgramArguments") != expected
+    ):
+        raise ValueError("monitor configuration differs")
+    return path
+
+
+def control_monitor(action, *, run=subprocess.run, validate=monitor_configuration):
+    """Only Gargoyl's fixed existing job; no PID signals or listener displacement."""
+    if action not in {"start-monitor", "stop-monitor"} or not console_owner():
+        raise ValueError("monitor action unavailable")
+    path = validate()
+    label = "gui/501/dev.gargoyl.monitor"
+    job = run(["/bin/launchctl", "print", label], capture_output=True, timeout=10)
+    if action == "stop-monitor":
+        if job.returncode == 113:
+            return "Monitoring was already stopped."
+        if job.returncode != 0:
+            raise ValueError("monitor state unknown")
+        command = ["/bin/launchctl", "bootout", label]
+    else:
+        if job.returncode == 0:
+            return (
+                "Monitoring is already loaded; inspect source freshness in the console."
+            )
+        if job.returncode != 113:
+            raise ValueError("monitor state unknown")
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 8766))
+        command = ["/bin/launchctl", "bootstrap", "gui/501", str(path)]
+    result = run(command, capture_output=True, timeout=10)
+    if result.returncode != 0:
+        raise ValueError("monitor action outcome requires inspection")
+    return "Monitor command accepted. Reload the console to verify availability and source freshness."
+
+
+def export_evidence():
+    c = http.client.HTTPConnection("127.0.0.1", 8766, timeout=6)
+    try:
+        c.request("GET", "/report.json")
+        r = c.getresponse()
+        body = r.read(524289)
+        if r.status != 200 or len(body) > 524288:
+            raise ValueError("export unavailable")
+        supplied = json.loads(body)
+    finally:
+        c.close()
+    at = supplied["evaluated_at"]
+    timestamp(at)
+    raw = supplied["snapshots"]
+    if type(raw) is not list or len(raw) > 64:
+        raise ValueError("export limit")
+    samples = [validate_snapshot(item) for item in raw]
+    if any(item["host_id"] != HOST for item in samples):
+        raise ValueError("export host differs")
+    log = supplied.get("coordinator_log_report")
+    if log is not None:
+        log = dict(log)
+        log.pop("effective_state", None)
+        log = validate_log_report(log)
+        age = (timestamp(at) - timestamp(log["observed_at"])).total_seconds()
+        log["effective_state"] = (
+            "unknown"
+            if age < 0
+            else ("stale" if age > log["freshness_seconds"] else log["state"])
+        )
+    return dict(
+        schema_version=1,
+        evaluated_at=at,
+        snapshots=samples,
+        dashboard=build_dashboard(samples[-1:], [HOST], at),
+        coordinator_log_report=log,
+        automatic_repair_enabled=False,
+        note="Normalized evidence only; reported/stale/unknown values are not independent health proof.",
+    )
+
+
+def main():
+    # Only a trusted same-owner native process may use these private pipe modes.
+    if len(sys.argv) != 2 or os.getuid() != 501 or not console_owner():
+        return 1
+    mode = sys.argv[1]
+    try:
+        if mode in {"start-monitor", "stop-monitor"}:
+            emit(dict(kind="status", text=control_monitor(mode)))
+        elif mode == "status":
+            record = read_operation(str(owner_home() / ".gargoyl-manual-restart"))
+            emit(
+                dict(
+                    kind="status",
+                    text="No manual operation recorded."
+                    if record is None
+                    else "Last manual operation: "
+                    + record["state"]
+                    + " ("
+                    + record["reason"]
+                    + "). Unresolved intent/unknown cannot be retried or cleared here.",
+                )
+            )
+        elif mode == "export":
+            # Read-only payload can be larger; blocking output is confined to this mode.
+            sys.stdout.write(
+                json.dumps(dict(kind="export", payload=export_evidence())) + "\n"
+            )
+            sys.stdout.flush()
+        elif mode == "restart":
+            if not stat.S_ISFIFO(
+                os.fstat(sys.stdin.fileno()).st_mode
+            ) or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode):
+                raise ValueError("private pipes required")
+            os.set_blocking(sys.stdout.fileno(), False)
+            home = owner_home()
+            executable = str(home / ".darkbloom/Darkbloom.app/Contents/MacOS/darkbloom")
+            source = str(home / ".darkbloom/daemon-state.json")
+            target, stamp = installation_preflight(executable, source, 501)
+
+            def inspect():
+                if executable_stamp(executable) != stamp:
+                    raise ValueError("image changed")
+                return observed_target(source, executable, 501)
+
+            with ManualJournal(str(home / ".gargoyl-manual-restart")) as journal:
+                graphical_restart(
+                    journal=journal,
+                    preflight=lambda: installation_preflight(executable, source, 501),
+                    inspect_target=inspect,
+                    invoke=lambda: invoke_restart(
+                        executable,
+                        interrupted=type(
+                            "NeverInterrupt", (), {"is_set": lambda self: False}
+                        )(),
+                        progress=lambda text: emit(dict(kind="progress", text=text)),
+                    ),
+                    receive=lambda: read_confirmation(sys.stdin.buffer),
+                )
+        else:
+            return 1
+        return 0
+    except BaseException:
+        emit(
+            dict(
+                kind="unavailable",
+                text="Action unavailable, cancelled, or completion unverified. No automatic retry. View operation status; unknown intent remains blocked.",
+            )
+        )
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -35,7 +35,7 @@ def render_restart_unavailable():
     return (
         '<section aria-labelledby="restart-unavailable">'
         '<h2 id="restart-unavailable">Provider restart unavailable in this dashboard</h2>'
-        '<p>Repairs disabled in this dashboard. This read-only monitor cannot execute repairs. Interactive manual restart is implemented separately in the local CLI: gargoyl tools restart --help. It uses Darkbloom graceful drain and explicit installation-scoped confirmation; no command is invoked by this page.</p>'
+        '<p>Repairs disabled in this dashboard. This read-only monitor cannot execute repairs. Open the Gargoyl application and choose Restart provider for graphical review and Mac owner confirmation. The app uses the same graceful manual restart and operation journal. This read-only page never invokes a provider action.</p>'
         '<ul>'
         '<li>Target unverified for automatic repair: collected counters or optional read-only '
         'process observations do not provide the operation-bound target proof '
@@ -50,7 +50,7 @@ def render_restart_unavailable():
         'per-action signing or confirmation.</li>'
         '</ul><p>Darkbloom provides a manual restart command. Command availability '
         'and healthy telemetry do not establish these repair prerequisites. '
-        'No automatic restart, retry or unfencing action is offered here. A manual CLI timeout or interruption remains unknown and is never automatically retried.</p></section>'
+        'No automatic restart, retry or unfencing action is offered here. A manual restart timeout or interruption remains unknown and is never automatically retried.</p></section>'
     )
 
 
