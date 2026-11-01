@@ -202,3 +202,73 @@ class PilotConfigurationTests(unittest.TestCase):
         page = render_view('fleet', evidence, None, now=NOW, local_host_id=second)
         self.assertIn('This Mac', page)
         self.assertNotIn('Direct local observations unavailable', page)
+
+    def test_foreign_file_or_directory_owner_is_refused_before_payload_read(self):
+        import stat
+        from types import SimpleNamespace
+        self.write()
+        fstat = os.fstat
+        for directory in (False, True):
+            def foreign(fd):
+                info = fstat(fd)
+                if stat.S_ISDIR(info.st_mode) == directory:
+                    return SimpleNamespace(st_uid=os.getuid()+1, st_mode=info.st_mode,
+                                           st_nlink=info.st_nlink, st_size=info.st_size)
+                return info
+            with self.subTest(directory=directory), patch('os.fstat', side_effect=foreign), \
+                 patch('os.read') as read, self.assertRaises(ValueError):
+                self.load()
+            read.assert_not_called()
+
+    def test_cli_confirmation_names_configured_target_and_old_name_cannot_authorize(self):
+        import contextlib
+        import io
+
+        from test_manual_restart import TARGET
+
+        from gargoyl.operator_tools import main
+        self.write()
+        output, terminal = io.StringIO(), io.StringIO()
+        output.isatty = lambda: True
+        terminal.isatty = lambda: True
+        with patch('gargoyl.operator_tools.owner_home', return_value=self.home), \
+             patch('sys.executable', self.python), \
+             patch('os.uname', return_value=Mock(nodename='synthetic-local')), \
+             patch('sys.stdin', terminal), patch('sys.stdout', output), \
+             patch('gargoyl.operator_tools.installation_preflight', return_value=(TARGET, 'stamp')), \
+             patch('gargoyl.operator_tools.invoke_restart') as invoke, \
+             patch('builtins.input', return_value='RESTART MBP-26') as consent, \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(main(['restart', '--input', self.base.source, '--owner-uid', str(os.getuid()),
+                                   '--provider-executable', self.base.provider_executable]), 1)
+        self.assertIn('current provider of this synthetic-local installation', output.getvalue())
+        self.assertNotIn('MBP-26', output.getvalue())
+        consent.assert_called_once_with('Type RESTART synthetic-local to invoke once: ')
+        invoke.assert_not_called()
+
+    def test_cli_reconciliation_also_requires_the_configured_target_phrase(self):
+        import contextlib
+        import io
+        from test_manual_restart import NOW, TARGET
+
+        from gargoyl.manual_restart import ManualJournal, read_operation
+        from gargoyl.operator_tools import main
+        self.write()
+        journal_path = str(self.home / '.gargoyl-manual-restart')
+        with ManualJournal(journal_path) as journal:
+            journal.write(dict(schema=1, operation_id='a'*32, state='unknown',
+                               started_at=NOW, target=TARGET, reason='completion_unverified'))
+        output, terminal = io.StringIO(), io.StringIO()
+        output.isatty = lambda: True
+        terminal.isatty = lambda: True
+        with patch('gargoyl.operator_tools.owner_home', return_value=self.home), \
+             patch('sys.executable', self.python), \
+             patch('os.uname', return_value=Mock(nodename='synthetic-local')), \
+             patch('sys.stdin', terminal), patch('sys.stdout', output), \
+             patch('builtins.input', return_value='RECONCILE MBP-26') as consent, \
+             patch('gargoyl.manual_restart.reconcile_operation') as reconcile, \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(main(['reconcile', '--record']), 1)
+        consent.assert_called_once_with('Type RECONCILE synthetic-local to record: ')
+        reconcile.assert_not_called()
+        self.assertEqual(read_operation(journal_path)['state'], 'unknown')

@@ -179,17 +179,23 @@ func viewDestination(_ url: URL?, mainFrame: Bool) -> String? {
 let fragmentScripts = [
     "main":"document.getElementById('main')?.scrollIntoView()",
     "fleet-overview":"document.getElementById('fleet-overview')?.scrollIntoView()",
-    "needs-attention":"document.getElementById('needs-attention')?.scrollIntoView()",
-    "host-00000000-0000-4000-8000-000000000001":"document.getElementById('host-00000000-0000-4000-8000-000000000001')?.scrollIntoView()"
+    "needs-attention":"document.getElementById('needs-attention')?.scrollIntoView()"
 ]
-func fragmentScript(_ url: URL?, mainFrame: Bool) -> String? {
-    guard mainFrame, let value = url?.absoluteString else { return nil }
-    // Exact strings only: no decoding or interpolation of supplied URL/page text.
-    return fragmentScripts.first { value == "about:blank#" + $0.key || value == "about:blank%23" + $0.key }?.value
+func canonicalLocalHost(_ value: String) -> String? {
+    guard let id = UUID(uuidString:value), id.uuidString.lowercased() == value else { return nil }
+    return id.uuidString.lowercased()
 }
-func scrollNativeFragment(_ action: WKNavigationAction, in web: WKWebView, cancel: () -> Void) -> Bool {
+func fragmentScript(_ url: URL?, mainFrame: Bool, localHostID: String = "00000000-0000-4000-8000-000000000001") -> String? {
+    guard mainFrame, let value = url?.absoluteString else { return nil }
+    if let fixed = fragmentScripts.first(where:{ value == "about:blank#" + $0.key || value == "about:blank%23" + $0.key }) { return fixed.value }
+    // Reconstruct from the trusted view's canonical identity, never URL text.
+    guard let id = canonicalLocalHost(localHostID),
+          value == "about:blank#host-" + id || value == "about:blank%23host-" + id else { return nil }
+    return "document.getElementById('host-\(id)')?.scrollIntoView()"
+}
+func scrollNativeFragment(_ action: WKNavigationAction, in web: WKWebView, localHostID: String = "00000000-0000-4000-8000-000000000001", cancel: () -> Void) -> Bool {
     guard action.navigationType == .linkActivated,
-          let script = fragmentScript(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) else { return false }
+          let script = fragmentScript(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true,localHostID:localHostID) else { return false }
     cancel()
     web.evaluateJavaScript(script,completionHandler:nil)
     return true
@@ -336,6 +342,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var webReady = false
     var viewSelection = ViewSelection()
     var viewWorker: Worker?
+    var renderedLocalHostID = ""
     var pending: [String: Any]?
     var approvalGate: ApprovalGate?
     var context: LAContext?
@@ -450,13 +457,16 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         // One read-only worker at a time. A changed selection is loaded after it exits.
         guard viewWorker == nil else { return }
         viewPhase = "loading private view"
+        renderedLocalHostID = ""
         let generation = viewSelection.generation
         var delivered = false
         do {
             viewWorker = try Worker(mode:"view-" + view,event:{ [weak self] value in
                 guard let self = self, self.viewSelection.accepts(generation),
                       value["kind"] as? String == "view", value["view"] as? String == view,
-                      let html = value["html"] as? String, html.utf8.count <= 500000 else { return }
+                      let html = value["html"] as? String, html.utf8.count <= 500000,
+                      let localHostID = value["local_host_id"] as? String, canonicalLocalHost(localHostID) != nil else { return }
+                self.renderedLocalHostID = localHostID
                 delivered = true; self.viewPhase = "received private HTML"
                 self.finishViewLoading()
                 self.web.loadHTMLString(html,baseURL:URL(string:"about:blank"))
@@ -899,7 +909,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if action.navigationType == .linkActivated, let view = viewDestination(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) {
             decisionHandler(.cancel); displayView(view); return
         }
-        if scrollNativeFragment(action,in:webView,cancel:{ decisionHandler(.cancel) }) { return }
+        if scrollNativeFragment(action,in:webView,localHostID:renderedLocalHostID,cancel:{ decisionHandler(.cancel) }) { return }
         guard allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) else { decisionHandler(.cancel); return }
         decisionHandler(.allow)
     }
@@ -909,12 +919,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
 
 #if GARGOYL_NATIVE_TESTS
 final class ResourceFixture: NSObject, WKNavigationDelegate {
+    let localHostID = "00000000-0000-4000-8000-000000000002"
     var finished = false
     var fragmentRequested = false
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if action.request.url?.absoluteString != "about:blank" { fragmentRequested = true }
         print("fixture navigation: \(action.request.url?.absoluteString ?? "nil") main=\(action.targetFrame?.isMainFrame == true) type=\(action.navigationType.rawValue) matched=\(fragmentScript(action.request.url,mainFrame:true) != nil)")
-        if scrollNativeFragment(action,in:webView,cancel:{ decisionHandler(.cancel) }) { return }
+        if scrollNativeFragment(action,in:webView,localHostID:localHostID,cancel:{ decisionHandler(.cancel) }) { return }
         decisionHandler(allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) ? .allow : .cancel)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
@@ -947,7 +958,7 @@ if CommandLine.arguments.contains("--self-test") {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.userContentController.add(compiledRules!)
         let fixture = ResourceFixture(); let page = WKWebView(frame:NSRect(x:0,y:0,width:390,height:600),configuration:configuration); page.navigationDelegate = fixture
-        page.loadHTMLString("<html><head><title>Native admin fixture</title></head><body><a href='about:blank#main'>Jump</a><h1 id='main' style='margin-top:1000px'>Rendered admin</h1><img src='\(endpoint)/image'><iframe src='\(endpoint)/frame'></iframe><link rel='stylesheet' href='\(endpoint)/style'></body></html>",baseURL:URL(string:"about:blank")!)
+        page.loadHTMLString("<html><head><title>Native admin fixture</title></head><body><a href='about:blank#host-\(fixture.localHostID)'>Jump</a><h1 id='host-\(fixture.localHostID)' style='margin-top:1000px'>Rendered admin</h1><img src='\(endpoint)/image'><iframe src='\(endpoint)/frame'></iframe><link rel='stylesheet' href='\(endpoint)/style'></body></html>",baseURL:URL(string:"about:blank")!)
         let end = Date().addingTimeInterval(5)
         // WebKit can publish didFinish before its title property updates.
         // Wait for the actual main document, not only the callback.
@@ -959,8 +970,8 @@ if CommandLine.arguments.contains("--self-test") {
         page.evaluateJavaScript("document.querySelector('a').href") { value, _ in anchor = value as? String; inspected = true }
         let inspectionLimit = Date().addingTimeInterval(3)
         while !inspected && Date() < inspectionLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
-        precondition(anchor == "about:blank#main")
-        precondition(fragmentScript(URL(string:anchor!),mainFrame:true) != nil)
+        precondition(anchor == "about:blank#host-" + fixture.localHostID)
+        precondition(fragmentScript(URL(string:anchor!),mainFrame:true,localHostID:fixture.localHostID) != nil)
         page.evaluateJavaScript("document.querySelector('a').click()",completionHandler:nil)
         let clickedLimit = Date().addingTimeInterval(1)
         while !fixture.fragmentRequested && Date() < clickedLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
@@ -1008,6 +1019,13 @@ if CommandLine.arguments.contains("--self-test") {
         for prefix in ["about:blank#", "about:blank%23"] { precondition(fragmentScript(URL(string:prefix + key),mainFrame:true) == fragmentScripts[key]) }
         precondition(fragmentScript(URL(string:"about:blank#" + key),mainFrame:false) == nil)
     }
+    let configuredHost = "00000000-0000-4000-8000-000000000002"
+    let hostURL = URL(string:"about:blank#host-" + configuredHost)
+    precondition(fragmentScript(hostURL,mainFrame:true) == nil)
+    precondition(fragmentScript(hostURL,mainFrame:true,localHostID:configuredHost) == "document.getElementById('host-\(configuredHost)')?.scrollIntoView()")
+    precondition(fragmentScript(hostURL,mainFrame:false,localHostID:configuredHost) == nil)
+    precondition(fragmentScript(hostURL,mainFrame:true,localHostID:"bad'payload") == nil)
+    precondition(fragmentScript(URL(string:"https://example.invalid/#host-" + configuredHost),mainFrame:true,localHostID:configuredHost) == nil)
     for invalid in ["about:blank#restart", "about:blank%2523main", "about:blank%23main?command=restart", "about:blank#main/extra", "about:blank#main'", "http://127.0.0.1:8766/#main", "file:///tmp/#main", "gargoyl-view://tools/#main"] {
         precondition(fragmentScript(URL(string:invalid),mainFrame:true) == nil)
         precondition(!allowedNavigation(URL(string:invalid),mainFrame:true))

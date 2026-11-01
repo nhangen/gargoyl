@@ -335,9 +335,10 @@ def native_view(mode):
         except (OSError, ValueError):
             extra["aliases_available"] = False
         extra["local_alias"] = socket.gethostname()
-    return dict(kind="view", view=view, html=render_view(
+    local_host_id = load_pilot_configuration(home=owner_home()).host_id
+    return dict(kind="view", view=view, local_host_id=local_host_id, html=render_view(
         view, evidence, record, journal_available=journal_available,
-        local_host_id=load_pilot_configuration(home=owner_home()).host_id, **extra))
+        local_host_id=local_host_id, **extra))
 
 
 def alias_inventory(home, now):

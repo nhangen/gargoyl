@@ -9,9 +9,10 @@ no Codex task-directory path is compiled into the runtime.
 
 An installer may supply one optional policy at
 `~/Library/Application Support/Gargoyl/pilot.json`. This delivery creates no live
-policy and installs nothing on another host. A policy is installation metadata,
-not machine enrollment, a remote grant or permission to execute a provider action.
-Provisioning another target remains a separate explicitly authorized deployment.
+policy and installs nothing on another host. Installing a nondefault policy provisions an admissible local manual-action
+target and requires separate target-specific authorization. It is not a remote
+grant or permission to execute a provider action; native confirmation and all
+preflight checks still apply. No such target provisioning occurs in this delivery.
 
 ## Validation
 

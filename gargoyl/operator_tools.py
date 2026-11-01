@@ -18,6 +18,7 @@ from gargoyl.manual_restart import (
     owner_home,
     run_restart,
 )
+from gargoyl.pilot_configuration import load_pilot_configuration
 
 
 def main(argv):
@@ -95,8 +96,9 @@ def main(argv):
 
             if not sys.stdin.isatty() or not sys.stdout.isatty():
                 raise ValueError("interactive terminal required")
-            source = str(owner_home() / ".darkbloom/daemon-state.json")
-            executable = str(owner_home() / ".darkbloom/Darkbloom.app/Contents/MacOS/darkbloom")
+            policy = load_pilot_configuration(home=owner_home()).require_local()
+            source, executable = policy.source, policy.provider_executable
+            label = "MBP-26" if policy.hostname == "MBP-2026.local" else policy.hostname
             with ManualJournal(directory) as journal:
                 record = journal.read()
                 if record is None or record["state"] not in {"intent", "unknown"}:
@@ -106,7 +108,7 @@ def main(argv):
                 print("Reconciling records the current read-only observation and permits a later manual")
                 print("restart. It does not prove what the interrupted command did; check that the provider")
                 print("is not left draining with automatic restart disabled. Nothing is invoked or retried.")
-                if input("Type RECONCILE MBP-26 to record: ") != "RECONCILE MBP-26":
+                if input(f"Type RECONCILE {label} to record: ") != f"RECONCILE {label}":
                     print("Not recorded.")
                     return 1
                 result = reconcile_operation(
@@ -149,6 +151,8 @@ def main(argv):
             raise ValueError("interactive terminal required")
         executable, source, uid = args.provider_executable, args.input, args.owner_uid
         target, stamp = installation_preflight(executable, source, uid)
+        policy = load_pilot_configuration(home=owner_home()).require_local(uid)
+        label = "MBP-26" if policy.hostname == "MBP-2026.local" else policy.hostname
 
         def inspect_target():
             if executable_stamp(executable) != stamp:
@@ -156,7 +160,7 @@ def main(argv):
             return observed_target(source, executable, uid)
 
         def confirm(value):
-            print("MANUAL RESTART — current provider of this MBP-26 installation")
+            print(f"MANUAL RESTART — current provider of this {label} installation")
             print("Executable:", executable, "UID:", uid)
             print(
                 "Observed current PID:",
@@ -180,7 +184,7 @@ def main(argv):
             print(
                 "Budget: up to 840s plus CLI cleanup; unknown outcome blocks another attempt. This is not an unattended 30-second repair."
             )
-            return input("Type RESTART MBP-26 to invoke once: ") == "RESTART MBP-26"
+            return input(f"Type RESTART {label} to invoke once: ") == f"RESTART {label}"
 
         stop = _StopFlag()
         previous = {}
