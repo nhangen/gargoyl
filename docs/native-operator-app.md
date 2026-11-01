@@ -76,3 +76,38 @@ provider restart. Native visual/OS permission acceptance must be recorded
 separately. If macOS requests new protected-file/network access, stop that step
 and obtain the specific permission; do not broaden app entitlements, grant Full
 Disk Access, disable protections or move files to evade a denial.
+
+## Native admin views
+
+The Mac app opens **Operator tools**, using the merged operator-console layout,
+sidebar, tool rows and evidence styling. Navigate within the window to **Live
+evidence**, **Traffic history**, **Manual operation**, or **Local details**. Views
+are read-only; Refresh loads the current normalized monitor report and evaluates
+freshness at viewing time. It does not force a source poll. Pages explicitly say
+that they do not refresh automatically. History retains at most 64 samples in
+monitor memory and is lost when the monitor restarts.
+
+Use the native toolbar for Start/Stop monitoring, Refresh, Export…, Operation
+status, and Restart provider…. Export opens the standard Mac Save dialog. Start
+and Stop affect only Gargoyl's configured monitor. Restart provider opens the
+existing exact-target/interruption review followed by Mac owner authentication;
+no page link can invoke it. Progress stays in the native status area and outcome
+in the shared journal. Intent, unknown, and externally reconciled records remain
+blocked by the native app. The operation view cannot reconcile or clear them.
+Actual provider restart is not exercised by UI acceptance tests.
+
+The read-only pages are reconstructed by a fixed same-owner worker from validated
+normalized evidence and, only for Manual operation, the private fixed journal.
+No arbitrary HTML, raw logs or subprocess output is rendered. The WebView has
+JavaScript disabled, nonpersistent storage and a block-all network-resource rule.
+Only finite internal read-only navigation links are intercepted. There is no
+registered external URL scheme, action bridge, browser secret link, pairing step
+or new credential. The public loopback dashboard gains no journal or mutation
+route. A failed acquisition replaces evidence with an unavailable/unknown view;
+old healthy content is not treated as a successful refresh.
+
+Provider version/build command acquisition, status and doctor commands are not
+run by these views. Status/doctor may read configuration or use network/helpers;
+merged browser support does not activate them in the Mac app. Automatic repair,
+provider stop/start, force, clear guard, and provider update remain unavailable.
+This does not affect Gargoyl's existing own-process background recovery.
