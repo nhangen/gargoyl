@@ -6,6 +6,20 @@ import WebKit
 import LocalAuthentication
 import SystemConfiguration
 
+func makeApplicationMenu(_ application: NSApplication) -> NSMenu {
+    let menu = NSMenu(title:"Gargoyl")
+    let hide = menu.addItem(withTitle:"Hide Gargoyl",action:#selector(NSApplication.hide(_:)),keyEquivalent:"h")
+    hide.target = application; hide.keyEquivalentModifierMask = [.command]
+    let others = menu.addItem(withTitle:"Hide Others",action:#selector(NSApplication.hideOtherApplications(_:)),keyEquivalent:"h")
+    others.target = application; others.keyEquivalentModifierMask = [.command,.option]
+    let show = menu.addItem(withTitle:"Show All",action:#selector(NSApplication.unhideAllApplications(_:)),keyEquivalent:"")
+    show.target = application
+    menu.addItem(.separator())
+    let quit = menu.addItem(withTitle:"Quit Gargoyl",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q")
+    quit.target = application
+    return menu
+}
+
 let resourceRules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}},{"trigger":{"url-filter":"^http://127\\.0\\.0\\.1:8766/(report\\.json)?$"},"action":{"type":"ignore-previous-rules"}}]"#
 
 func ownerActive() -> Bool {
@@ -39,10 +53,11 @@ struct CompletionGate {
 }
 struct WindowHistory {
     private(set) var events: [String] = []
-    mutating func record(_ event: String, miniaturized: Bool, visible: Bool, reopeningVisibleWindows: Bool? = nil) {
+    mutating func record(_ event: String, miniaturized: Bool, visible: Bool, reopeningVisibleWindows: Bool? = nil, applicationHidden: Bool? = nil) {
         let sequence = (events.last.flatMap { Int($0.split(separator:" ")[0]) } ?? 0) + 1
         let reopened = reopeningVisibleWindows.map { " hasVisibleWindows=\($0)" } ?? ""
-        events.append("\(sequence) \(event) miniaturized=\(miniaturized) visible=\(visible)\(reopened)")
+        let hidden = applicationHidden.map { " applicationHidden=\($0)" } ?? ""
+        events.append("\(sequence) \(event) miniaturized=\(miniaturized) visible=\(visible)\(reopened)\(hidden)")
         events = Array(events.suffix(16))
     }
 }
@@ -124,7 +139,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         let menu = NSMenu(); let appItem = NSMenuItem(); menu.addItem(appItem)
-        let appMenu = NSMenu(); appMenu.addItem(withTitle: "Quit Gargoyl", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appMenu = makeApplicationMenu(NSApp)
         appItem.submenu = appMenu; NSApp.mainMenu = menu
         let viewItem = NSMenuItem(); menu.addItem(viewItem); let viewMenu = NSMenu(title:"View"); viewItem.submenu = viewMenu
         let fullScreen = viewMenu.addItem(withTitle:"Enter Full Screen",action:#selector(NSWindow.toggleFullScreen(_:)),keyEquivalent:"f"); fullScreen.keyEquivalentModifierMask = [.command,.control]
@@ -282,8 +297,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         return .terminateNow
     }
     func recordWindow(_ event: String, reopeningVisibleWindows: Bool? = nil) {
-        windowHistory.record(event,miniaturized:window.isMiniaturized,visible:window.isVisible,reopeningVisibleWindows:reopeningVisibleWindows)
+        guard window != nil else { return }
+        windowHistory.record(event,miniaturized:window.isMiniaturized,visible:window.isVisible,reopeningVisibleWindows:reopeningVisibleWindows,applicationHidden:NSApp.isHidden)
     }
+    func applicationDidHide(_ notification: Notification) { recordWindow("didHide") }
+    func applicationDidUnhide(_ notification: Notification) { recordWindow("didUnhide") }
     func windowWillMiniaturize(_ notification: Notification) { recordWindow("willMiniaturize") }
     func windowDidMiniaturize(_ notification: Notification) { recordWindow("didMiniaturize") }
     func windowDidDeminiaturize(_ notification: Notification) { recordWindow("didDeminiaturize") }
@@ -314,6 +332,14 @@ final class ResourceFixture: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
 }
 if CommandLine.arguments.contains("--self-test") {
+    let fixtureApplication = NSApplication.shared
+    let appMenu = makeApplicationMenu(fixtureApplication)
+    precondition(appMenu.items[0].action == #selector(NSApplication.hide(_:)))
+    precondition(appMenu.items[0].keyEquivalent == "h" && appMenu.items[0].keyEquivalentModifierMask == [.command])
+    precondition(appMenu.items[1].action == #selector(NSApplication.hideOtherApplications(_:)))
+    precondition(appMenu.items[1].keyEquivalent == "h" && appMenu.items[1].keyEquivalentModifierMask == [.command,.option])
+    precondition(appMenu.items[2].action == #selector(NSApplication.unhideAllApplications(_:)) && appMenu.items[2].keyEquivalent.isEmpty)
+    for item in appMenu.items where !item.isSeparatorItem { precondition(item.target === fixtureApplication) }
     var ruleFinished = false; var ruleAccepted = false
     var compiledRules: WKContentRuleList?
     WKContentRuleListStore.default().compileContentRuleList(forIdentifier:"GargoylFixtureRules",encodedContentRuleList:resourceRules) { list, error in
@@ -355,6 +381,8 @@ if CommandLine.arguments.contains("--self-test") {
     windowEvents.record("didDeminiaturize",miniaturized:false,visible:true)
     precondition(windowEvents.events[0].contains("miniaturized=true"))
     precondition(windowEvents.events[1].contains("miniaturized=false"))
+    var hiddenEvents = WindowHistory(); hiddenEvents.record("didHide",miniaturized:false,visible:true,applicationHidden:true)
+    precondition(hiddenEvents.events[0].contains("applicationHidden=true"))
     for _ in 0..<30 { windowEvents.record("reopen",miniaturized:false,visible:true,reopeningVisibleWindows:true) }
     precondition(windowEvents.events.count == 16 && windowEvents.events.last!.hasPrefix("32 "))
     print("Native navigation and authorization-state fixtures passed; no OS authentication requested.")
