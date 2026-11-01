@@ -40,3 +40,8 @@ owner-local daemon-state file, keeps bounded memory history, displays recent fre
 counter changes, and offers foreground start/stop/status. Counter changes do not
 establish earnings or reliably detect every reset. Repairs remain disabled. No host
 enrollment or persistent service is enabled by installation.
+
+The [native Mac operator application](docs/native-operator-app.md) provides a
+graphical console, monitor controls, normalized export and a manual restart
+review with Mac owner confirmation. The HTTP dashboard stays read-only;
+automatic provider repair remains disabled.
