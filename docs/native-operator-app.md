@@ -112,15 +112,20 @@ merged browser support does not activate them in the Mac app. Automatic repair,
 provider stop/start, force, clear guard, and provider update remain unavailable.
 This does not affect Gargoyl's existing own-process background recovery.
 
-Native in-page links use absolute `about:blank#…` fragments because WebKit's
-opaque document base escapes relative `#…` links as part of the path. These links
-only scroll the current document; they grant no action or network access. The
-compiled regression verifies a rendered document title and actual anchor URL
-under the production isolation policy, plus delivery/completion of a 23KB view
-through the real worker using a controlled fake executable on the active pilot
-owner account. Help → Window diagnostics also shows bounded in-memory loading
-phase, rule readiness and WebView dimensions; document-title presence alone is
-not a visual acceptance verdict.
+Native in-page links name four fixed document anchors. WebKit reports these
+opaque-document navigations as `about:blank%23…`; absolute URLs alone did not
+restore scrolling. The native delegate rejects navigation and uses a fixed DOM
+scroll command for an exact allowlist of main-frame clicked links. URL/page text
+never becomes script, unknown links remain blocked, and missing elements or DOM
+errors have no navigation fallback. Page scripts remain disabled; this native
+scroll operation grants no action, file or network access.
+
+The compiled regression activates a real anchor and asserts nonzero scroll under
+the production scroll policy, in addition to a rendered document title and actual
+anchor URL. It also verifies delivery/completion of a 23KB view through the real
+worker using a controlled fake executable on the active pilot account. Help →
+Window diagnostics shows bounded in-memory loading phase, rule readiness and
+WebView dimensions; document-title presence alone is not a visual verdict.
 
 All six native actions remain visible in two compact rows at the 390px minimum
 window width. Narrow native views retain the theme but compact the navigation

@@ -27,6 +27,25 @@ func viewDestination(_ url: URL?, mainFrame: Bool) -> String? {
     return nativeViews.first { url.absoluteString == "gargoyl-view://\($0)/" }
 }
 
+let fragmentScripts = [
+    "main":"document.getElementById('main')?.scrollIntoView()",
+    "fleet-overview":"document.getElementById('fleet-overview')?.scrollIntoView()",
+    "needs-attention":"document.getElementById('needs-attention')?.scrollIntoView()",
+    "host-00000000-0000-4000-8000-000000000001":"document.getElementById('host-00000000-0000-4000-8000-000000000001')?.scrollIntoView()"
+]
+func fragmentScript(_ url: URL?, mainFrame: Bool) -> String? {
+    guard mainFrame, let value = url?.absoluteString else { return nil }
+    // Exact strings only: no decoding or interpolation of supplied URL/page text.
+    return fragmentScripts.first { value == "about:blank#" + $0.key || value == "about:blank%23" + $0.key }?.value
+}
+func scrollNativeFragment(_ action: WKNavigationAction, in web: WKWebView, cancel: () -> Void) -> Bool {
+    guard action.navigationType == .linkActivated,
+          let script = fragmentScript(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) else { return false }
+    cancel()
+    web.evaluateJavaScript(script,completionHandler:nil)
+    return true
+}
+
 func ownerActive() -> Bool {
     var uid: uid_t = 0; var gid: gid_t = 0
     return SCDynamicStoreCopyConsoleUser(nil, &uid, &gid) != nil && uid == 501 && geteuid() == 501
@@ -34,7 +53,7 @@ func ownerActive() -> Bool {
 
 func allowedNavigation(_ url: URL?, mainFrame: Bool) -> Bool {
     guard mainFrame, let url = url else { return false }
-    return url.absoluteString == "about:blank" || (url.scheme == "about" && url.path == "blank" && url.fragment != nil && url.query == nil && url.host == nil)
+    return url.absoluteString == "about:blank"
 }
 struct ViewSelection {
     private(set) var selected = "tools"
@@ -381,6 +400,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if action.navigationType == .linkActivated, let view = viewDestination(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) {
             decisionHandler(.cancel); displayView(view); return
         }
+        if scrollNativeFragment(action,in:webView,cancel:{ decisionHandler(.cancel) }) { return }
         guard allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) else { decisionHandler(.cancel); return }
         decisionHandler(.allow)
     }
@@ -391,8 +411,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
 #if GARGOYL_NATIVE_TESTS
 final class ResourceFixture: NSObject, WKNavigationDelegate {
     var finished = false
+    var fragmentRequested = false
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        print("fixture navigation: \(action.request.url?.absoluteString ?? "nil") main=\(action.targetFrame?.isMainFrame == true)")
+        if action.request.url?.absoluteString != "about:blank" { fragmentRequested = true }
+        print("fixture navigation: \(action.request.url?.absoluteString ?? "nil") main=\(action.targetFrame?.isMainFrame == true) type=\(action.navigationType.rawValue) matched=\(fragmentScript(action.request.url,mainFrame:true) != nil)")
+        if scrollNativeFragment(action,in:webView,cancel:{ decisionHandler(.cancel) }) { return }
         decisionHandler(allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) ? .allow : .cancel)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
@@ -424,8 +447,8 @@ if CommandLine.arguments.contains("--self-test") {
         let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.userContentController.add(compiledRules!)
-        let fixture = ResourceFixture(); let page = WKWebView(frame:.zero,configuration:configuration); page.navigationDelegate = fixture
-        page.loadHTMLString("<html><head><title>Native admin fixture</title></head><body><h1 id='main'>Rendered admin</h1><a href='about:blank#main'>Jump</a><img src='\(endpoint)/image'><iframe src='\(endpoint)/frame'></iframe><link rel='stylesheet' href='\(endpoint)/style'></body></html>",baseURL:URL(string:"about:blank")!)
+        let fixture = ResourceFixture(); let page = WKWebView(frame:NSRect(x:0,y:0,width:390,height:600),configuration:configuration); page.navigationDelegate = fixture
+        page.loadHTMLString("<html><head><title>Native admin fixture</title></head><body><a href='about:blank#main'>Jump</a><h1 id='main' style='margin-top:1000px'>Rendered admin</h1><img src='\(endpoint)/image'><iframe src='\(endpoint)/frame'></iframe><link rel='stylesheet' href='\(endpoint)/style'></body></html>",baseURL:URL(string:"about:blank")!)
         let end = Date().addingTimeInterval(5)
         while !fixture.finished && Date() < end { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
         print("fixture finished=\(fixture.finished) title=\(page.title ?? "nil")")
@@ -436,7 +459,21 @@ if CommandLine.arguments.contains("--self-test") {
         let inspectionLimit = Date().addingTimeInterval(3)
         while !inspected && Date() < inspectionLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
         precondition(anchor == "about:blank#main")
-        precondition(allowedNavigation(URL(string:anchor!),mainFrame:true))
+        precondition(fragmentScript(URL(string:anchor!),mainFrame:true) != nil)
+        page.evaluateJavaScript("document.querySelector('a').click()",completionHandler:nil)
+        let clickedLimit = Date().addingTimeInterval(1)
+        while !fixture.fragmentRequested && Date() < clickedLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        var scrollPosition = 0.0
+        let measureLimit = Date().addingTimeInterval(2)
+        while scrollPosition <= 0 && Date() < measureLimit {
+            var measured = false
+            page.evaluateJavaScript("document.scrollingElement.scrollTop") { value, _ in scrollPosition = (value as? NSNumber)?.doubleValue ?? 0; measured = true }
+            while !measured && Date() < measureLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+            if scrollPosition <= 0 { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        }
+        print("actual anchor scroll=\(scrollPosition)"); fflush(stdout)
+        precondition(scrollPosition > 0)
+
     }
     if ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] != nil {
         var received = false; var ended = false
@@ -448,7 +485,15 @@ if CommandLine.arguments.contains("--self-test") {
         withExtendedLifetime(worker) {}
     }
     precondition(allowedNavigation(URL(string:"about:blank"),mainFrame:true))
-    precondition(allowedNavigation(URL(string:"about:blank#main"),mainFrame:true))
+    precondition(!allowedNavigation(URL(string:"about:blank#main"),mainFrame:true))
+    for key in fragmentScripts.keys {
+        for prefix in ["about:blank#", "about:blank%23"] { precondition(fragmentScript(URL(string:prefix + key),mainFrame:true) == fragmentScripts[key]) }
+        precondition(fragmentScript(URL(string:"about:blank#" + key),mainFrame:false) == nil)
+    }
+    for invalid in ["about:blank#restart", "about:blank%2523main", "about:blank%23main?command=restart", "about:blank#main/extra", "about:blank#main'", "http://127.0.0.1:8766/#main", "file:///tmp/#main", "gargoyl-view://tools/#main"] {
+        precondition(fragmentScript(URL(string:invalid),mainFrame:true) == nil)
+        precondition(!allowedNavigation(URL(string:invalid),mainFrame:true))
+    }
     for view in nativeViews { precondition(viewDestination(URL(string:"gargoyl-view://\(view)/"),mainFrame:true) == view) }
     for value in ["gargoyl-view://restart/", "gargoyl-view://tools/?action=restart", "gargoyl-view://user@tools/", "gargoyl-view://tools:80/", "gargoyl-view://tools/extra", "gargoyl-view://%74ools/", "gargoyl-view://tools/#restart", "https://example.com", "file:///tmp/test", "http://127.0.0.1:8766/", "data:text/html,test"] {
         precondition(viewDestination(URL(string:value),mainFrame:true) == nil)
