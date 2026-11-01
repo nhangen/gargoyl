@@ -249,6 +249,7 @@ class PilotConfigurationTests(unittest.TestCase):
     def test_cli_reconciliation_also_requires_the_configured_target_phrase(self):
         import contextlib
         import io
+
         from test_manual_restart import NOW, TARGET
 
         from gargoyl.manual_restart import ManualJournal, read_operation
