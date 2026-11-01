@@ -73,7 +73,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None):
         html = html.replace('<main id="main">', '<main id="main">' + notice, 1)
         if len(html.encode()) > 500000:
             raise ValueError("view limit")
-        return html
+        return html.replace('href="#', 'href="about:blank#')
     body = '<h1>' + LABELS[VIEWS.index(view)] + '</h1>'
     body += ('<p>Native Mac app · automatic repair is off. Use Refresh to load current evidence '
              'and re-evaluate freshness. Views do not refresh automatically.</p>')
@@ -150,4 +150,4 @@ def render_view(view, evidence, record, *, journal_available=True, now=None):
     html = page_start(LABELS[VIEWS.index(view)] + ' · Gargoyl', extra_nav=nav(view), badge="Native operator console") + body + PAGE_END
     if len(html.encode()) > 500000:
         raise ValueError("view limit")
-    return html
+    return html.replace('href="#', 'href="about:blank#')

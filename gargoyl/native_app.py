@@ -86,8 +86,12 @@ final class Worker {
     let finished: (Worker) -> Void
     init(mode: String, event: @escaping ([String: Any]) -> Void, finished: @escaping (Worker) -> Void) throws {
         self.event = event; self.finished = finished
+        var pythonPath = Bundle.main.object(forInfoDictionaryKey: "GargoylPython") as? String
+        #if GARGOYL_NATIVE_TESTS
+        pythonPath = ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] ?? pythonPath
+        #endif
         guard ownerActive(), (["restart", "status", "export", "start-monitor", "stop-monitor"] + nativeViews.map { "view-" + $0 }).contains(mode),
-              let path = Bundle.main.object(forInfoDictionaryKey: "GargoylPython") as? String,
+              let path = pythonPath,
               path.hasPrefix(NSHomeDirectory() + "/"), path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
         else { throw NSError(domain: "Gargoyl", code: 1) }
         let executable = URL(fileURLWithPath: path)
@@ -136,7 +140,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var window: NSWindow!
     var windowHistory = WindowHistory()
     var web: WKWebView!
-    let status = NSTextField(wrappingLabelWithString: "Read-only evidence. Provider restart requires Mac confirmation; automatic repair is off.")
+    let status = NSTextField(wrappingLabelWithString: "Loading read-only operator console… Automatic repair is off.")
     var restartButton: NSButton!
     var workers: [Worker] = []
     var restartWorker: Worker?
@@ -150,6 +154,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var consentSheet: NSWindow?
     var approvalTimer: Timer?
     var exportData: Data?
+    var viewPhase = "not started"
     var previewOnly: Bool { Bundle.main.object(forInfoDictionaryKey: "GargoylReadOnlyPreview") as? Bool ?? true }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -194,10 +199,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             status.widthAnchor.constraint(equalTo:stack.widthAnchor),web.widthAnchor.constraint(equalTo:stack.widthAnchor),web.heightAnchor.constraint(greaterThanOrEqualToConstant:300)
         ])
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+        viewPhase = "compiling isolation rules"
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier:"GargoylLoopbackOnly",encodedContentRuleList:resourceRules) { [weak self] list, _ in
             DispatchQueue.main.async {
                 guard let self = self, let list = list else { self?.show("Dashboard network isolation unavailable. Display remains blocked."); return }
-                self.web.configuration.userContentController.add(list); self.webReady = true; self.refresh()
+                self.web.configuration.userContentController.add(list); self.webReady = true; self.viewPhase = "rules ready"; self.refresh()
             }
         }
     }
@@ -206,6 +212,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         guard webReady, viewSelection.select(view) else { return }
         // One read-only worker at a time. A changed selection is loaded after it exits.
         guard viewWorker == nil else { return }
+        viewPhase = "loading private view"
         let generation = viewSelection.generation
         var delivered = false
         do {
@@ -213,17 +220,19 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                 guard let self = self, self.viewSelection.accepts(generation),
                       value["kind"] as? String == "view", value["view"] as? String == view,
                       let html = value["html"] as? String, html.utf8.count <= 500000 else { return }
-                delivered = true
+                delivered = true; self.viewPhase = "received private HTML"
+                if self.restartWorker == nil { self.show("Read-only views. Provider restart requires Mac confirmation; automatic repair is off.") }
                 self.web.loadHTMLString(html,baseURL:URL(string:"about:blank"))
             },finished:{ [weak self] completed in
                 guard let self = self, self.viewWorker === completed else { return }
-                self.viewWorker = nil
+                self.viewWorker = nil; self.viewPhase = delivered ? "worker completed" : "worker completed without HTML"
                 if !self.viewSelection.accepts(generation) { self.displayView(self.viewSelection.selected); return }
                 if !delivered || completed.process.terminationStatus != 0 {
                     self.web.loadHTMLString("<html><body><h1>View unavailable</h1><p>Current evidence could not be validated. Health and operation outcome are unknown. Use Refresh to check again. No provider action was performed.</p></body></html>",baseURL:URL(string:"about:blank"))
                 }
             })
         } catch {
+            viewPhase = "worker launch unavailable"
             web.loadHTMLString("<html><body><h1>View unavailable</h1><p>Active Mac owner or installed worker unavailable. No provider action was performed.</p></body></html>",baseURL:URL(string:"about:blank"))
         }
     }
@@ -350,7 +359,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     func windowWillClose(_ notification: Notification) { recordWindow("willClose") }
     @objc func windowDiagnostics() {
         let alert = NSAlert(); alert.messageText = "Native window diagnostics"
-        alert.informativeText = "Window: Gargoyl. Minimize enabled: \(window.styleMask.contains(.miniaturizable)). Current miniaturized: \(window.isMiniaturized).\n\n" + windowHistory.events.joined(separator:"\n") + "\n\nEvents are bounded in-memory UI diagnostics only. Closing or minimizing this window does not stop monitoring or Darkbloom."
+        alert.informativeText = "Window: Gargoyl. Minimize enabled: \(window.styleMask.contains(.miniaturizable)). Current miniaturized: \(window.isMiniaturized).\n\n" + windowHistory.events.joined(separator:"\n") + "\n\nRead-only view: \(viewPhase). Rules ready: \(webReady). View: \(viewSelection.selected). Generation: \(viewSelection.generation). Worker active: \(viewWorker != nil). Web size: \(Int(web.frame.width)) × \(Int(web.frame.height)). Document loaded: \(web.title != nil).\n\nEvents are bounded in-memory UI diagnostics only. Closing or minimizing this window does not stop monitoring or Darkbloom."
         alert.addButton(withTitle:"Done"); alert.beginSheetModal(for:window)
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -374,6 +383,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
 #if GARGOYL_NATIVE_TESTS
 final class ResourceFixture: NSObject, WKNavigationDelegate {
     var finished = false
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        print("fixture navigation: \(action.request.url?.absoluteString ?? "nil") main=\(action.targetFrame?.isMainFrame == true)")
+        decisionHandler(allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) ? .allow : .cancel)
+    }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
 }
 if CommandLine.arguments.contains("--self-test") {
@@ -399,10 +412,27 @@ if CommandLine.arguments.contains("--self-test") {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.userContentController.add(compiledRules!)
         let fixture = ResourceFixture(); let page = WKWebView(frame:.zero,configuration:configuration); page.navigationDelegate = fixture
-        page.loadHTMLString("<html><img src='\(endpoint)/image'><iframe src='\(endpoint)/frame'></iframe><link rel='stylesheet' href='\(endpoint)/style'></html>",baseURL:URL(string:"http://127.0.0.1:8766/")!)
+        page.loadHTMLString("<html><head><title>Native admin fixture</title></head><body><h1 id='main'>Rendered admin</h1><a href='about:blank#main'>Jump</a><img src='\(endpoint)/image'><iframe src='\(endpoint)/frame'></iframe><link rel='stylesheet' href='\(endpoint)/style'></body></html>",baseURL:URL(string:"about:blank")!)
         let end = Date().addingTimeInterval(5)
         while !fixture.finished && Date() < end { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
-        precondition(fixture.finished)
+        print("fixture finished=\(fixture.finished) title=\(page.title ?? "nil")")
+        fflush(stdout)
+        precondition(fixture.finished && page.title == "Native admin fixture")
+        var anchor: String?; var inspected = false
+        page.evaluateJavaScript("document.querySelector('a').href") { value, _ in anchor = value as? String; inspected = true }
+        let inspectionLimit = Date().addingTimeInterval(3)
+        while !inspected && Date() < inspectionLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        precondition(anchor == "about:blank#main")
+        precondition(allowedNavigation(URL(string:anchor!),mainFrame:true))
+    }
+    if ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] != nil {
+        var received = false; var ended = false
+        let worker = try! Worker(mode:"view-tools",event:{ value in received = value["kind"] as? String == "view" },finished:{ _ in ended = true })
+        let limit = Date().addingTimeInterval(5)
+        while (!received || !ended) && Date() < limit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        print("worker received=\(received) finished=\(ended)"); fflush(stdout)
+        precondition(received && ended)
+        withExtendedLifetime(worker) {}
     }
     precondition(allowedNavigation(URL(string:"about:blank"),mainFrame:true))
     precondition(allowedNavigation(URL(string:"about:blank#main"),mainFrame:true))
