@@ -64,6 +64,9 @@ current. Empty valid sources remain unknown. Repeated values are cumulative
 observations, not usage deltas, earnings, daemon liveness or proof of inference.
 Detailed evidence is evaluated against the current clock on every browser request.
 
+`clock_skew_seconds` stays unknown in this monitor: no independent reference
+time is configured. A fresh collector timestamp does not prove clock agreement.
+
 The last 64 normalized samples remain in process memory for recent traffic
 inspection. Nothing is persisted to disk or delivered to another service; no keys
 are generated or loaded. Restart clears history. This local runtime deliberately
