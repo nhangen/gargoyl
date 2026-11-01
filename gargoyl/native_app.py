@@ -69,13 +69,21 @@ final class LoginFleetCredentialStore {
          delete:@escaping (CFDictionary)->OSStatus = { SecItemDelete($0) }) {
         self.open=open; self.copy=copy; self.add=add; self.update=update; self.delete=delete
     }
+    static func trustedLoginMetadata(fileOwner:Int, mode:Int, regular:Bool, parentOwner:Int, parentMode:Int, uid:Int)->Bool {
+        // The OS-managed file is encrypted; read bits are not a plaintext-secret
+        // boundary. Never chmod it. Refuse untrusted ownership or writable paths.
+        return regular && fileOwner == uid && parentOwner == uid && mode & 0o022 == 0 && parentMode & 0o022 == 0
+    }
     static func openLogin()->(OSStatus,AnyObject?) {
         let path=NSHomeDirectory()+"/Library/Keychains/login.keychain-db"
         let url=URL(fileURLWithPath:path)
         guard url.resolvingSymlinksInPath().path == path,
               let attrs=try? FileManager.default.attributesOfItem(atPath:path),
-              (attrs[.ownerAccountID] as? NSNumber)?.intValue == Int(getuid()),
-              let mode=attrs[.posixPermissions] as? NSNumber, mode.intValue & 0o077 == 0 else { return (errSecNotAvailable,nil) }
+              let parent=try? FileManager.default.attributesOfItem(atPath:url.deletingLastPathComponent().path),
+              let owner=attrs[.ownerAccountID] as? NSNumber, let mode=attrs[.posixPermissions] as? NSNumber,
+              let parentOwner=parent[.ownerAccountID] as? NSNumber, let parentMode=parent[.posixPermissions] as? NSNumber,
+              Self.trustedLoginMetadata(fileOwner:owner.intValue,mode:mode.intValue,regular:attrs[.type] as? FileAttributeType == .typeRegular,parentOwner:parentOwner.intValue,parentMode:parentMode.intValue,uid:Int(getuid()))
+        else { return (errSecNotAvailable,nil) }
         var keychain:SecKeychain?
         let status=SecKeychainOpen(path,&keychain)
         return (status,keychain)
@@ -1024,6 +1032,10 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(credentialGate.take(credentialEvent,mode:"fleet-session-remember",remember:true,owner:false,generation:1,current:1) == nil)
     precondition(credentialGate.take(credentialEvent,mode:"fleet-session-remember",remember:true,owner:true,generation:1,current:1) == fixtureToken)
     precondition(credentialGate.take(credentialEvent,mode:"fleet-session-remember",remember:true,owner:true,generation:1,current:1) == nil)
+    precondition(LoginFleetCredentialStore.trustedLoginMetadata(fileOwner:501,mode:0o644,regular:true,parentOwner:501,parentMode:0o700,uid:501))
+    precondition(!LoginFleetCredentialStore.trustedLoginMetadata(fileOwner:501,mode:0o664,regular:true,parentOwner:501,parentMode:0o700,uid:501))
+    precondition(!LoginFleetCredentialStore.trustedLoginMetadata(fileOwner:502,mode:0o600,regular:true,parentOwner:501,parentMode:0o700,uid:501))
+    precondition(!LoginFleetCredentialStore.trustedLoginMetadata(fileOwner:501,mode:0o600,regular:true,parentOwner:501,parentMode:0o777,uid:501))
     let loginFixture=NSObject(); let itemFixture=NSObject()
     var adds=0, updates=0, deletes=0, queries=0
     let fakeKeychain=LoginFleetCredentialStore(open:{ (errSecSuccess,loginFixture) },copy:{ query in
