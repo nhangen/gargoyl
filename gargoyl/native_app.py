@@ -949,7 +949,9 @@ if CommandLine.arguments.contains("--self-test") {
         let fixture = ResourceFixture(); let page = WKWebView(frame:NSRect(x:0,y:0,width:390,height:600),configuration:configuration); page.navigationDelegate = fixture
         page.loadHTMLString("<html><head><title>Native admin fixture</title></head><body><a href='about:blank#main'>Jump</a><h1 id='main' style='margin-top:1000px'>Rendered admin</h1><img src='\(endpoint)/image'><iframe src='\(endpoint)/frame'></iframe><link rel='stylesheet' href='\(endpoint)/style'></body></html>",baseURL:URL(string:"about:blank")!)
         let end = Date().addingTimeInterval(5)
-        while !fixture.finished && Date() < end { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        // WebKit can publish didFinish before its title property updates.
+        // Wait for the actual main document, not only the callback.
+        while (!fixture.finished || page.title != "Native admin fixture") && Date() < end { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
         print("fixture finished=\(fixture.finished) title=\(page.title ?? "nil")")
         fflush(stdout)
         precondition(fixture.finished && page.title == "Native admin fixture")

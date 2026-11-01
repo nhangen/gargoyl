@@ -58,7 +58,9 @@ Python 3.11+; create and activate a virtual environment with
 `python -m pip install -e ".[dev]"`, then run
 `python -m ruff check .` and `python tools/run_tests.py discover -s tests -v`
 (the runner fails on ResourceWarning, including otherwise ignored finalizer warnings).
-PRs and pushes to main run both checks on Python 3.11 and 3.12 in GitHub Actions. See [the v1 contract](docs/contract.md)
+PRs and pushes to main run these checks on Python 3.11–3.14 in GitHub Actions,
+plus the full macOS suite (including compiled Swift fixtures) and a dependency
+vulnerability audit. The protected release-artifact check depends on every gate. See [the v1 contract](docs/contract.md)
 for schema, privacy rules, collector/dashboard integration and security boundaries.
 For a runnable single-host collector and live loopback dashboard, see
 [continuous local monitoring](docs/local-monitor.md). It polls an explicitly supplied
