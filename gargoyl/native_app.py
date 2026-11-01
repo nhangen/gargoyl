@@ -330,7 +330,7 @@ final class Worker {
     // No terminate/interrupt method: closing the app never cancels accepted work.
 }
 
-final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
+final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, NSMenuItemValidation {
     var window: NSWindow!
     var windowHistory = WindowHistory()
     var web: WKWebView!
@@ -379,6 +379,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var fleetAuthTimer: Timer?
     var fleetRefreshTimer: Timer?
     var connectFleetButton: NSButton!
+    var accountMenu: NSPopUpButton?
+    var accountTitleTimer: Timer?
     var disconnectFleetButton: NSButton!
     var viewPhase = "not started"
     #if GARGOYL_NATIVE_TESTS
@@ -411,34 +413,60 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.minSize = NSSize(width:390,height:600); window.delegate = self
         let content = NSView(); window.contentView = content
-        let bar = NSStackView(); bar.orientation = .vertical; bar.alignment = .leading; bar.spacing = 6
-        let actions: [(String, Selector)] = [("Connect fleet…",#selector(connectFleet)),("Disconnect fleet",#selector(disconnectFleet)),("Refresh",#selector(refresh)),("Start local monitor",#selector(startMonitor)),("Stop local monitor",#selector(stopMonitor)),("Export local…",#selector(exportReport)),("Operation status",#selector(operationStatus)),("Restart local provider…",#selector(restartProvider)),("Edit local aliases…",#selector(editFleetAliases)),("Forget saved sign-in…",#selector(forgetSavedFleet)),("Resume saved sign-in",#selector(resumeSavedFleet))]
-        let actionRows = (0..<4).map { _ in NSStackView() }
-        for row in actionRows { row.orientation = .horizontal; row.spacing = 8; bar.addArrangedSubview(row) }
-        for (index, action) in actions.enumerated() {
-            let (title, selector) = action
-            let button = NSButton(title:title,target:self,action:selector); button.bezelStyle = .rounded
-            if selector == #selector(restartProvider) { restartButton = button }
-            if selector == #selector(connectFleet) { connectFleetButton = button }
-            if selector == #selector(disconnectFleet) { disconnectFleetButton = button; button.isEnabled = false }
-            if selector == #selector(forgetSavedFleet) { forgetFleetButton=button; button.isEnabled = !previewOnly && self.readRemember() }
-            if previewOnly && [#selector(startMonitor),#selector(stopMonitor),#selector(restartProvider),#selector(connectFleet),#selector(editFleetAliases),#selector(forgetSavedFleet),#selector(resumeSavedFleet)].contains(selector) { button.isEnabled = false }
-            actionRows[index / 3].addArrangedSubview(button)
+        // One toolbar row. Account actions live in one pull-down menu whose items mirror the
+        // enabled state of hidden state-holder buttons (validateMenuItem), so the existing
+        // connection logic that toggles those buttons is unchanged. Local actions keep "local".
+        let bar = NSStackView(); bar.orientation = .horizontal; bar.alignment = .centerY; bar.spacing = 8
+        connectFleetButton = NSButton(title:"Connect fleet…",target:self,action:#selector(connectFleet))
+        disconnectFleetButton = NSButton(title:"Disconnect fleet",target:self,action:#selector(disconnectFleet)); disconnectFleetButton.isEnabled = false
+        forgetFleetButton = NSButton(title:"Forget saved sign-in…",target:self,action:#selector(forgetSavedFleet)); forgetFleetButton.isEnabled = !previewOnly && self.readRemember()
+        if previewOnly { connectFleetButton.isEnabled = false }
+        let account = NSPopUpButton(frame:.zero,pullsDown:true); account.bezelStyle = .rounded
+        account.addItem(withTitle:"Account · not connected"); accountMenu = account
+        let header = NSMenuItem(title:"Darkbloom account · read-only",action:nil,keyEquivalent:""); header.isEnabled = false
+        account.menu?.addItem(header)
+        let accountItems: [(String, Selector)?] = [("Connect fleet…",#selector(connectFleet)),("Resume saved sign-in",#selector(resumeSavedFleet)),("Disconnect fleet",#selector(disconnectFleet)),nil,("Forget saved sign-in…",#selector(forgetSavedFleet))]
+        for entry in accountItems {
+            guard let entry = entry else { account.menu?.addItem(NSMenuItem.separator()); continue }
+            let (title, selector) = entry
+            let item = NSMenuItem(title:title,action:selector,keyEquivalent:""); item.target = self; account.menu?.addItem(item)
         }
+        account.menu?.autoenablesItems = true
+        bar.addView(account,in:.leading)
+        let actions: [(String, Selector)] = [("Local aliases…",#selector(editFleetAliases)),("Refresh",#selector(refresh)),("Start local monitor",#selector(startMonitor)),("Stop local monitor",#selector(stopMonitor)),("Export local report…",#selector(exportReport))]
+        for (title, selector) in actions {
+            let button = NSButton(title:title,target:self,action:selector); button.bezelStyle = .rounded
+            if previewOnly && [#selector(startMonitor),#selector(stopMonitor),#selector(editFleetAliases)].contains(selector) { button.isEnabled = false }
+            bar.addView(button,in:.leading)
+        }
+        // Manual operation sits apart at the trailing edge; its confirmation sheet does the safety work.
+        let statusButton = NSButton(title:"Operation status",target:self,action:#selector(operationStatus)); statusButton.bezelStyle = .rounded
+        bar.addView(statusButton,in:.trailing)
+        restartButton = NSButton(title:"Restart local provider…",target:self,action:#selector(restartProvider)); restartButton.bezelStyle = .rounded
+        if previewOnly { restartButton.isEnabled = false }
+        bar.addView(restartButton,in:.trailing)
+        bar.setHuggingPriority(.defaultLow,for:.horizontal)
         let config = WKWebViewConfiguration(); config.defaultWebpagePreferences.allowsContentJavaScript = false
         config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self; web.uiDelegate = self
-        let scroll = NSScrollView(); scroll.hasHorizontalScroller = true; scroll.documentView = bar
-        bar.frame = NSRect(x:0,y:0,width:bar.fittingSize.width,height:132)
+        // Narrow windows scroll the row sideways; a visible (legacy) scroller shows that more exists.
+        let scroll = NSScrollView(); scroll.hasHorizontalScroller = true; scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .legacy; scroll.drawsBackground = false
+        bar.translatesAutoresizingMaskIntoConstraints = false; scroll.documentView = bar
+        NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo:scroll.contentView.leadingAnchor),bar.topAnchor.constraint(equalTo:scroll.contentView.topAnchor),
+            bar.heightAnchor.constraint(equalToConstant:34),bar.widthAnchor.constraint(greaterThanOrEqualTo:scroll.contentView.widthAnchor)
+        ])
         let stack = NSStackView(views:[scroll,fleetStatus,status,web]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(stack)
         scroll.translatesAutoresizingMaskIntoConstraints = false; status.translatesAutoresizingMaskIntoConstraints = false; fleetStatus.translatesAutoresizingMaskIntoConstraints = false; web.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo:content.leadingAnchor,constant:10),stack.trailingAnchor.constraint(equalTo:content.trailingAnchor,constant:-10),stack.topAnchor.constraint(equalTo:content.topAnchor,constant:10),stack.bottomAnchor.constraint(equalTo:content.bottomAnchor,constant:-10),
-            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:138),
+            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:50),
             fleetStatus.widthAnchor.constraint(equalTo:stack.widthAnchor),status.widthAnchor.constraint(equalTo:stack.widthAnchor),web.widthAnchor.constraint(equalTo:stack.widthAnchor),web.heightAnchor.constraint(greaterThanOrEqualToConstant:300)
         ])
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+        accountTitleTimer = Timer.scheduledTimer(withTimeInterval:1,repeats:true) { [weak self] _ in self?.syncAccountTitle() }
         fleetRefreshTimer = Timer.scheduledTimer(withTimeInterval:30,repeats:true) { [weak self] _ in
             guard let self = self, self.viewSelection.selected.hasPrefix("fleet"), self.window.isVisible, !NSApp.isHidden else { return }
             self.refresh()
@@ -450,6 +478,22 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                 self.web.configuration.userContentController.add(list); self.webReady = true; self.viewPhase = "rules ready"; self.refresh(); self.restoreSavedFleetIfEnabled()
             }
         }
+    }
+    // Account menu items mirror the hidden state-holder buttons the connection logic maintains.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(connectFleet): return connectFleetButton?.isEnabled ?? false
+        case #selector(disconnectFleet): return disconnectFleetButton?.isEnabled ?? false
+        case #selector(forgetSavedFleet): return forgetFleetButton.isEnabled
+        case #selector(resumeSavedFleet): return !previewOnly && !keychainBusy && readRemember() && (connectFleetButton?.isEnabled ?? false)
+        default: return true
+        }
+    }
+    // The Account title says whether an account session is open, so the state never hides in the menu.
+    func syncAccountTitle() {
+        // Disconnect is also enabled while sign-in is pending, so this never claims a confirmed session.
+        let title = (disconnectFleetButton?.isEnabled ?? false) ? "Account · connecting or connected" : "Account · not connected"
+        if let item = accountMenu?.item(at:0), item.title != title { item.title = title }
     }
     @objc func refresh() { displayView(viewSelection.selected) }
     func displayView(_ view: String) {

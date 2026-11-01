@@ -9,7 +9,7 @@ contains fixture fleet entries.
 
 ## Graphical operation
 
-Choose **Connect fleet…**, review the read-only scope and optional Remember
+Choose **Account → Connect fleet…**, review the read-only scope and optional Remember
 choice, then continue. Copy the private native sheet's one-time code and open the
 official account page. Approve **Authorize Desktop** there. No terminal or secret
 URL is part of normal operation. The grant can view Macs, summary and earnings;
@@ -22,7 +22,7 @@ bounded backoff for transport errors. Refresh updates the visible view. Missing,
 future, disconnected, stale or partial evidence never establishes healthy or zero
 providers. Low traffic and coordinator warnings never trigger repair.
 
-**Edit local aliases…** lets you choose an actual provider ID and save a friendly
+**Local aliases…** lets you choose an actual provider ID and save a friendly
 name on this Mac. Source labels and IDs remain visible. A hardware model is
 explicitly a hardware label; a missing name falls back to the actual ID. Aliases
 never alter public identity matching, action targets, provider settings or source
@@ -73,7 +73,7 @@ restore extends it. Memory-only sessions remain bounded to 24 hours. Opted-in an
 restored readers stop at their original grant limit, without another device grant.
 
 Quitting with a saved sign-in permits graphical resume on reopen.
-**Resume saved sign-in** retries a locked/denied Keychain read without creating a
+**Account → Resume saved sign-in** retries a locked/denied Keychain read without creating a
 new grant. A bounded read-only wait handles the previous reader still exiting;
 it never retries device authorization. Denied/locked storage or network errors
 never fall back to plaintext or erase a valid saved credential. Expired or
@@ -81,7 +81,7 @@ server-rejected sessions stop; cleanup targets only their matching saved record,
 so a newer replacement is not deleted.
 
 **Disconnect fleet** ends memory collection. It does not mean saved sign-in was
-forgotten. **Forget saved sign-in…** removes only Gargoyl's selected login Keychain
+forgotten. **Account → Forget saved sign-in…** removes only Gargoyl's selected login Keychain
 item after native confirmation; the current memory session may continue until
 Disconnect or Quit. Local deletion does not claim remote grant revocation.
 

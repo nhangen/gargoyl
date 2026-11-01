@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your fleet · Gargoyl (Mac app mock)</title>
+  <link rel="stylesheet" href="app.css">
+  <style>
+    /* Mock-only: native window chrome (NSToolbar + status strip) around the web view. */
+    body { background: #6b6f6d; padding: 24px; }
+    @media (prefers-color-scheme: light) { body { background: #c9cdca; } }
+    .window { max-width: 1280px; margin: 0 auto 28px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line-strong); box-shadow: 0 24px 60px rgba(0,0,0,.35); background: var(--bg); }
+    .titlebar { position: relative; z-index: 50; display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 13px; }
+    .lights { display: flex; gap: 8px; margin-right: 8px; }
+    .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+    .lights i:nth-child(1) { background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+    .wtitle { font-weight: 600; margin-right: 6px; white-space: nowrap; }
+    .tb { display: flex; align-items: center; gap: 6px; flex: 1; flex-wrap: wrap; row-gap: 8px; min-width: 0; }
+    .tbtn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: 500 13px var(--sans); white-space: nowrap; }
+    .tbtn.open { background: var(--unknown-soft); }
+    .tbtn[disabled] { color: var(--text-faint); border-style: dashed; }
+    .tbtn .caret { font-size: 10px; color: var(--text-faint); }
+    .tsep { width: 1px; height: 18px; background: var(--line-strong); margin: 0 6px; }
+    .spacer { flex: 1; }
+    .tlabel { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+    .tlabel strong { color: var(--text); font-weight: 600; }
+    .menu-wrap { position: relative; }
+    .menu { position: absolute; top: 34px; left: 0; z-index: 100; min-width: 280px; padding: 6px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: 0 12px 30px rgba(0,0,0,.35); }
+    .menu div { padding: 6px 10px; border-radius: 5px; font-size: 13px; }
+    .menu .dis { color: var(--text-faint); }
+    .menu .head { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
+    .menu hr { border: 0; border-top: 1px solid var(--line); margin: 6px 4px; }
+    .strip { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 8px 14px; font-size: 13px; background: var(--surface); border-bottom: 1px solid var(--line); color: var(--text-muted); }
+    .strip strong { color: var(--text); }
+    .strip .close { font: 500 12px var(--sans); color: var(--text-muted); background: none; border: 1px solid var(--line-strong); border-radius: 5px; padding: 2px 8px; }
+    .window .shell { min-height: 0; }
+    .filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; padding: 0; list-style: none; }
+    .filters a { display: inline-flex; gap: 6px; align-items: center; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--text-muted); text-decoration: none; font-size: 13px; }
+    .filters a[aria-current="page"] { border-color: var(--text); color: var(--text); font-weight: 600; }
+    .filters .n { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
+    .keys { display: grid; gap: 6px; font-size: 12px; color: var(--text-muted); }
+    .keys div { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .keys b { color: var(--text); font-weight: 600; min-width: 74px; }
+    .adv-key { border: 1px solid var(--mismatch); border-radius: 4px; padding: 0 5px; }
+    .prov a { font-weight: 600; }
+    .prov .id { display: block; font-family: var(--mono); font-size: 12px; color: var(--text-muted); margin-top: 3px; user-select: all; overflow-wrap: anywhere; }
+    .prov .src { display: block; font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+    .dup { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .here { display: inline-flex; margin-top: 4px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--text); border: 1px solid var(--line-strong); }
+    .cell-sub { display: block; font-size: 12px; color: var(--text-faint); margin-top: 3px; }
+    .scroll-hint { display: none; font-size: 12px; color: var(--text-faint); }
+    @media (max-width: 700px) { .scroll-hint { display: block; } }
+    .fleet { min-width: 860px; }
+    .fleet th[scope=row] { min-width: 300px; }
+    .states { max-width: 1280px; margin: 0 auto; display: grid; gap: 18px; }
+    @media (min-width: 1000px) { .states { grid-template-columns: 1fr 1fr; } }
+    .state { background: var(--bg); border: 1px solid var(--line-strong); border-radius: 10px; padding: 18px 20px; }
+    .state > h2 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+    .state .mini-tb { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+    .annot { margin: 28px auto 0; max-width: 1280px; background: var(--surface); border: 1px dashed var(--line-strong); border-radius: 10px; padding: 16px 20px; color: var(--text); font-size: 14px; }
+    .annot h2 { margin-top: 0; font-size: 16px; }
+    .annot li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+
+<div class="window" role="region" aria-label="Main state: connected account">
+  <div class="titlebar">
+    <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+    <span class="wtitle">Gargoyl</span>
+    <div class="tb" role="toolbar" aria-label="Native toolbar (NSToolbar)">
+      <div class="menu-wrap">
+        <button class="tbtn open" aria-haspopup="menu" aria-expanded="true">Account · connecting or connected <span class="caret">▼</span></button>
+        <div class="menu" role="menu" aria-label="Account">
+          <div class="head">Darkbloom account · read-only</div>
+          <div class="dis">Connect fleet…</div>
+          <div class="dis">Resume saved sign-in</div>
+          <div>Disconnect fleet</div>
+          <hr>
+          <div>Forget saved sign-in…</div>
+        </div>
+      </div>
+      <button class="tbtn">Local aliases…</button>
+      <span class="tsep" aria-hidden="true"></span>
+      <button class="tbtn">↻ Refresh</button>
+      <span class="tsep" aria-hidden="true"></span>
+      <span class="tlabel">Monitor: <strong>started here</strong></span>
+      <button class="tbtn">Stop</button>
+      <button class="tbtn">Export local report…</button>
+      <span class="spacer"></span>
+      <button class="tbtn">Operation status</button>
+      <button class="tbtn">Restart local provider…</button>
+    </div>
+  </div>
+  <div class="strip" role="status">
+    <span><strong>Local alias saved.</strong> The provider ID and source label are unchanged.</span>
+    <button class="close">Clear</button>
+  </div>
+
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Gargoyl">
+        <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path class="brand-eyes" d="M21 31l8 3-8 1z M43 31l-8 3 8 1z"/></svg>
+        gargoyl
+      </a>
+      <div class="asof">
+        <span>Account read <strong class="mono">2026-11-01 15:56:05Z</strong></span>
+        <span class="pill">Private fleet manager</span>
+      </div>
+    </header>
+
+    <nav class="nav" aria-label="Sections">
+      <ul>
+        <li><a href="#" aria-current="page">Your fleet</a></li>
+        <li><a href="#">Operator tools</a></li>
+        <li><a href="#">Local evidence</a></li>
+        <li><a href="#">Local traffic</a></li>
+        <li><a href="#">Manual operation</a></li>
+        <li><a href="#">Local details</a></li>
+      </ul>
+    </nav>
+
+    <main id="main">
+      <p class="proto-banner" role="note"><strong>Design mock</strong> · synthetic data. Proposed fleet screen for the Mac app; not wired to anything.</p>
+
+      <div class="page-head">
+        <div>
+          <h1>Your fleet</h1>
+          <p>Provider records reported by your Darkbloom account. Coordinator reports and this Mac's own observations stay separate. Nothing here controls remote machines or repairs anything.</p>
+        </div>
+        <div class="keys" role="group" aria-label="Legend">
+          <div><b>Report</b><span class="ev ev-observed">current</span><span class="ev ev-stale">stale</span><span class="ev ev-unknown">unknown</span></div>
+          <div><b>Heartbeat</b><span class="ev ev-observed">recent (≤ 2 min)</span><span class="ev ev-stale">older</span><span class="ev ev-unknown">unknown</span></div>
+          <div><b>Value</b><span><span class="adv-key">outlined</span> = adverse reported value</span></div>
+        </div>
+      </div>
+
+      <section aria-labelledby="inv-title">
+        <div class="section-head">
+          <h2 id="inv-title">Owned providers</h2>
+          <p>4 of 4 reported records · read 2026-11-01 15:56:05Z · session connected. Account-reported, not independent remote checks.</p>
+        </div>
+
+        <ul class="filters" aria-label="Filter by heartbeat">
+          <li><a href="#" aria-current="page">All <span class="n">4</span></a></li>
+          <li><a href="#">Recent heartbeat <span class="n">2</span></a></li>
+          <li><a href="#">Older heartbeat <span class="n">1</span></a></li>
+          <li><a href="#">Unknown heartbeat <span class="n">1</span></a></li>
+        </ul>
+
+        <p class="muted" style="font-size:13px">1 reported offline or failing · 1 with no reported status · 1 with an older heartbeat · 1 with an unknown heartbeat</p>
+        <p class="scroll-hint">Scroll the table sideways to see all evidence.</p>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Owned providers">
+          <table class="fleet">
+            <thead><tr><th scope="col">Provider</th><th scope="col">Coordinator report</th><th scope="col">Last heartbeat</th><th scope="col">Version</th></tr></thead>
+            <tbody>
+              <tr>
+                <th scope="row" class="prov"><a href="#">Studio · office</a><span class="id">6d18aa14-0000-4000-8000-00000000ef01</span><span class="src">Local alias · hardware model “Mac14,13”</span></th>
+                <td>online<span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td><span class="ev ev-observed mono">2026-11-01 15:56:03Z</span><span class="cell-sub">recent</span></td>
+                <td class="mono">0.10.6</td>
+              </tr>
+              <tr>
+                <th scope="row" class="prov"><a href="#">MBP-26</a><span class="id">9b07cc22-0000-4000-8000-0000000041a8</span><span class="src">Local alias · source name “mbp-provider”</span><span class="here">This Mac</span><span class="cell-sub">unique identity match</span></th>
+                <td>online<span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td><span class="ev ev-observed mono">2026-11-01 15:55:58Z</span><span class="cell-sub">recent</span></td>
+                <td class="mono">0.10.6</td>
+              </tr>
+              <tr>
+                <th scope="row" class="prov"><a href="#">Mac13,1</a><span class="id">4532bb55-0000-4000-8000-00000000d60f</span><span class="src">Hardware model</span><span class="dup">Same label as another record · <a href="#">Set alias…</a></span></th>
+                <td><span class="adv">offline</span><span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td><span class="ev ev-stale mono">2026-09-28 14:07:33Z</span><span class="cell-sub">older · 34 days ago</span></td>
+                <td class="mono">0.10.5</td>
+              </tr>
+              <tr>
+                <th scope="row" class="prov"><a href="#">Mac13,1</a><span class="id">c2e1dd90-0000-4000-8000-00000000a3b2</span><span class="src">Hardware model</span><span class="dup">Same label as another record · <a href="#">Set alias…</a></span></th>
+                <td><span class="faint">status not reported</span><span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td><span class="ev ev-unknown">Invalid timestamp</span><span class="cell-sub">unknown</span></td>
+                <td class="faint">not reported</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted">Aliases stay on this Mac. They never rename source records or change identity matching or action targets.</p>
+      </section>
+
+      <section aria-labelledby="mac-title">
+        <div class="section-head">
+          <h2 id="mac-title">This Mac · MBP-26</h2>
+          <p>Direct local observations, kept separate from the account report above. The hostname is a local alias, not a provider name or ID.</p>
+        </div>
+        <dl class="facts">
+          <div><dt>Native provider process</dt><dd><span class="ev ev-observed">running</span> <span class="faint">host · 2026-11-01 15:56:01Z</span></dd></div>
+          <div><dt>Model residency report</dt><dd><span class="ev ev-observed">resident</span> <span class="faint">daemon · 2026-11-01 15:55:58Z</span></dd></div>
+          <div><dt>Eligibility report</dt><dd><span class="ev ev-observed">eligible</span> <span class="faint">daemon · 2026-11-01 15:55:58Z</span></dd></div>
+          <div><dt>Account association</dt><dd class="mono">9b07cc22-0000-4000-8000-0000000041a8</dd><dd class="faint">unique matching public identity</dd></div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="limits-title">
+        <h2 id="limits-title">Coverage and limits</h2>
+        <p class="muted">Missing or older reports need fresh evidence; nothing is inferred healthy. Account status is a coordinator report, not independent remote health. Account data stays inside the Mac app: the public loopback dashboard and export remain local-only, and fleet reads use no financial, model-name or provider-control endpoints.</p>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="states">
+  <section class="state" aria-labelledby="s1">
+    <h2 id="s1">State · disconnected (cached records)</h2>
+    <div class="mini-tb"><button class="tbtn">Account · <span class="ev ev-stale">disconnected</span> ▼</button></div>
+    <div class="callout warn"><p>Account collection is disconnected or unavailable. These are cached records; reconnect for current reports. Heartbeat times are historical evidence.</p></div>
+    <p class="muted">Report column shows <span class="ev ev-stale">stale</span> for every row.</p>
+  </section>
+  <section class="state" aria-labelledby="s2">
+    <h2 id="s2">State · partial inventory</h2>
+    <p class="muted">Header: <strong>3 of 7 reported records</strong></p>
+    <div class="callout warn"><p>Partial inventory: some records or pages are unavailable. Missing machines must not be treated as absent or healthy.</p></div>
+  </section>
+  <section class="state" aria-labelledby="s3">
+    <h2 id="s3">State · not connected</h2>
+    <div class="mini-tb"><button class="tbtn">Account · <span class="ev ev-unknown">not connected</span> ▼</button></div>
+    <h3>Connect your account</h3>
+    <p>No verified account inventory is available. Choose <strong>Account → Connect fleet…</strong>, then complete Darkbloom's read-only approval in your browser.</p>
+    <p class="muted">This is not an empty fleet. Other machines have not been queried.</p>
+  </section>
+  <section class="state" aria-labelledby="s4">
+    <h2 id="s4">State · empty filter / no records</h2>
+    <p>No records match this filter.</p>
+    <p class="muted">With no records at all: "The account API returned no usable provider records; check connection and partial coverage above."</p>
+  </section>
+  <section class="state" aria-labelledby="s5">
+    <h2 id="s5">State · local evidence unavailable</h2>
+    <p>Local aliases unavailable. Actual provider IDs and source labels remain visible.</p>
+    <p>Direct local observations unavailable. Local provider health is unknown.</p>
+    <p>Account association: unknown, no fresh unique account identity match.</p>
+  </section>
+  <section class="state" aria-labelledby="s6">
+    <h2 id="s6">State · read-only preview build</h2>
+    <p class="muted">Window title "Gargoyl — Read-only preview". Disabled (dashed):</p>
+    <div class="mini-tb">
+      <button class="tbtn" disabled>Account ▼</button><button class="tbtn" disabled>Local aliases…</button><button class="tbtn">↻ Refresh</button><button class="tbtn" disabled>Start</button><button class="tbtn">Export local report…</button><button class="tbtn">Operation status</button><button class="tbtn" disabled>Restart local provider…</button>
+    </div>
+  </section>
+  <section class="state" aria-labelledby="s7">
+    <h2 id="s7">Status strip · long native message</h2>
+    <div class="strip" role="status" style="border:1px solid var(--line);border-radius:8px">
+      <span><strong>Saved sign-in unavailable.</strong> It may be invalid, locked or access was declined. Nothing was deleted. Connect fleet or try again after unlocking the login Keychain.</span>
+      <button class="close">Clear</button>
+    </div>
+  </section>
+</div>
+
+<div class="annot">
+  <h2>What changes (mock notes, not part of the app)</h2>
+  <ol>
+    <li><strong>Toolbar (NSToolbar):</strong> one row instead of 11 buttons in 4 rows. <em>Account</em> is a menu item that shows the connection state and enables only valid actions (menu validation). <em>Local aliases…</em> is its own item because aliases are local, not account data. Labels keep "local": <em>Export local report…</em>, <em>Restart local provider…</em>. Restart is a standard button set apart at the trailing edge; its confirmation sheet does the safety work. NSToolbar overflow handles narrow windows.</li>
+    <li><strong>Monitor:</strong> a label plus one action. The label states only what the app knows (it started or stopped the job), never "running" as a health claim.</li>
+    <li><strong>Messages</strong> from native actions go to a status strip under the toolbar with a <em>Clear</em> button (native, so it survives the 30-second page refresh; the web view runs no scripts). Warnings computed from the data (disconnected, partial) stay in the page and can't be dismissed.</li>
+    <li><strong>Table:</strong> full provider IDs stay in every row (selectable). The coordinator column shows report freshness (current / stale / unknown) as its glyph, the reported status as text, outlined when adverse. Heartbeat shows the full time, recency and age at read, or the specific reason when there is none. Label source stays visible for aliases.</li>
+    <li><strong>Duplicate labels</strong> get <em>Set alias…</em>, a <code>gargoyl-view://</code> link the app intercepts to open the alias sheet with that provider preselected.</li>
+    <li><strong>This Mac</strong> becomes a facts grid with source and time per observation and keeps the alias and association honesty text. No new navigation route.</li>
+    <li><strong>Narrow windows</strong> (the app's minimum width is 390 px) keep the sideways-scroll hint.</li>
+  </ol>
+</div>
+</body>
+</html>

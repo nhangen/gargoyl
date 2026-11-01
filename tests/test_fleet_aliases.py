@@ -31,9 +31,9 @@ class AliasTests(unittest.TestCase):
             )
             for value in [
                 "Studio One",
-                "Local alias · source: Fixture Mac",
+                "Local alias · source name “Fixture Mac”",
                 identity,
-                "Source name",
+                "source name",
             ]:
                 self.assertIn(value, page)
             self.assertEqual(inventory["providers"][0]["name"], "Fixture Mac")

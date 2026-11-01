@@ -1,8 +1,10 @@
 # Gargoyl Mac application
 
 Normal operation is graphical. Open **Gargoyl.app** to see the existing live
-console in a standard resizable Mac window with close, minimize, zoom and full-screen controls. Closing the window leaves the background monitor and provider running; reopening the app shows the window again. Use **Start monitoring**, **Stop monitoring**, **Refresh**, **Export…**
-and **Operation status** in its native toolbar. Start/Stop affects only the
+console in a standard resizable Mac window with close, minimize, zoom and full-screen controls. Closing the window leaves the background monitor and provider running; reopening the app shows the window again. The native toolbar is one row: an **Account** menu (Connect fleet…, Resume saved
+sign-in, Disconnect fleet, Forget saved sign-in…), **Local aliases…**, **Refresh**,
+**Start local monitor**, **Stop local monitor**, **Export local report…**, then
+**Operation status** and **Restart local provider…** set apart at the end. Start/Stop affects only the
 existing Gargoyl monitoring job, never Darkbloom. Export opens a Mac save dialog
 for bounded normalized evidence; raw provider logs and credentials are excluded.
 The public browser dashboard remains read-only, and the app needs no pairing
@@ -87,9 +89,9 @@ freshness at viewing time. It does not force a source poll. Pages explicitly say
 that they do not refresh automatically. History retains at most 64 samples in
 monitor memory and is lost when the monitor restarts.
 
-Use the native toolbar for Start/Stop monitoring, Refresh, Export…, Operation
-status, and Restart provider…. Export opens the standard Mac Save dialog. Start
-and Stop affect only Gargoyl's configured monitor. Restart provider opens the
+Use the native toolbar for Start/Stop local monitor, Refresh, Export local report…,
+Operation status, and Restart local provider…. Export opens the standard Mac Save dialog. Start
+and Stop affect only Gargoyl's configured monitor. Restart local provider opens the
 existing exact-target/interruption review followed by Mac owner authentication;
 no page link can invoke it. Progress stays in the native status area and outcome
 in the shared journal. Intent and unknown records remain blocked by the shared native/CLI/browser gate.

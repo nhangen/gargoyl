@@ -102,3 +102,87 @@ class FleetViewTests(unittest.TestCase):
         bad["providers"][0]["secret"] = "private"
         with self.assertRaises(ValueError):
             self.page(bad)
+
+
+class FleetLayoutTests(unittest.TestCase):
+    def inventory(self):
+        raw = response()
+        twin = copy.deepcopy(raw["providers"][0])
+        twin["id"] = "provider-second-test-only"
+        twin["status"] = "offline"
+        twin["last_heartbeat"] = "not-a-time"
+        raw["providers"].append(twin)
+        raw["total_count"] = 3
+        return normalize_inventory(raw, NOW)
+
+    def page(self, view="fleet", **kwargs):
+        return render_view(view, None, None, inventory=self.inventory(), now=NOW, **kwargs)
+
+    def test_full_ids_duplicates_reasons_and_freshness_in_rows(self):
+        page = self.page()
+        self.assertIn('<span class="fleet-id">provider-real-format-test-only</span>', page)
+        self.assertIn('<span class="fleet-id">provider-second-test-only</span>', page)
+        self.assertEqual(page.count("Same label as another record"), 2)
+        self.assertIn("Invalid timestamp", page)
+        self.assertIn("report current", page)
+        self.assertIn('<span class="adv">offline</span>', page)
+        self.assertNotIn('<span class="adv">running</span>', page)
+        self.assertIn("2 of 3 reported records", page)
+        # Status is plain text; the freshness glyph sits on the freshness line, not beside the status.
+        self.assertIn('<span class="fleet-status">running</span><span class="fleet-sub"><span class="ev ev-observed">report current', page)
+        self.assertNotIn('<span class="ev ev-observed">running', page)
+        self.assertIn("1 reported offline or failing · 1 with an unknown heartbeat", page)
+        self.assertNotIn("before read", page)
+
+    def test_older_heartbeat_age_is_measured_from_now(self):
+        page = render_view("fleet", None, None, inventory=self.inventory(), now="2026-11-01T03:00:00Z")
+        self.assertIn("older · 3 h ago", page)
+        self.assertIn("(3 h ago)", page)
+
+    def test_inventory_table_keeps_the_scroll_container_native_layout_measures(self):
+        # The compiled native self-test measures .fleet-inventory inside its .scroll wrapper.
+        self.assertIn('<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'
+                      '<table class="fleet-inventory">', self.page())
+
+    def test_filters_show_counts_and_current_page(self):
+        page = self.page("fleet-unknown")
+        self.assertIn('href="gargoyl-view://fleet-unknown/" aria-current="page">Unknown heartbeat <span class="n">1</span>', page)
+        self.assertIn('Recent heartbeat <span class="n">1</span>', page)
+        self.assertIn("provider-second-test-only", page)
+        self.assertNotIn('<span class="fleet-id">provider-real-format-test-only</span>', page)
+
+    def test_alias_removes_duplicate_flag_and_keeps_label_source(self):
+        page = self.page(aliases={"provider-second-test-only": "Studio Two"})
+        self.assertNotIn("Same label as another record", page)
+        self.assertIn("Local alias · source name “Fixture Mac”", page)
+
+
+class FleetSafetyTests(unittest.TestCase):
+    def test_untrusted_cells_are_escaped(self):
+        raw = response()
+        provider = raw["providers"][0]
+        provider["id"] = "<i>id"
+        provider["status"] = "<i>status"
+        provider["version"] = "<i>version"
+        value = normalize_inventory(raw, NOW)
+        page = render_view("fleet", None, None, inventory=value, now=NOW, local_alias="<i>mac")
+        self.assertNotIn("<i>", page)
+        self.assertIn("&lt;i&gt;status", page)
+
+    def test_heartbeat_after_read_and_age_boundaries(self):
+        from gargoyl.fleet_views import _age
+
+        self.assertEqual([_age(v) for v in (119, 120, 7199, 7200, 172799, 172800)],
+                         ["119 s", "2 min", "119 min", "2 h", "47 h", "2 days"])
+        raw = response()
+        raw["providers"][0]["last_heartbeat"] = "2026-11-01T00:00:30Z"
+        value = normalize_inventory(raw, NOW)
+        page = render_view("fleet", None, None, inventory=value, now="2026-11-01T00:01:00Z")
+        self.assertNotIn("before read", page)
+
+    def test_local_evidence_states_freshness_in_words(self):
+        from test_dashboard import snapshot
+
+        old = snapshot(source="host", at="2026-01-01T00:00:00Z")
+        page = render_view("fleet", dict(evaluated_at=NOW, snapshots=[old]), None, now=NOW)
+        self.assertIn("stale · host", page)

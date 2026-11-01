@@ -7,7 +7,13 @@ from html import escape
 from gargoyl.dashboard import build_dashboard
 from gargoyl.dashboard.theme import PAGE_END, page_start
 from gargoyl.fleet_identity import matching_provider
-from gargoyl.fleet_state import evidence_state, provider_key, validate_inventory
+from gargoyl.fleet_state import (
+    TTL,
+    evidence_state,
+    provider_key,
+    timestamp,
+    validate_inventory,
+)
 
 FLEET_FILTERS = {
     "fleet": None,
@@ -39,6 +45,87 @@ def e(value):
     return escape(str(value), quote=True)
 
 
+HEARTBEAT_REASONS = {
+    "not_reported": "Not reported",
+    "unsupported_type": "Unsupported timestamp type",
+    "invalid_timestamp": "Invalid timestamp",
+}
+LABEL_KINDS = {
+    "source_name": "Source name",
+    "hardware_label": "Hardware model",
+    "provider_id": "Provider ID fallback",
+}
+# Evidence glyph per freshness word; the reported value is text beside it.
+GLYPH = {"current": "ev-observed", "recent": "ev-observed", "stale": "ev-stale",
+         "older": "ev-stale", "unknown": "ev-unknown"}
+ADVERSE_STATUSES = {"offline", "stopped", "error", "failed", "unhealthy", "ineligible", "disconnected"}
+FLEET_STYLE = (
+    "<style>.fleet-inventory{min-width:860px}.fleet-inventory th[scope=row]{min-width:300px}"
+    ".fleet-scroll-hint{display:none;font-size:12px;color:var(--text-faint)}"
+    "@media(max-width:700px){.fleet-scroll-hint{display:block}}"
+    ".fleet-keys{display:grid;gap:6px;font-size:12px;color:var(--text-muted)}"
+    ".fleet-keys div{display:flex;flex-wrap:wrap;gap:10px;align-items:center}"
+    ".fleet-keys b{color:var(--text);font-weight:600;min-width:74px}"
+    ".fleet-adv-key{border:1px solid var(--mismatch);border-radius:4px;padding:0 5px}"
+    ".fleet-filters{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0;padding:0;list-style:none;max-width:none}"
+    ".fleet-filters li{margin:0}"
+    ".fleet-filters a{display:inline-flex;gap:6px;align-items:center;padding:5px 12px;border-radius:999px;"
+    "border:1px solid var(--line-strong);color:var(--text-muted);text-decoration:none;font-size:13px}"
+    ".fleet-filters a[aria-current=page]{border-color:var(--text);color:var(--text);font-weight:600}"
+    ".fleet-filters .n{font-family:var(--mono);font-size:12px;color:var(--text-faint)}"
+    ".fleet-id{display:block;font-family:var(--mono);font-size:12px;color:var(--text-muted);"
+    "margin-top:3px;overflow-wrap:anywhere;-webkit-user-select:all;user-select:all}"
+    ".fleet-src,.fleet-sub{display:block;font-size:12px;color:var(--text-faint);margin-top:2px}"
+    ".fleet-dup{display:block;font-size:12px;color:var(--text-muted);margin-top:2px}"
+    ".fleet-here{display:inline-flex;margin-top:4px;padding:1px 8px;border-radius:999px;font-size:12px;"
+    "font-weight:600;color:var(--text);border:1px solid var(--line-strong)}"
+    ".fleet-status{font-size:14px}.fleet-status .adv{font-weight:600}"
+    ".fleet-summary{margin:4px 0 0;font-size:13px;color:var(--text-muted)}"
+    ".fleet-inventory td.fleet-version{white-space:nowrap}</style>"
+)
+
+
+def _age(seconds):
+    seconds = int(seconds)
+    if seconds < 120:
+        return f"{seconds} s"
+    if seconds < 7200:
+        return f"{seconds // 60} min"
+    if seconds < 172800:
+        return f"{seconds // 3600} h"
+    return f"{seconds // 86400} days"
+
+
+def _heartbeat_cell(row, heartbeat, now):
+    shown = compact_time(row["heartbeat_at"])
+    if shown is None:
+        reason = HEARTBEAT_REASONS.get(row.get("heartbeat_reason"), "Unknown cached evidence")
+        return '<span class="ev ev-unknown">' + e(reason) + '</span><span class="fleet-sub">unknown</span>'
+    sub = heartbeat
+    # Age is measured against now, the same reference recency uses; recent rows need no age.
+    gap = (timestamp(now) - timestamp(row["heartbeat_at"])).total_seconds()
+    if heartbeat == "older" and gap >= 0:
+        sub += " · " + _age(gap) + " ago"
+    return ('<span class="ev ' + GLYPH[heartbeat] + ' mono">' + e(shown) + '</span><span class="fleet-sub">'
+            + e(sub) + "</span>")
+
+
+def _adverse(row):
+    status = row["reported_status"]
+    return bool(status) and status.lower() in ADVERSE_STATUSES
+
+
+def _report_cell(row, report):
+    # The reported value is plain text (outlined when adverse); the freshness glyph describes
+    # the report, so it sits on the freshness line, never beside the status as a health light.
+    status = row["reported_status"]
+    text = e(status) if status else '<span class="faint">status not reported</span>'
+    if _adverse(row):
+        text = '<span class="adv">' + text + "</span>"
+    return ('<span class="fleet-status">' + text + '</span><span class="fleet-sub"><span class="ev '
+            + GLYPH[report] + '">report ' + e(report) + "</span></span>")
+
+
 def render_fleet(
     view,
     inventory,
@@ -54,21 +141,32 @@ def render_fleet(
     from gargoyl.fleet_aliases import validate_aliases
 
     aliases = validate_aliases(aliases or {})
-    label_kinds = {
-        "source_name": "Source name",
-        "hardware_label": "Hardware model",
-        "provider_id": "Provider ID fallback",
-    }
     if not fleet_mode(view):
         raise ValueError("unsupported fleet view")
     if inventory is not None:
         validate_inventory(inventory)
     matched = matching_provider(inventory, local, now)
-    body = "<h1>Your fleet</h1><p>Account-owned provider records. Coordinator reports and this Mac’s direct observations stay separate. No remote control or automatic repair.</p>"
+    body = (
+        '<div class="page-head"><div><h1>Your fleet</h1><p>Provider records reported by your Darkbloom '
+        "account. Coordinator reports and this Mac’s own observations stay separate. Nothing here controls "
+        "remote machines or repairs anything.</p></div>"
+        '<div class="fleet-keys" role="group" aria-label="Legend">'
+        '<div><b>Report</b><span class="ev ev-observed">current</span><span class="ev ev-stale">stale</span>'
+        '<span class="ev ev-unknown">unknown</span></div>'
+        '<div><b>Heartbeat</b><span class="ev ev-observed">recent (≤ ' + str(TTL // 60) + ' min)</span>'
+        '<span class="ev ev-stale">older</span><span class="ev ev-unknown">unknown</span></div>'
+        '<div><b>Value</b><span><span class="fleet-adv-key">outlined</span> = adverse reported value</span></div>'
+        "</div></div>"
+    )
     if not aliases_available:
-        body += "<p>Local aliases unavailable. Actual provider IDs and source labels remain visible.</p>"
-    local_body = ""
-    local_body += "<section><h2>This Mac · " + e(alias) + "</h2>"
+        body += '<div class="callout"><p>Local aliases unavailable. Actual provider IDs and source labels remain visible.</p></div>'
+    local_body = (
+        '<section id="this-mac" aria-labelledby="this-mac-title"><div class="section-head"><h2 id="this-mac-title">This Mac'
+        + ("" if alias == "This Mac" else " · " + e(alias))
+        + "</h2><p>Direct local observations, kept separate from the account report. This hostname is a "
+        "local alias, not a provider name or ID.</p></div>"
+    )
+    facts = []
     if evidence is None or not evidence["snapshots"]:
         local_body += "<p>Direct local observations unavailable. Local provider health is unknown.</p>"
     else:
@@ -80,45 +178,40 @@ def render_fleet(
         ]:
             rows = [r for r in host["latest"][metric] if r["source"] == source]
             if not rows:
-                local_body += "<p>" + e(label) + ": unknown — no report.</p>"
+                facts.append((label, '<span class="ev ev-unknown">unknown</span> <span class="faint">· no report</span>'))
             for row in rows:
-                local_body += (
-                    "<p>"
-                    + e(label)
-                    + ": <strong>"
-                    + e(row["value"] if row["value"] is not None else "unknown")
-                    + "</strong> · "
-                    + e(row["state"])
-                    + " · "
-                    + e(row["source"])
-                    + " · "
-                    + e(row["timestamp"])
-                    + "</p>"
-                )
-    local_body += (
-        "<p>Account association: "
-        + (
-            e(matched) + " · unique matching public identity"
-            if matched
-            else "unknown — no fresh unique account identity match"
-        )
-        + '.</p><p class="muted">This hostname is a local alias, not a provider name or ID.</p></section>'
-    )
+                state = row["state"] if row["state"] in ("observed", "stale", "unknown", "blocked") else "unknown"
+                if row["value"] is None:
+                    state = "unknown"
+                facts.append((label, '<span class="ev ev-' + state + '">'
+                              + e(row["value"] if row["value"] is not None else "unknown") + '</span> <span class="faint">'
+                              + e(state) + " · " + e(row["source"]) + " · "
+                              + e(compact_time(row["timestamp"]) or "unknown time") + "</span>"))
+    facts.append((
+        "Account association",
+        ('<span class="mono">' + e(matched) + '</span><span class="fleet-sub">unique matching public identity</span>'
+         if matched else "unknown — no fresh unique account identity match"),
+    ))
+    local_body += ('<dl class="facts">' + "".join("<div><dt>" + e(k) + "</dt><dd>" + v + "</dd></div>" for k, v in facts)
+                   + "</dl></section>")
     if inventory is None:
-        body += "<section id='fleet-overview'><h2>Connect your account</h2><p>No verified account inventory is available. Choose <strong>Connect fleet…</strong> in the native toolbar, then complete Darkbloom’s read-only approval in your browser. No provider grant fallback is accepted.</p><p>This is not an empty fleet result. Other machines have not been queried.</p></section>"
+        body += (
+            "<section id='fleet-overview'><h2>Connect your account</h2><p>No verified account inventory is "
+            "available. Choose <strong>Account → Connect fleet…</strong> in the toolbar, then complete "
+            "Darkbloom’s read-only approval in your browser. No provider grant fallback is accepted.</p>"
+            '<p class="muted">This is not an empty fleet result. Other machines have not been queried.</p></section>'
+        )
     else:
         rows = inventory["providers"]
+        count = str(len(rows)) + (" of " + str(inventory["reported_total"]) if inventory["reported_total"] is not None else "")
+        read_gap = (timestamp(now) - timestamp(inventory["fetched_at"])).total_seconds()
+        read_age = " (" + _age(read_gap) + " ago)" if read_gap >= 0 else ""
         body += (
-            "<section id='fleet-overview'><h2>Owned provider inventory</h2><p>Source: Darkbloom account API · last successful read "
-            + e(inventory["fetched_at"])
-            + " · session last reported "
-            + e(inventory["connection"])
-            + ".</p>"
+            "<section id='fleet-overview' aria-labelledby='inventory-title'><div class='section-head'>"
+            "<h2 id='inventory-title'>Owned provider inventory</h2><p>" + count + " reported records · read "
+            + e(compact_time(inventory["fetched_at"])) + read_age + " · session last reported " + e(inventory["connection"])
+            + ". This is account-reported inventory, not independent remote process verification.</p></div>"
         )
-        body += "<p>" + str(len(rows)) + " returned provider records"
-        if inventory["reported_total"] is not None:
-            body += " of " + str(inventory["reported_total"]) + " reported total"
-        body += ". This is account-reported inventory, not independent remote process verification.</p>"
         if inventory["partial"]:
             body += '<div class="callout warn"><p>Partial inventory: some records or pages are unavailable. Missing machines must not be treated as absent or healthy.</p></div>'
         if inventory["connection"] != "connected":
@@ -143,10 +236,10 @@ def render_fleet(
                     ("Actual provider ID", row["id"]),
                     ("Local friendly alias", aliases.get(row["id"], "not set")),
                     ("Source label", row["name"]),
-                    ("Label source", label_kinds[row["name_kind"]]),
+                    ("Label source", LABEL_KINDS[row["name_kind"]]),
                     ("Reported status", row["reported_status"] or "unknown"),
                     ("Report freshness", report),
-                    ("Last heartbeat", row["heartbeat_at"] or "unknown"),
+                    ("Last heartbeat", compact_time(row["heartbeat_at"]) or "unknown"),
                     ("Heartbeat recency", heartbeat),
                     (
                         "Heartbeat evidence",
@@ -179,10 +272,14 @@ def render_fleet(
                     )
                 body += "</dl><p>No restart, enrollment or remote command authority is granted by this record.</p>"
         else:
+            states = {r["id"]: evidence_state(inventory, r, now) for r in rows}
+            counts = {key: sum(1 for r in rows if FLEET_FILTERS[key] is None or states[r["id"]][1] == FLEET_FILTERS[key])
+                      for key in FLEET_FILTERS}
             body += (
-                '<nav aria-label="Fleet filters"><p>'
-                + " · ".join(
-                    '<a href="gargoyl-view://' + key + '/">' + label + "</a>"
+                '<nav aria-label="Fleet filters"><ul class="fleet-filters">'
+                + "".join(
+                    '<li><a href="gargoyl-view://' + key + '/"' + (' aria-current="page"' if key == view else "")
+                    + ">" + label + ' <span class="n">' + str(counts[key]) + "</span></a></li>"
                     for key, label in [
                         ("fleet", "All records"),
                         ("fleet-recent", "Recent heartbeat"),
@@ -190,56 +287,50 @@ def render_fleet(
                         ("fleet-unknown", "Unknown heartbeat"),
                     ]
                 )
-                + "</p></nav>"
+                + "</ul></nav>"
             )
             shown = [
                 r
                 for r in rows
-                if FLEET_FILTERS[view] is None
-                or evidence_state(inventory, r, now)[1] == FLEET_FILTERS[view]
+                if FLEET_FILTERS[view] is None or states[r["id"]][1] == FLEET_FILTERS[view]
             ]
-            body += '<p class="fleet-scroll-hint">Scroll the table horizontally to see all evidence.</p><div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory"><table class="fleet-inventory"><thead><tr><th>Provider / actual ID</th><th>Label source</th><th>Coordinator report</th><th>Heartbeat</th><th>Local evidence</th></tr></thead><tbody>'
+            noted = [
+                (sum(1 for r in rows if _adverse(r)), "reported offline or failing"),
+                (sum(1 for r in rows if not r["reported_status"]), "with no reported status"),
+                (counts["fleet-older"], "with an older heartbeat"),
+                (counts["fleet-unknown"], "with an unknown heartbeat"),
+            ]
+            noted = [str(n) + " " + text for n, text in noted if n]
+            if rows:
+                body += ('<p class="fleet-summary">' + (" · ".join(noted) if noted
+                         else "Every returned record has a reported status and a recent heartbeat.") + "</p>")
+            labels = [aliases.get(r["id"], r["name"]) for r in rows]
+            duplicated = {label for label in labels if labels.count(label) > 1}
+            body += (
+                '<p class="fleet-scroll-hint">Scroll the table sideways to see all evidence.</p>'
+                '<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'
+                '<table class="fleet-inventory"><thead><tr><th scope="col">Provider</th><th scope="col">Coordinator report</th>'
+                '<th scope="col">Last heartbeat</th><th scope="col">Version</th></tr></thead><tbody>'
+            )
             for row in shown:
-                report, heartbeat = evidence_state(inventory, row, now)
+                report, heartbeat = states[row["id"]]
+                label = aliases.get(row["id"], row["name"])
+                kind = LABEL_KINDS[row["name_kind"]]
+                source = (
+                    "Local alias · " + kind.lower() + " “" + row["name"] + "”"
+                    if row["id"] in aliases
+                    else kind
+                )
                 body += (
-                    '<tr><th><a href="gargoyl-view://fleet-node-'
-                    + provider_key(row["id"])
-                    + '/">'
-                    + e(aliases.get(row["id"], row["name"]))
-                    + "</a>"
-                    + (
-                        '<br><span class="muted">Local alias · source: '
-                        + e(row["name"])
-                        + "</span>"
-                        if row["id"] in aliases
-                        else ""
-                    )
-                    + '<br><span class="mono">'
-                    + e(row["id"])
-                    + "</span></th><td>"
-                    + e(label_kinds[row["name_kind"]])
-                    + "</td><td>"
-                    + e(row["reported_status"] or "unknown")
-                    + " · "
-                    + e(report)
-                    + "</td><td>"
-                    + e(
-                        compact_time(row["heartbeat_at"])
-                        or {
-                            "not_reported": "Not reported",
-                            "unsupported_type": "Unsupported timestamp type",
-                            "invalid_timestamp": "Invalid timestamp",
-                        }.get(row.get("heartbeat_reason"), "Unknown cached evidence")
-                    )
-                    + "<br>"
-                    + e(heartbeat)
-                    + "</td><td>"
-                    + (
-                        "This Mac · " + e(alias)
-                        if matched == row["id"]
-                        else "not locally observed"
-                    )
-                    + "</td></tr>"
+                    '<tr><th scope="row"><a href="gargoyl-view://fleet-node-' + provider_key(row["id"]) + '/">'
+                    + e(label) + '</a><span class="fleet-id">' + e(row["id"]) + '</span><span class="fleet-src">'
+                    + e(source) + "</span>"
+                    + ('<span class="fleet-dup">Same label as another record · use Local aliases…</span>'
+                       if label in duplicated else "")
+                    + ('<span class="fleet-here">This Mac</span><span class="fleet-sub">' + e(alias)
+                       + " · unique identity match</span>" if matched == row["id"] else "")
+                    + "</th><td>" + _report_cell(row, report) + "</td><td>" + _heartbeat_cell(row, heartbeat, now)
+                    + '</td><td class="fleet-version">' + ('<span class="mono">' + e(row["version"]) + "</span>" if row["version"] else '<span class="faint">not reported</span>') + "</td></tr>"
                 )
             body += "</tbody></table></div>"
             if not shown:
@@ -248,15 +339,20 @@ def render_fleet(
                     + (
                         "No records match this filter."
                         if rows
-                        else "The account API returned no usable provider records; inspect connection and partial-coverage state above."
+                        else "The account API returned no usable provider records; check connection and partial coverage above."
                     )
                     + "</p>"
                 )
+            body += '<p class="muted">Aliases stay on this Mac. They never rename source records or change identity matching or action targets.</p>'
         body += "</section>"
-    body += '<section id="needs-attention"><h2>Coverage and limitations</h2><p>Missing or stale reports require fresh evidence. Account status is a coordinator report, not independent remote health. No repair is inferred.</p></section>'
-    body += '<p class="muted">Edit local aliases in the native toolbar. Aliases stay on this Mac, do not rename source records, and never change identity matching or action targets.</p>'
     body += local_body
-    body += '<p class="muted">Account metadata is private to the native app. The public loopback dashboard and existing export remain local-telemetry-only. Fleet reads use no financial, model-name or provider-control endpoints.</p>'
+    body += (
+        '<section id="needs-attention" aria-labelledby="limits-title"><div class="section-head">'
+        '<h2 id="limits-title">Coverage and limits</h2></div><p class="muted">Missing or older reports need fresh evidence; no health is inferred from them. Account status '
+        "is a coordinator report, not independent remote health. No repair is inferred. Account metadata is private "
+        "to the Mac app: the public loopback dashboard and existing export remain local-telemetry-only, and fleet "
+        "reads use no financial, model-name or provider-control endpoints.</p></section>"
+    )
     html = (
         page_start(
             "Your fleet · Gargoyl", extra_nav=navigation, badge="Private fleet manager"
@@ -264,8 +360,4 @@ def render_fleet(
         + body
         + PAGE_END
     )
-    return html.replace(
-        "</head>",
-        "<style>.fleet-inventory{min-width:800px}.fleet-scroll-hint{display:none}@media(max-width:600px){.fleet-scroll-hint{display:block}} .fleet-inventory th:first-child{min-width:250px}</style></head>",
-        1,
-    )
+    return html.replace("</head>", FLEET_STYLE + "</head>", 1)

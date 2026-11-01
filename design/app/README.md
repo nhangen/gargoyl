@@ -16,6 +16,7 @@ evidence store; it's the target design for `gargoyl.dashboard` and
 | Repair preview | `repair.html` | `RunbookCatalog.plan` / `render_preview`; the confirmation is a labelled mock-up |
 | Audit history | `audit.html` | `render_receipt` / `render_audit_entry` |
 | Unavailable | `unavailable.html` | the viewer's HTTP 503 state |
+| Mac app fleet screen (proposed) | `fleet-manager.html` | proposed cleanup of `gargoyl.fleet_views` and the native toolbar; mock window chrome and synthetic records |
 
 ## Principles
 
