@@ -20,6 +20,12 @@ actual AppKit minimize/restore callbacks and reopening. This separates successfu
 minimization followed by reopening from a failed action. It contains no provider
 data and does not write logs or change monitoring.
 
+The **Gargoyl** application menu provides native **Hide Gargoyl** (Command-H),
+**Hide Others** (Option-Command-H) and **Show All** actions. Hiding leaves the
+application, background monitor and any accepted operation running. Ordinary
+application activation restores its window. Window diagnostics include bounded
+AppKit hide/unhide events and the application's hidden state.
+
 ## Manual restart
 
 Choose **Restart provider…**. Gargoyl verifies the current MBP-26 installation
