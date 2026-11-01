@@ -26,10 +26,10 @@ same operation as `gargoyl tools restart`; its policy, preflight and guarantees 
   There is no journal-path option: the console uses the CLI's fixed
   `~/.gargoyl-manual-restart` journal, lock and gate.
 
-Startup prints the public link and a private one, `http://127.0.0.1:8765/s/<token>/`,
+On an interactive terminal only, startup prints the public link and a private one, `http://127.0.0.1:8765/s/<token>/`,
 with a new token each start. Keep it private; anyone with it can use the tools. It's
 never stored in a cookie (browsers share `127.0.0.1` cookies across ports) and never
-appears on the public page. Under a LaunchAgent it's written to the standard output log.
+appears on the public page. With redirected stdout, pipes or a LaunchAgent, the private link is withheld; it is never written to the standard output log. Use the native Mac app for graphical operation. No capability file is created.
 
 ## Capability inventory
 
