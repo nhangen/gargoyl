@@ -25,7 +25,7 @@ class NativeGateTests(unittest.TestCase):
             source = root / "Gargoyl.swift"
             source.write_text(SWIFT)
             binary = root / "fixture"
-            subprocess.run(
+            compiled = subprocess.run(
                 [
                     "/usr/bin/xcrun",
                     "swiftc",
@@ -47,14 +47,25 @@ class NativeGateTests(unittest.TestCase):
                     "-o",
                     str(binary),
                 ],
-                check=True,
+                check=False,
                 capture_output=True,
                 timeout=120,
             )
+            self.assertEqual(
+                compiled.returncode,
+                0,
+                compiled.stdout.decode() + compiled.stderr.decode(),
+            )
             fake = root / ".venv/bin/python"
             fake.parent.mkdir(parents=True)
-            payload = json.dumps(dict(kind="view", view="tools", html="x" * 23000)) + "\n"
-            fake.write_text("#!/usr/bin/python3\nimport sys\nsys.stdout.write(" + repr(payload) + ")\n")
+            payload = (
+                json.dumps(dict(kind="view", view="tools", html="x" * 23000)) + "\n"
+            )
+            fake.write_text(
+                "#!/usr/bin/python3\nimport sys\nsys.stdout.write("
+                + repr(payload)
+                + ")\n"
+            )
             fake.chmod(0o700)
             hits = []
 

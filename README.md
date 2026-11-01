@@ -15,6 +15,14 @@ The first pilot targets MBP26, `studio64-1`, and `studio64-2`:
 - Explicit state labels: observed, stale, unknown, and blocked.
 - Versioned repair runbooks that require a per-host user confirmation.
 
+## Current coverage
+
+The installed runtime monitors only `MBP-2026.local`. The three-machine pilot above
+is a target, not delivered fleet coverage. Its internal pilot UUID is not a
+Darkbloom provider ID. An authenticated read-only account inventory connection is
+in progress; actual account provider names/IDs and coordinator reports are not yet
+collected. See the [fleet-manager foundation and acceptance status](docs/fleet-manager.md).
+
 ## Safety and privacy
 
 - No prompts, completions, credentials, API keys, raw logs, customer identifiers, or IP addresses leave a host by default.
@@ -23,6 +31,13 @@ The first pilot targets MBP26, `studio64-1`, and `studio64-2`:
 - The pilot does not download or switch models, rewrite configuration, rotate credentials, or perform destructive cleanup.
 
 ## Roadmap
+
+The next core delivery is the graphical read-only account fleet manager: verify
+actual owned inventory, preserve source IDs/names, distinguish local observations
+from coordinator reports, and expose inventory/filter/detail views. It remains
+incomplete until real account acceptance passes; no fake fleet entries substitute
+for it. This advances identity epic#1 and fleet evidence epic#3. Durable normalized
+history remains separate epic#2 work.
 
 The GitHub epics define the implementation sequence: privacy and identity foundation, collector, evidence dashboard, controlled repair runbooks, then pilot hardening.
 
