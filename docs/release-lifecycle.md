@@ -146,10 +146,13 @@ and reinstall. They exercise foreign/Darkbloom/symlink paths, changed code, malf
 artifacts, capacity, lock contention and interrupted activation/uninstall. Artifact
 smoke tests import code from the actual built wheel rather than the checkout.
 
-This addresses code packaging and a safe local lifecycle model. Actual macOS/three-host
-installation, interpreter/dependency distribution, operator signing/enrollment, key
-custody, endpoint/service topology, compatible upgrade policy and pilot feedback remain
-unverified. Epics #4/#5 stay open. No production paths, settings, credentials, permissions,
+This addresses code packaging and a safe local lifecycle model. A single Mac
+pilot package and native app are now installed; actual quit/reopen with saved
+read-only Keychain sign-in was verified on November 1. These observations do not
+establish three-host installation, durable encrypted collection, mTLS deployment
+or a live provider restart. Operator signing/enrollment, spool-key custody,
+endpoint/service topology, compatible upgrade policy and wider pilot feedback
+remain unverified. See [current acceptance evidence](pilot-acceptance.md). Epics #4/#5 stay open. No production paths, settings, credentials, permissions,
 DNS, services, Darkbloom assets, or live host operations were changed in this work.
 
 

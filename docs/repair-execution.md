@@ -1,3 +1,10 @@
+> Deployment scope: this document describes the signed v1 integration library,
+> not the manual restart path used by the Mac pilot. V1 ships a refusing adapter;
+> v2 ships no provider backend. Neither is activated in the installed monitor.
+> The native app uses the separately documented [manual operation](manual-operator-tools.md)
+> with owner confirmation and a shared journal, not a signed runbook. No live
+> provider restart has been exercised. See [pilot acceptance](pilot-acceptance.md).
+
 # Repair execution and local audit (synthetic integration)
 
 `RepairRuntime(catalog=..., audit=..., authorization=..., evidence=...,

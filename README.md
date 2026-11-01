@@ -8,7 +8,8 @@ Within one view, identify each host's real traffic, model residency, verificatio
 
 ## Pilot scope
 
-The first pilot targets MBP26, `studio64-1`, and `studio64-2`:
+The planned pilot targets MBP26, `studio64-1`, and `studio64-2`. These are
+acceptance goals; the deployed coverage below is narrower:
 
 - Read-only host telemetry with a local encrypted spool.
 - A fleet view that correlates local daemon state with coordinator and earnings evidence.
@@ -27,7 +28,12 @@ See [fleet operation, aliases and sign-in](docs/fleet-manager.md).
 ## Safety and privacy
 
 - No prompts, completions, credentials, API keys, raw logs, customer identifiers, or IP addresses leave a host by default.
-- Local collection access and repair authorization are separate capabilities.
+- Collection and repair have separate application-level checks, but the local
+  pilot does not enforce separate OS identities. Its read-only monitor and
+  native manual-action worker run as the same Mac user. The optional browser
+  operator console combines collection, viewing and manual actions in one
+  process; it is disabled on the installed pilot. See
+  [deployment and acceptance evidence](docs/pilot-acceptance.md).
 - Repairs are allowlisted, preflighted, target-specific, and never autonomous.
 - The pilot does not download or switch models, rewrite configuration, rotate credentials, or perform destructive cleanup.
 
@@ -36,8 +42,10 @@ See [fleet operation, aliases and sign-in](docs/fleet-manager.md).
 The native read-only account fleet manager delivers real inventory, source IDs,
 provenance, filters and provider details. Local friendly aliases, explicit
 heartbeat-format evidence and opt-in remembered sign-in improve normal graphical
-operation. Actual Keychain activation/restore acceptance is separate from code and
-fake-adapter tests. Independent remote observation and durable normalized history
+operation. Actual macOS acceptance on November 1 verified saved read-only sign-in
+resuming after quit/reopen without another authorization; this is separate from
+fake-adapter tests and preserves the original grant expiry. Independent remote
+observation and durable normalized history
 remain later work; no synthetic entries substitute for missing coverage.
 
 The GitHub epics define the implementation sequence: privacy and identity foundation, collector, evidence dashboard, controlled repair runbooks, then pilot hardening.

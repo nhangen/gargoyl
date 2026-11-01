@@ -71,9 +71,13 @@ are separate integration work. No fixture demonstrates production provisioning.
   to the local identity. The receiver must independently bind the verified certificate
   identity to the envelope, enforce revocation, and reject cross-host submissions.
 
-Collection and repair must run under separate OS/service identities and credentials;
-repair endpoints must never trust collection certificates. This package exports no
-repair executor, command runner, credential provisioner or privileged operation.
+The target deployment contract requires separate OS/service identities and
+credentials for collection and repair; repair endpoints must never trust
+collection certificates. This is not enforced by the current same-user local
+pilot. The foundation APIs described here do not provision credentials or
+privileged operations. The package also contains a separate owner-confirmed
+manual restart implementation used by the native app; it does not use the signed
+runbook contracts. See [current deployment](pilot-acceptance.md).
 Production certificate enrollment/revocation, secure OS key storage/rotation, receiver
 implementation, separate process permissions, retention enforcement in a real spool,
 and three-host deployment verification remain unmet integration acceptance work.
