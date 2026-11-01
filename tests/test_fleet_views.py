@@ -128,7 +128,16 @@ class FleetLayoutTests(unittest.TestCase):
         self.assertIn('<span class="adv">offline</span>', page)
         self.assertNotIn('<span class="adv">running</span>', page)
         self.assertIn("2 of 3 reported records", page)
-        self.assertIn("recent · 0 s before read", page)
+        # Status is plain text; the freshness glyph sits on the freshness line, not beside the status.
+        self.assertIn('<span class="fleet-status">running</span><span class="fleet-sub"><span class="ev ev-observed">report current', page)
+        self.assertNotIn('<span class="ev ev-observed">running', page)
+        self.assertIn("1 reported offline or failing · 1 with an unknown heartbeat", page)
+        self.assertNotIn("before read", page)
+
+    def test_older_heartbeat_age_is_measured_from_now(self):
+        page = render_view("fleet", None, None, inventory=self.inventory(), now="2026-11-01T03:00:00Z")
+        self.assertIn("older · 3 h ago", page)
+        self.assertIn("(3 h ago)", page)
 
     def test_inventory_table_keeps_the_scroll_container_native_layout_measures(self):
         # The compiled native self-test measures .fleet-inventory inside its .scroll wrapper.

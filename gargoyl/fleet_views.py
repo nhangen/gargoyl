@@ -76,9 +76,12 @@ FLEET_STYLE = (
     ".fleet-id{display:block;font-family:var(--mono);font-size:12px;color:var(--text-muted);"
     "margin-top:3px;overflow-wrap:anywhere;-webkit-user-select:all;user-select:all}"
     ".fleet-src,.fleet-sub{display:block;font-size:12px;color:var(--text-faint);margin-top:2px}"
-    ".fleet-dup{display:block;font-size:12px;color:var(--stale);margin-top:2px}"
-    ".fleet-here{display:inline-flex;padding:2px 8px;border-radius:999px;font-size:12px;"
-    "font-weight:600;color:var(--accent-ink);background:var(--accent)}</style>"
+    ".fleet-dup{display:block;font-size:12px;color:var(--text-muted);margin-top:2px}"
+    ".fleet-here{display:inline-flex;margin-top:4px;padding:1px 8px;border-radius:999px;font-size:12px;"
+    "font-weight:600;color:var(--text);border:1px solid var(--line-strong)}"
+    ".fleet-status{font-size:14px}.fleet-status .adv{font-weight:600}"
+    ".fleet-summary{margin:4px 0 0;font-size:13px;color:var(--text-muted)}"
+    ".fleet-inventory td.fleet-version{white-space:nowrap}</style>"
 )
 
 
@@ -93,26 +96,34 @@ def _age(seconds):
     return f"{seconds // 86400} days"
 
 
-def _heartbeat_cell(inventory, row, heartbeat):
+def _heartbeat_cell(row, heartbeat, now):
     shown = compact_time(row["heartbeat_at"])
     if shown is None:
         reason = HEARTBEAT_REASONS.get(row.get("heartbeat_reason"), "Unknown cached evidence")
         return '<span class="ev ev-unknown">' + e(reason) + '</span><span class="fleet-sub">unknown</span>'
     sub = heartbeat
-    gap = (timestamp(inventory["fetched_at"]) - timestamp(row["heartbeat_at"])).total_seconds()
-    if gap >= 0:
-        sub += " · " + _age(gap) + " before read"
+    # Age is measured against now, the same reference recency uses; recent rows need no age.
+    gap = (timestamp(now) - timestamp(row["heartbeat_at"])).total_seconds()
+    if heartbeat == "older" and gap >= 0:
+        sub += " · " + _age(gap) + " ago"
     return ('<span class="ev ' + GLYPH[heartbeat] + ' mono">' + e(shown) + '</span><span class="fleet-sub">'
             + e(sub) + "</span>")
 
 
-def _report_cell(row, report):
+def _adverse(row):
     status = row["reported_status"]
-    text = e(status) if status else "status not reported"
-    if status and status.lower() in ADVERSE_STATUSES:
+    return bool(status) and status.lower() in ADVERSE_STATUSES
+
+
+def _report_cell(row, report):
+    # The reported value is plain text (outlined when adverse); the freshness glyph describes
+    # the report, so it sits on the freshness line, never beside the status as a health light.
+    status = row["reported_status"]
+    text = e(status) if status else '<span class="faint">status not reported</span>'
+    if _adverse(row):
         text = '<span class="adv">' + text + "</span>"
-    return ('<span class="ev ' + GLYPH[report] + '">' + text + '</span><span class="fleet-sub">report '
-            + e(report) + "</span>")
+    return ('<span class="fleet-status">' + text + '</span><span class="fleet-sub"><span class="ev '
+            + GLYPH[report] + '">report ' + e(report) + "</span></span>")
 
 
 def render_fleet(
@@ -193,10 +204,12 @@ def render_fleet(
     else:
         rows = inventory["providers"]
         count = str(len(rows)) + (" of " + str(inventory["reported_total"]) if inventory["reported_total"] is not None else "")
+        read_gap = (timestamp(now) - timestamp(inventory["fetched_at"])).total_seconds()
+        read_age = " (" + _age(read_gap) + " ago)" if read_gap >= 0 else ""
         body += (
             "<section id='fleet-overview' aria-labelledby='inventory-title'><div class='section-head'>"
             "<h2 id='inventory-title'>Owned provider inventory</h2><p>" + count + " reported records · read "
-            + e(compact_time(inventory["fetched_at"])) + " · session last reported " + e(inventory["connection"])
+            + e(compact_time(inventory["fetched_at"])) + read_age + " · session last reported " + e(inventory["connection"])
             + ". This is account-reported inventory, not independent remote process verification.</p></div>"
         )
         if inventory["partial"]:
@@ -281,13 +294,23 @@ def render_fleet(
                 for r in rows
                 if FLEET_FILTERS[view] is None or states[r["id"]][1] == FLEET_FILTERS[view]
             ]
+            noted = [
+                (sum(1 for r in rows if _adverse(r)), "reported offline or failing"),
+                (sum(1 for r in rows if not r["reported_status"]), "with no reported status"),
+                (counts["fleet-older"], "with an older heartbeat"),
+                (counts["fleet-unknown"], "with an unknown heartbeat"),
+            ]
+            noted = [str(n) + " " + text for n, text in noted if n]
+            if rows:
+                body += ('<p class="fleet-summary">' + (" · ".join(noted) if noted
+                         else "Every record has a reported status and a recent heartbeat.") + "</p>")
             labels = [aliases.get(r["id"], r["name"]) for r in rows]
             duplicated = {label for label in labels if labels.count(label) > 1}
             body += (
                 '<p class="fleet-scroll-hint">Scroll the table sideways to see all evidence.</p>'
                 '<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'
                 '<table class="fleet-inventory"><thead><tr><th scope="col">Provider</th><th scope="col">Coordinator report</th>'
-                '<th scope="col">Last heartbeat</th><th scope="col">Version</th><th scope="col">This Mac</th></tr></thead><tbody>'
+                '<th scope="col">Last heartbeat</th><th scope="col">Version</th></tr></thead><tbody>'
             )
             for row in shown:
                 report, heartbeat = states[row["id"]]
@@ -302,14 +325,12 @@ def render_fleet(
                     '<tr><th scope="row"><a href="gargoyl-view://fleet-node-' + provider_key(row["id"]) + '/">'
                     + e(label) + '</a><span class="fleet-id">' + e(row["id"]) + '</span><span class="fleet-src">'
                     + e(source) + "</span>"
-                    + ('<span class="fleet-dup">Same label as another record. Use Local aliases… in the toolbar to tell them apart.</span>'
+                    + ('<span class="fleet-dup">Same label as another record · use Local aliases…</span>'
                        if label in duplicated else "")
-                    + "</th><td>" + _report_cell(row, report) + "</td><td>" + _heartbeat_cell(inventory, row, heartbeat)
-                    + '</td><td>' + ('<span class="mono">' + e(row["version"]) + "</span>" if row["version"] else '<span class="faint">not reported</span>') + "</td><td>"
                     + ('<span class="fleet-here">This Mac</span><span class="fleet-sub">' + e(alias)
-                       + " · unique identity match</span>" if matched == row["id"]
-                       else '<span class="faint">not locally observed</span>')
-                    + "</td></tr>"
+                       + " · unique identity match</span>" if matched == row["id"] else "")
+                    + "</th><td>" + _report_cell(row, report) + "</td><td>" + _heartbeat_cell(row, heartbeat, now)
+                    + '</td><td class="fleet-version">' + ('<span class="mono">' + e(row["version"]) + "</span>" if row["version"] else '<span class="faint">not reported</span>') + "</td></tr>"
                 )
             body += "</tbody></table></div>"
             if not shown:
@@ -326,8 +347,8 @@ def render_fleet(
         body += "</section>"
     body += local_body
     body += (
-        '<section id="needs-attention" aria-labelledby="limits-title"><h2 id="limits-title">Coverage and limits</h2>'
-        '<p class="muted">Missing or older reports need fresh evidence; no health is inferred from them. Account status '
+        '<section id="needs-attention" aria-labelledby="limits-title"><div class="section-head">'
+        '<h2 id="limits-title">Coverage and limits</h2></div><p class="muted">Missing or older reports need fresh evidence; no health is inferred from them. Account status '
         "is a coordinator report, not independent remote health. No repair is inferred. Account metadata is private "
         "to the Mac app: the public loopback dashboard and existing export remain local-telemetry-only, and fleet "
         "reads use no financial, model-name or provider-control endpoints.</p></section>"

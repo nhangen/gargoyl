@@ -45,8 +45,8 @@
     .prov a { font-weight: 600; }
     .prov .id { display: block; font-family: var(--mono); font-size: 12px; color: var(--text-muted); margin-top: 3px; user-select: all; overflow-wrap: anywhere; }
     .prov .src { display: block; font-size: 12px; color: var(--text-faint); margin-top: 2px; }
-    .dup { display: block; font-size: 12px; color: var(--stale); margin-top: 2px; }
-    .here { display: inline-flex; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--accent-ink); background: var(--accent); }
+    .dup { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .here { display: inline-flex; margin-top: 4px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--text); border: 1px solid var(--line-strong); }
     .cell-sub { display: block; font-size: 12px; color: var(--text-faint); margin-top: 3px; }
     .scroll-hint { display: none; font-size: 12px; color: var(--text-faint); }
     @media (max-width: 700px) { .scroll-hint { display: block; } }
@@ -70,7 +70,7 @@
     <span class="wtitle">Gargoyl</span>
     <div class="tb" role="toolbar" aria-label="Native toolbar (NSToolbar)">
       <div class="menu-wrap">
-        <button class="tbtn open" aria-haspopup="menu" aria-expanded="true">Account · <span class="ev ev-observed">connected</span> <span class="caret">▼</span></button>
+        <button class="tbtn open" aria-haspopup="menu" aria-expanded="true">Account · session open <span class="caret">▼</span></button>
         <div class="menu" role="menu" aria-label="Account">
           <div class="head">Darkbloom account · read-only</div>
           <div class="dis">Connect fleet…</div>
@@ -148,38 +148,35 @@
           <li><a href="#">Unknown heartbeat <span class="n">1</span></a></li>
         </ul>
 
+        <p class="muted" style="font-size:13px">1 reported offline or failing · 1 with no reported status · 1 with an older heartbeat · 1 with an unknown heartbeat</p>
         <p class="scroll-hint">Scroll the table sideways to see all evidence.</p>
         <div class="table-wrap" tabindex="0" role="region" aria-label="Owned providers">
           <table class="fleet">
-            <thead><tr><th scope="col">Provider</th><th scope="col">Coordinator report</th><th scope="col">Last heartbeat</th><th scope="col">Version</th><th scope="col">This Mac</th></tr></thead>
+            <thead><tr><th scope="col">Provider</th><th scope="col">Coordinator report</th><th scope="col">Last heartbeat</th><th scope="col">Version</th></tr></thead>
             <tbody>
               <tr>
                 <th scope="row" class="prov"><a href="#">Studio · office</a><span class="id">6d18aa14-0000-4000-8000-00000000ef01</span><span class="src">Local alias · hardware model “Mac14,13”</span></th>
-                <td><span class="ev ev-observed">online</span><span class="cell-sub">report current</span></td>
-                <td><span class="ev ev-observed mono">2026-11-01 15:56:03Z</span><span class="cell-sub">recent · 2 s before read</span></td>
+                <td>online<span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td><span class="ev ev-observed mono">2026-11-01 15:56:03Z</span><span class="cell-sub">recent</span></td>
                 <td class="mono">0.10.6</td>
-                <td><span class="faint">not locally observed</span></td>
               </tr>
               <tr>
-                <th scope="row" class="prov"><a href="#">MBP-26</a><span class="id">9b07cc22-0000-4000-8000-0000000041a8</span><span class="src">Local alias · source name “mbp-provider”</span></th>
-                <td><span class="ev ev-observed">online</span><span class="cell-sub">report current</span></td>
-                <td><span class="ev ev-observed mono">2026-11-01 15:55:58Z</span><span class="cell-sub">recent · 7 s before read</span></td>
+                <th scope="row" class="prov"><a href="#">MBP-26</a><span class="id">9b07cc22-0000-4000-8000-0000000041a8</span><span class="src">Local alias · source name “mbp-provider”</span><span class="here">This Mac</span><span class="cell-sub">unique identity match</span></th>
+                <td>online<span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td><span class="ev ev-observed mono">2026-11-01 15:55:58Z</span><span class="cell-sub">recent</span></td>
                 <td class="mono">0.10.6</td>
-                <td><span class="here">This Mac</span><span class="cell-sub">unique identity match</span></td>
               </tr>
               <tr>
                 <th scope="row" class="prov"><a href="#">Mac13,1</a><span class="id">4532bb55-0000-4000-8000-00000000d60f</span><span class="src">Hardware model</span><span class="dup">Same label as another record · <a href="#">Set alias…</a></span></th>
-                <td><span class="ev ev-observed"><span class="adv">offline</span></span><span class="cell-sub">report current</span></td>
-                <td><span class="ev ev-stale mono">2026-09-28 14:07:33Z</span><span class="cell-sub">older · 34 days before read</span></td>
+                <td><span class="adv">offline</span><span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td><span class="ev ev-stale mono">2026-09-28 14:07:33Z</span><span class="cell-sub">older · 34 days ago</span></td>
                 <td class="mono">0.10.5</td>
-                <td><span class="faint">not locally observed</span></td>
               </tr>
               <tr>
                 <th scope="row" class="prov"><a href="#">Mac13,1</a><span class="id">c2e1dd90-0000-4000-8000-00000000a3b2</span><span class="src">Hardware model</span><span class="dup">Same label as another record · <a href="#">Set alias…</a></span></th>
-                <td><span class="ev ev-observed">status not reported</span><span class="cell-sub">report current</span></td>
+                <td><span class="faint">status not reported</span><span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
                 <td><span class="ev ev-unknown">Invalid timestamp</span><span class="cell-sub">unknown</span></td>
                 <td class="faint">not reported</td>
-                <td><span class="faint">not locally observed</span></td>
               </tr>
             </tbody>
           </table>
