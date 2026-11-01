@@ -14,6 +14,24 @@ VIEWS = ("tools", "evidence", "history", "operation", "details")
 LABELS = ("Operator tools", "Live evidence", "Traffic history", "Manual operation", "Local details")
 
 
+NATIVE_STYLE = """<style>@media (max-width:600px) {
+.topbar { padding:8px 12px; gap:6px 12px; }
+.nav ul { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); padding:4px 8px; gap:2px; }
+.nav a { min-height:30px; padding:3px 5px; font-size:12px; white-space:normal; }
+main { padding:12px 14px 32px; } main > h1 { font-size:24px; }
+main > p { margin:8px 0; font-size:13px; } main > section { margin:18px 0; }
+.tool { padding:12px; } .st { white-space:normal; }
+}</style>"""
+
+
+def native_document(html):
+    return html.replace('</head>', NATIVE_STYLE + '</head>', 1).replace('href="#', 'href="about:blank#')
+
+
+def display_time(value):
+    return timestamp(value).strftime('%Y-%m-%d %H:%M:%SZ')
+
+
 def e(value):
     return escape(str(value), quote=True)
 
@@ -73,16 +91,15 @@ def render_view(view, evidence, record, *, journal_available=True, now=None):
         html = html.replace('<main id="main">', '<main id="main">' + notice, 1)
         if len(html.encode()) > 500000:
             raise ValueError("view limit")
-        return html.replace('href="#', 'href="about:blank#')
+        return native_document(html)
     body = '<h1>' + LABELS[VIEWS.index(view)] + '</h1>'
-    body += ('<p>Native Mac app · automatic repair is off. Use Refresh to load current evidence '
-             'and re-evaluate freshness. Views do not refresh automatically.</p>')
+    body += ('<p>Refresh updates stored evidence and freshness. Views do not update automatically.</p>')
     if evidence is None:
         body += ('<div class="callout warn"><p>Monitor evidence unavailable — health, eligibility, '
                  'model and traffic are unknown. Use Start monitoring if needed, then Refresh. '
                  'This does not start Darkbloom or resolve an uncertain operation.</p></div>')
     else:
-        body += '<p class="muted">Viewed at ' + e(now) + ' · monitor evaluated at ' + e(evidence['evaluated_at']) + '</p>'
+        body += '<p class="muted">Viewed at ' + e(display_time(now)) + ' · report ' + e(display_time(evidence['evaluated_at'])) + '</p>'
     if view == "tools":
         body += '<section><h2>Inspect and operate</h2><ul class="tool-list">'
         body += card("Health, model and connection", "Normalized observations and daemon reports, with source timestamps, stale and unknown states. Protocol compatibility remains unknown.", view="evidence")
@@ -150,4 +167,4 @@ def render_view(view, evidence, record, *, journal_available=True, now=None):
     html = page_start(LABELS[VIEWS.index(view)] + ' · Gargoyl', extra_nav=nav(view), badge="Native operator console") + body + PAGE_END
     if len(html.encode()) > 500000:
         raise ValueError("view limit")
-    return html.replace('href="#', 'href="about:blank#')
+    return native_document(html)

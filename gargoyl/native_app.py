@@ -177,25 +177,28 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.minSize = NSSize(width:390,height:600); window.delegate = self
         let content = NSView(); window.contentView = content
-        let bar = NSStackView(); bar.orientation = .horizontal; bar.spacing = 8
+        let bar = NSStackView(); bar.orientation = .vertical; bar.alignment = .leading; bar.spacing = 6
+        let actionRows = [NSStackView(), NSStackView()]
+        for row in actionRows { row.orientation = .horizontal; row.spacing = 8; bar.addArrangedSubview(row) }
         let actions: [(String, Selector)] = [("Start monitoring",#selector(startMonitor)),("Stop monitoring",#selector(stopMonitor)),("Refresh",#selector(refresh)),("Export…",#selector(exportReport)),("Operation status",#selector(operationStatus)),("Restart provider…",#selector(restartProvider))]
-        for (title, selector) in actions {
+        for (index, action) in actions.enumerated() {
+            let (title, selector) = action
             let button = NSButton(title:title,target:self,action:selector); button.bezelStyle = .rounded
             if selector == #selector(restartProvider) { restartButton = button }
             if previewOnly && [#selector(startMonitor),#selector(stopMonitor),#selector(restartProvider)].contains(selector) { button.isEnabled = false }
-            bar.addArrangedSubview(button)
+            actionRows[index / 3].addArrangedSubview(button)
         }
         let config = WKWebViewConfiguration(); config.defaultWebpagePreferences.allowsContentJavaScript = false
         config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self; web.uiDelegate = self
         let scroll = NSScrollView(); scroll.hasHorizontalScroller = true; scroll.documentView = bar
-        bar.frame = NSRect(x:0,y:0,width:bar.fittingSize.width,height:36)
+        bar.frame = NSRect(x:0,y:0,width:bar.fittingSize.width,height:68)
         let stack = NSStackView(views:[scroll,status,web]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(stack)
         scroll.translatesAutoresizingMaskIntoConstraints = false; status.translatesAutoresizingMaskIntoConstraints = false; web.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo:content.leadingAnchor,constant:10),stack.trailingAnchor.constraint(equalTo:content.trailingAnchor,constant:-10),stack.topAnchor.constraint(equalTo:content.topAnchor,constant:10),stack.bottomAnchor.constraint(equalTo:content.bottomAnchor,constant:-10),
-            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:42),
+            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:74),
             status.widthAnchor.constraint(equalTo:stack.widthAnchor),web.widthAnchor.constraint(equalTo:stack.widthAnchor),web.heightAnchor.constraint(greaterThanOrEqualToConstant:300)
         ])
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
@@ -221,7 +224,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                       value["kind"] as? String == "view", value["view"] as? String == view,
                       let html = value["html"] as? String, html.utf8.count <= 500000 else { return }
                 delivered = true; self.viewPhase = "received private HTML"
-                if self.restartWorker == nil { self.show("Read-only views. Provider restart requires Mac confirmation; automatic repair is off.") }
+                self.finishViewLoading()
                 self.web.loadHTMLString(html,baseURL:URL(string:"about:blank"))
             },finished:{ [weak self] completed in
                 guard let self = self, self.viewWorker === completed else { return }
@@ -234,6 +237,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         } catch {
             viewPhase = "worker launch unavailable"
             web.loadHTMLString("<html><body><h1>View unavailable</h1><p>Active Mac owner or installed worker unavailable. No provider action was performed.</p></body></html>",baseURL:URL(string:"about:blank"))
+        }
+    }
+    func finishViewLoading() {
+        if status.stringValue == "Loading read-only operator console… Automatic repair is off." {
+            show("Read-only views. Provider restart requires Mac confirmation; automatic repair is off.")
         }
     }
     func show(_ text: String) { status.stringValue = String(text.prefix(4000)) }
@@ -391,6 +399,11 @@ final class ResourceFixture: NSObject, WKNavigationDelegate {
 }
 if CommandLine.arguments.contains("--self-test") {
     let fixtureApplication = NSApplication.shared
+    let statusFixture = App()
+    statusFixture.finishViewLoading(); precondition(statusFixture.status.stringValue.hasPrefix("Read-only views."))
+    let uncertain = "Restart completion is unverified. No automatic retry. Inspect Operation status."
+    statusFixture.show(uncertain); statusFixture.finishViewLoading()
+    precondition(statusFixture.status.stringValue == uncertain)
     let appMenu = makeApplicationMenu(fixtureApplication)
     precondition(appMenu.items[0].action == #selector(NSApplication.hide(_:)))
     precondition(appMenu.items[0].keyEquivalent == "h" && appMenu.items[0].keyEquivalentModifierMask == [.command])

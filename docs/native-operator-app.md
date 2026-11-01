@@ -121,3 +121,8 @@ through the real worker using a controlled fake executable on the active pilot
 owner account. Help → Window diagnostics also shows bounded in-memory loading
 phase, rule readiness and WebView dimensions; document-title presence alone is
 not a visual acceptance verdict.
+
+All six native actions remain visible in two compact rows at the 390px minimum
+window width. Narrow native views retain the theme but compact the navigation
+and display timestamps to whole seconds. Terminal operation warnings are kept
+when refreshing a view; loading text never replaces an unknown/no-retry outcome.
