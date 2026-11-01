@@ -17,11 +17,12 @@ The first pilot targets MBP26, `studio64-1`, and `studio64-2`:
 
 ## Current coverage
 
-The installed runtime monitors only `MBP-2026.local`. The three-machine pilot above
-is a target, not delivered fleet coverage. Its internal pilot UUID is not a
-Darkbloom provider ID. An authenticated read-only account inventory connection is
-in progress; actual account provider names/IDs and coordinator reports are not yet
-collected. See the [fleet-manager foundation and acceptance status](docs/fleet-manager.md).
+The local collector observes `MBP-2026.local` directly. The native account fleet
+manager now reads actual owned-provider IDs and coordinator reports through a
+graphical read-only connection; live acceptance confirmed the real account
+inventory. Other machines' status remains coordinator-reported, not independent
+remote process monitoring. The internal pilot UUID is not a Darkbloom provider ID.
+See [fleet operation, aliases and sign-in](docs/fleet-manager.md).
 
 ## Safety and privacy
 
@@ -32,12 +33,12 @@ collected. See the [fleet-manager foundation and acceptance status](docs/fleet-m
 
 ## Roadmap
 
-The next core delivery is the graphical read-only account fleet manager: verify
-actual owned inventory, preserve source IDs/names, distinguish local observations
-from coordinator reports, and expose inventory/filter/detail views. It remains
-incomplete until real account acceptance passes; no fake fleet entries substitute
-for it. This advances identity epic#1 and fleet evidence epic#3. Durable normalized
-history remains separate epic#2 work.
+The native read-only account fleet manager delivers real inventory, source IDs,
+provenance, filters and provider details. Local friendly aliases, explicit
+heartbeat-format evidence and opt-in remembered sign-in improve normal graphical
+operation. Actual Keychain activation/restore acceptance is separate from code and
+fake-adapter tests. Independent remote observation and durable normalized history
+remain later work; no synthetic entries substitute for missing coverage.
 
 The GitHub epics define the implementation sequence: privacy and identity foundation, collector, evidence dashboard, controlled repair runbooks, then pilot hardening.
 

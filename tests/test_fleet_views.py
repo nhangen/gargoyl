@@ -33,7 +33,7 @@ class FleetViewTests(unittest.TestCase):
             page.index("Owned provider inventory"), page.index("This Mac ·")
         )
         self.assertIn("provider-real-format-test-only", page)
-        self.assertIn("source_name", page)
+        self.assertIn("Source name", page)
         self.assertIn("not independent remote process verification", page)
         detail = "fleet-node-" + provider_key(value["providers"][0]["id"])
         self.assertIn("gargoyl-view://" + detail + "/", page)

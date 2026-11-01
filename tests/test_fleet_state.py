@@ -90,6 +90,51 @@ class FleetStateTests(unittest.TestCase):
         row["heartbeat_at"] = None
         self.assertEqual(evidence_state(value, row, NOW), ("stale", "unknown"))
 
+    def test_fractional_api_timestamps_and_offsets_normalize_without_relaxing_v1(self):
+        from gargoyl.fleet_state import heartbeat
+        from gargoyl.telemetry import timestamp
+
+        for digits in range(1, 10):
+            raw = {"last_heartbeat": "2026-11-01T01:00:00." + "1" * digits + "+01:00"}
+            at, reason, source, precision = heartbeat(raw)
+            self.assertEqual(
+                (reason, source, precision), ("reported", "last_heartbeat", digits)
+            )
+            self.assertTrue(at.startswith("2026-11-01T00:00:00."))
+            timestamp(at)
+        with self.assertRaises(ValueError):
+            timestamp("2026-11-01T00:00:00.123456789Z")
+
+    def test_missing_invalid_and_numeric_units_are_distinguished_not_invented(self):
+        from gargoyl.fleet_state import heartbeat
+
+        cases = [
+            ({}, "not_reported"),
+            ({"last_seen": 1234567890}, "unsupported_type"),
+            ({"last_heartbeat": True}, "unsupported_type"),
+            ({"last_seen": "2026-02-30T00:00:00Z"}, "invalid_timestamp"),
+            ({"last_seen": "private arbitrary payload"}, "invalid_timestamp"),
+        ]
+        for raw, reason in cases:
+            result = heartbeat(raw)
+            self.assertIsNone(result[0])
+            self.assertEqual(result[1], reason)
+        raw = response()
+        raw["providers"][0]["last_heartbeat"] = "2026-11-01T01:00:00.123456789Z"
+        value = normalize_inventory(raw, NOW)
+        row = value["providers"][0]
+        self.assertEqual(row["heartbeat_precision"], 9)
+        self.assertEqual(evidence_state(value, row, NOW)[1], "unknown")
+        self.assertEqual(validate_inventory(value), value)
+
+    def test_legacy_cached_inventory_remains_readable_until_refreshed(self):
+        value = normalize_inventory(response(), NOW)
+        value["schema"] = 1
+        for row in value["providers"]:
+            for key in ["heartbeat_reason", "heartbeat_source", "heartbeat_precision"]:
+                row.pop(key)
+        self.assertEqual(validate_inventory(value), value)
+
     def test_cache_ownership_symlink_and_retention_boundaries(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()

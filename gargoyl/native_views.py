@@ -53,7 +53,7 @@ def valid_view(view):
     return view in VIEWS or fleet_mode(view)
 
 
-def render_view(view, evidence, record, *, journal_available=True, now=None, inventory=None, local=None, local_alias="This Mac"):
+def render_view(view, evidence, record, *, journal_available=True, now=None, inventory=None, local=None, local_alias="This Mac", aliases=None, aliases_available=True):
     """Inputs are reconstructed normalized export and validated journal; never raw HTML."""
     if not valid_view(view):
         raise ValueError("unsupported view")
@@ -70,7 +70,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         evidence = dict(evidence, snapshots=samples)
     if view.startswith("fleet"):
         from gargoyl.fleet_views import render_fleet
-        html = native_document(render_fleet(view, inventory, evidence, local, local_alias, now, nav("fleet")))
+        html = native_document(render_fleet(view, inventory, evidence, local, local_alias, now, nav("fleet"), aliases=aliases, aliases_available=aliases_available))
         if len(html.encode()) > 500000:
             raise ValueError("view limit")
         return html

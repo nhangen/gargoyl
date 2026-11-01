@@ -69,7 +69,7 @@ def emit(value):
         pass
 
 
-def read_confirmation(stream, *, timeout=90, monotonic=time.monotonic):
+def read_confirmation(stream, *, timeout=90, monotonic=time.monotonic, decoder=json.loads):
     deadline = monotonic() + timeout
     payload = bytearray()
     with selectors.DefaultSelector() as selector:
@@ -88,7 +88,7 @@ def read_confirmation(stream, *, timeout=90, monotonic=time.monotonic):
                 line, extra = bytes(payload).split(b"\n", 1)
                 if extra:
                     raise ValueError("multiple confirmations")
-                return json.loads(line)
+                return decoder(line)
     raise ValueError("confirmation unavailable")
 
 
@@ -308,6 +308,7 @@ def native_view(mode):
             journal_available = False
     extra = {}
     if view.startswith("fleet"):
+        from gargoyl.fleet_aliases import AliasStore
         from gargoyl.fleet_identity import pilot_identity
         from gargoyl.fleet_state import FleetCache, utc_now
         home = owner_home()
@@ -320,9 +321,36 @@ def native_view(mode):
             extra["local"] = pilot_identity(home, at)
         except (OSError, ValueError):
             extra["local"] = None
+        try:
+            extra["aliases"] = AliasStore(home / "Library/Application Support/Gargoyl", os.getuid()).read()
+        except (OSError, ValueError):
+            extra["aliases_available"] = False
         extra["local_alias"] = socket.gethostname()
     return dict(kind="view", view=view, html=render_view(
         view, evidence, record, journal_available=journal_available, **extra))
+
+
+def alias_inventory(home, now):
+    from gargoyl.fleet_aliases import AliasStore
+    from gargoyl.fleet_state import FleetCache
+    directory = home / "Library/Application Support/Gargoyl"
+    inventory = FleetCache(directory, os.getuid()).read(now)
+    if inventory is None:
+        raise ValueError("account inventory unavailable")
+    aliases = AliasStore(directory, os.getuid()).read()
+    return dict(kind="fleet-alias-list", providers=[dict(id=p['id'], name=p['name'], alias=aliases.get(p['id'], '')) for p in inventory['providers']])
+
+
+def set_local_alias(home, request, now, *, owner=console_owner):
+    from gargoyl.fleet_aliases import AliasStore
+    from gargoyl.fleet_state import FleetCache
+    if not owner() or type(request) is not dict or set(request) != {"provider_id", "alias"}:
+        raise ValueError("alias request unavailable")
+    directory = home / "Library/Application Support/Gargoyl"
+    inventory = FleetCache(directory, os.getuid()).read(now)
+    if inventory is None:
+        raise ValueError("account inventory unavailable")
+    AliasStore(directory, os.getuid()).set(request['provider_id'], request['alias'], inventory)
 
 
 def main():
@@ -359,15 +387,46 @@ def main():
                 json.dumps(dict(kind="export", payload=export_evidence())) + "\n"
             )
             sys.stdout.flush()
-        elif mode == "fleet-session":
-            from gargoyl.fleet_session import pipe_wait, private_send, run_session
+        elif mode in {"fleet-alias-list", "fleet-alias-set"}:
+            from gargoyl.fleet_state import utc_now
+            if not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode) or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode):
+                raise ValueError("private pipes required")
+            if mode == "fleet-alias-list":
+                emit(alias_inventory(owner_home(), utc_now()))
+            else:
+                set_local_alias(owner_home(), read_confirmation(sys.stdin.buffer), utc_now())
+                emit(dict(kind="status", text="Local alias saved. Source names, actual IDs and provider settings are unchanged."))
+        elif mode in {"fleet-session", "fleet-session-remember", "fleet-restore"}:
+            from gargoyl.fleet_session import (
+                PERSISTENT_SESSION_SECONDS,
+                SESSION_SECONDS,
+                pipe_wait,
+                private_send,
+                run_session,
+            )
             from gargoyl.fleet_state import FleetCache
             if not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode) or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode):
                 raise ValueError("private pipes required")
+            restored = None
+            duration = PERSISTENT_SESSION_SECONDS if mode == "fleet-session-remember" else SESSION_SECONDS
+            if mode == "fleet-restore":
+                from gargoyl.fleet_account import decode_json, token_valid
+                request = read_confirmation(sys.stdin.buffer, timeout=15, decoder=decode_json)
+                if type(request) is not dict or set(request) != {"purpose", "token", "valid_until"} or request["purpose"] != "desktop_account" or not token_valid(request["token"]):
+                    raise ValueError("saved account scope unavailable")
+                import math
+                import time
+                until=request["valid_until"]
+                if type(until) not in {int,float} or not math.isfinite(until):
+                    raise ValueError("saved account expiry unavailable")
+                duration=until-time.time()
+                if not 0 < duration <= PERSISTENT_SESSION_SECONDS:
+                    raise ValueError("saved account expired")
+                restored = request["token"]
             os.set_blocking(sys.stdout.fileno(), False)
             run_session(FleetCache(owner_home() / "Library/Application Support/Gargoyl", os.getuid()),
                         owner=console_owner, wait=lambda seconds: pipe_wait(sys.stdin.buffer, seconds, console_owner),
-                        send=private_send)
+                        send=private_send, initial_token=restored, remember=mode == "fleet-session-remember", session_seconds=duration)
         elif mode == "restart":
             if not stat.S_ISFIFO(
                 os.fstat(sys.stdin.fileno()).st_mode

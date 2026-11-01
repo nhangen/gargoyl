@@ -5,6 +5,115 @@ import AppKit
 import WebKit
 import LocalAuthentication
 import SystemConfiguration
+import Security
+
+// Traditional local login keychain. Never uses a shared Python trust identity,
+// access groups, synchronization, data-protection entitlements or widened ACLs.
+struct SavedFleetCredential: CustomStringConvertible {
+    let token:String
+    let recordID:String
+    init(token:String,created:Double,expires:Double,recordID:String=UUID().uuidString.lowercased()) { self.token=token; self.created=created; self.expires=expires; self.recordID=recordID }
+    let created:Double
+    let expires:Double
+    var description:String { return "<private read-only account session>" }
+    static func tokenValid(_ token:String) -> Bool { token.range(of:"^darkbloom-at-[A-Za-z0-9._~-]{8,2048}$",options:.regularExpression) != nil }
+    func encoded() -> Data? {
+        return try? JSONSerialization.data(withJSONObject:["schema":1,"purpose":"desktop_account","token":token,"created":created,"expires":expires,"record_id":recordID])
+    }
+    static func decode(_ data:Data, now:Double) -> SavedFleetCredential? {
+        guard data.count <= 4096, let value=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any],
+              Set(value.keys) == Set(["schema","purpose","token","created","expires","record_id"]),
+              let schema=value["schema"] as? NSNumber, CFGetTypeID(schema) != CFBooleanGetTypeID(), schema.doubleValue == 1,
+              value["purpose"] as? String == "desktop_account", let token=value["token"] as? String, tokenValid(token),
+              let recordID=value["record_id"] as? String, let uuid=UUID(uuidString:recordID), uuid.uuidString.lowercased() == recordID,
+              let c=value["created"] as? NSNumber, CFGetTypeID(c) != CFBooleanGetTypeID(),
+              let x=value["expires"] as? NSNumber, CFGetTypeID(x) != CFBooleanGetTypeID() else { return nil }
+        guard let encoded=String(data:data,encoding:.utf8) else { return nil }
+        for key in ["schema","purpose","token","created","expires","record_id"] {
+            let pattern="\"" + key + "\"\\s*:"
+            guard let regex=try? NSRegularExpression(pattern:pattern), regex.numberOfMatches(in:encoded,range:NSRange(encoded.startIndex...,in:encoded)) == 1 else { return nil }
+        }
+        let created=c.doubleValue, expires=x.doubleValue
+        guard now.isFinite, created.isFinite, expires.isFinite, created > 0, created <= now,
+              expires > created, expires - created <= 30 * 86400 else { return nil }
+        return SavedFleetCredential(token:token,created:created,expires:expires,recordID:recordID)
+    }
+}
+struct FleetCredentialGate {
+    var consumed=false
+    mutating func take(_ value:[String:Any], mode:String, remember:Bool, owner:Bool, generation:Int, current:Int) -> String? {
+        guard !consumed, mode == "fleet-session-remember", remember, owner, generation == current,
+              Set(value.keys) == Set(["kind","purpose","token"]), value["kind"] as? String == "fleet-credential",
+              value["purpose"] as? String == "desktop_account", let token=value["token"] as? String, SavedFleetCredential.tokenValid(token) else { return nil }
+        consumed=true; return token
+    }
+}
+final class FleetSavedSessionState {
+    var credential:SavedFleetCredential?
+    var revoked=false
+    var stored=false
+}
+enum FleetRemovalRequest { case all; case matching(SavedFleetCredential) }
+final class LoginFleetCredentialStore {
+    static let service="dev.gargoyl.read-only-fleet"
+    static let account="desktop_account"
+    let open:()->(OSStatus,AnyObject?)
+    let copy:(CFDictionary)->(OSStatus,CFTypeRef?)
+    let add:(CFDictionary)->OSStatus
+    let update:(CFDictionary,CFDictionary)->OSStatus
+    let delete:(CFDictionary)->OSStatus
+    init(open:@escaping ()->(OSStatus,AnyObject?) = LoginFleetCredentialStore.openLogin,
+         copy:@escaping (CFDictionary)->(OSStatus,CFTypeRef?) = { query in var out:CFTypeRef?; let status=SecItemCopyMatching(query,&out); return (status,out) },
+         add:@escaping (CFDictionary)->OSStatus = { SecItemAdd($0,nil) },
+         update:@escaping (CFDictionary,CFDictionary)->OSStatus = { SecItemUpdate($0,$1) },
+         delete:@escaping (CFDictionary)->OSStatus = { SecItemDelete($0) }) {
+        self.open=open; self.copy=copy; self.add=add; self.update=update; self.delete=delete
+    }
+    static func openLogin()->(OSStatus,AnyObject?) {
+        let path=NSHomeDirectory()+"/Library/Keychains/login.keychain-db"
+        let url=URL(fileURLWithPath:path)
+        guard url.resolvingSymlinksInPath().path == path,
+              let attrs=try? FileManager.default.attributesOfItem(atPath:path),
+              (attrs[.ownerAccountID] as? NSNumber)?.intValue == Int(getuid()),
+              let mode=attrs[.posixPermissions] as? NSNumber, mode.intValue & 0o077 == 0 else { return (errSecNotAvailable,nil) }
+        var keychain:SecKeychain?
+        let status=SecKeychainOpen(path,&keychain)
+        return (status,keychain)
+    }
+    static func query(_ keychain:AnyObject)->[String:Any] {
+        return [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:account,kSecMatchSearchList as String:[keychain],kSecMatchLimit as String:kSecMatchLimitOne]
+    }
+    func read()->(OSStatus,Data?) {
+        let (opened,keychain)=open(); guard opened == errSecSuccess, let keychain=keychain else { return (opened,nil) }
+        var query=Self.query(keychain); query[kSecReturnData as String]=true
+        let (status,value)=copy(query as CFDictionary)
+        guard status == errSecSuccess, let data=value as? Data, data.count <= 4096 else { return (status == errSecSuccess ? errSecDecode : status,nil) }
+        return (status,data)
+    }
+    func save(_ data:Data)->OSStatus {
+        guard data.count <= 4096, let credential=SavedFleetCredential.decode(data,now:Date().timeIntervalSince1970) else { return errSecParam }
+        let (opened,keychain)=open(); guard opened == errSecSuccess, let keychain=keychain else { return opened }
+        var query:[String:Any]=[kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:Self.service,kSecAttrAccount as String:Self.account,kSecUseKeychain as String:keychain,kSecValueData as String:data,kSecAttrGeneric as String:Data(credential.recordID.utf8)]
+        let added=add(query as CFDictionary)
+        guard added == errSecDuplicateItem else { return added }
+        query=Self.query(keychain); query[kSecReturnRef as String]=true
+        let (found,item)=copy(query as CFDictionary); guard found == errSecSuccess, let item=item else { return found }
+        return update([kSecClass as String:kSecClassGenericPassword,kSecMatchItemList as String:[item]] as CFDictionary,[kSecValueData as String:data,kSecAttrGeneric as String:Data(credential.recordID.utf8)] as CFDictionary)
+    }
+    func forget(matching credential:SavedFleetCredential?=nil, authorize:()->Bool = { ownerActive() })->OSStatus {
+        let (opened,keychain)=open(); guard opened == errSecSuccess, let keychain=keychain else { return opened }
+        var query=Self.query(keychain); query[kSecReturnRef as String]=true
+        if let credential=credential { query[kSecAttrGeneric as String]=Data(credential.recordID.utf8) }
+        let (found,item)=copy(query as CFDictionary)
+        if found == errSecItemNotFound { return credential == nil ? errSecSuccess : errSecItemNotFound }
+        guard found == errSecSuccess, let item=item else { return found }
+        var removal:[String:Any]=[kSecClass as String:kSecClassGenericPassword,kSecMatchItemList as String:[item]]
+        if let credential=credential { removal[kSecAttrGeneric as String]=Data(credential.recordID.utf8) }
+        guard authorize() else { return errSecUserCanceled }
+        return delete(removal as CFDictionary)
+    }
+}
+
 
 func makeApplicationMenu(_ application: NSApplication) -> NSMenu {
     let menu = NSMenu(title:"Gargoyl")
@@ -34,8 +143,21 @@ func validFleetAuthorization(_ value: [String:Any]) -> Bool {
           let expires = value["expires_in"] as? Int, expires > 0 && expires <= 900 else { return false }
     return true
 }
+func safeAliasText(_ value:String, maximum:Int=64) -> Bool {
+    return value.count <= maximum && value.utf8.count <= maximum * 2 && value.unicodeScalars.allSatisfy { ![.control,.format,.surrogate].contains($0.properties.generalCategory) }
+}
+func aliasRows(_ value:[String:Any]) -> [[String:String]]? {
+    guard Set(value.keys) == Set(["kind","providers"]), value["kind"] as? String == "fleet-alias-list",
+          let rows = value["providers"] as? [[String:String]], !rows.isEmpty, rows.count <= 256,
+          Set(rows.compactMap { $0["id"] }).count == rows.count else { return nil }
+    for row in rows {
+        guard Set(row.keys) == Set(["id","name","alias"]), let id=row["id"], !id.isEmpty, safeAliasText(id,maximum:128),
+              let name=row["name"], !name.isEmpty, safeAliasText(name,maximum:128), let alias=row["alias"], safeAliasText(alias) else { return nil }
+    }
+    return rows
+}
 func endedFleetStatus(_ previous:String, disconnected:Bool) -> String {
-    return disconnected ? "Account collection disconnected. No credential was saved." : previous + " Account session ended; cached reports are not live. Reconnect to resume."
+    return disconnected ? "Account memory collection disconnected. Saved sign-in is separate; use Forget to remove it." : previous + " Account session ended; cached reports are not live. Reconnect to resume."
 }
 func viewDestination(_ url: URL?, mainFrame: Bool) -> String? {
     guard mainFrame, let url = url else { return nil }
@@ -129,7 +251,7 @@ final class Worker {
         #if GARGOYL_NATIVE_TESTS
         pythonPath = ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] ?? pythonPath
         #endif
-        guard ownerActive(), (["restart", "status", "export", "start-monitor", "stop-monitor", "fleet-session"].contains(mode) || (mode.hasPrefix("view-") && readOnlyView(String(mode.dropFirst(5))))),
+        guard ownerActive(), (["restart", "status", "export", "start-monitor", "stop-monitor", "fleet-session", "fleet-alias-list", "fleet-alias-set", "fleet-session-remember", "fleet-restore"].contains(mode) || (mode.hasPrefix("view-") && readOnlyView(String(mode.dropFirst(5))))),
               let path = pythonPath,
               path.hasPrefix(NSHomeDirectory() + "/"), path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
         else { throw NSError(domain: "Gargoyl", code: 1) }
@@ -172,8 +294,23 @@ final class Worker {
         }
         try? input.fileHandleForWriting.close()
     }
+    func restoreCredential(_ credential:SavedFleetCredential) {
+        guard mode == "fleet-restore", !replied, SavedFleetCredential.tokenValid(credential.token) else { return }
+        replied = true
+        if let data=try? JSONSerialization.data(withJSONObject:["purpose":"desktop_account","token":credential.token,"valid_until":credential.expires]) {
+            try? input.fileHandleForWriting.write(contentsOf:data+Data([10]))
+        }
+    }
+    func setAlias(provider:String, alias:String) {
+        guard mode == "fleet-alias-set", !replied else { return }
+        replied = true
+        if let data = try? JSONSerialization.data(withJSONObject:["provider_id":provider,"alias":alias]) {
+            try? input.fileHandleForWriting.write(contentsOf:data + Data([10]))
+        }
+        try? input.fileHandleForWriting.close()
+    }
     func disconnectFleet() {
-        guard mode == "fleet-session" else { return }
+        guard ["fleet-session", "fleet-session-remember", "fleet-restore"].contains(mode) else { return }
         try? input.fileHandleForWriting.close()
     }
     // No terminate/interrupt method: closing the app never cancels accepted work.
@@ -198,7 +335,28 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var approvalTimer: Timer?
     var exportData: Data?
     let fleetStatus = NSTextField(wrappingLabelWithString:"Account fleet not connected. This Mac’s local collection is separate.")
+    var readRemember:()->Bool = { UserDefaults.standard.bool(forKey:"rememberReadOnlyFleet") }
+    var writeRemember:(Bool)->Void = { UserDefaults.standard.set($0,forKey:"rememberReadOnlyFleet") }
+    var fleetOwner:()->Bool = { ownerActive() }
+    var credentialStore=LoginFleetCredentialStore()
+    let credentialQueue=DispatchQueue(label:"dev.gargoyl.readonly-keychain")
+    var credentialEpoch=0
+    var keychainBusy=false
+    var pendingCredentialRemoval:FleetRemovalRequest?
+    var savedFleetState=FleetSavedSessionState()
+    var rememberCurrentFleet=false
+    var fleetCredentialGate=FleetCredentialGate()
+    var fleetGrantStartedAt=0.0
+    var startupRestoreAttempted=false
+    var fleetRetryCount=0
+    var lastFleetReason=""
+    var forgetFleetButton=NSButton()
     var fleetWorker: Worker?
+    var aliasWorker: Worker?
+    var aliasOptions = [[String:String]]()
+    var aliasPicker: NSPopUpButton?
+    var aliasField: NSTextField?
+    var aliasIdentityLabel: NSTextField?
     var fleetGeneration = 0
     var fleetAuthSheet: NSWindow?
     var fleetUserCode: String?
@@ -208,7 +366,15 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var connectFleetButton: NSButton!
     var disconnectFleetButton: NSButton!
     var viewPhase = "not started"
-    var previewOnly: Bool { Bundle.main.object(forInfoDictionaryKey: "GargoylReadOnlyPreview") as? Bool ?? true }
+    #if GARGOYL_NATIVE_TESTS
+    var previewOverride:Bool?
+    #endif
+    var previewOnly: Bool {
+        #if GARGOYL_NATIVE_TESTS
+        if let value=previewOverride { return value }
+        #endif
+        return Bundle.main.object(forInfoDictionaryKey:"GargoylReadOnlyPreview") as? Bool ?? true
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -231,8 +397,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         window.minSize = NSSize(width:390,height:600); window.delegate = self
         let content = NSView(); window.contentView = content
         let bar = NSStackView(); bar.orientation = .vertical; bar.alignment = .leading; bar.spacing = 6
-        let actions: [(String, Selector)] = [("Connect fleet…",#selector(connectFleet)),("Disconnect fleet",#selector(disconnectFleet)),("Refresh",#selector(refresh)),("Start local monitor",#selector(startMonitor)),("Stop local monitor",#selector(stopMonitor)),("Export local…",#selector(exportReport)),("Operation status",#selector(operationStatus)),("Restart local provider…",#selector(restartProvider))]
-        let actionRows = (0..<3).map { _ in NSStackView() }
+        let actions: [(String, Selector)] = [("Connect fleet…",#selector(connectFleet)),("Disconnect fleet",#selector(disconnectFleet)),("Refresh",#selector(refresh)),("Start local monitor",#selector(startMonitor)),("Stop local monitor",#selector(stopMonitor)),("Export local…",#selector(exportReport)),("Operation status",#selector(operationStatus)),("Restart local provider…",#selector(restartProvider)),("Edit local aliases…",#selector(editFleetAliases)),("Forget saved sign-in…",#selector(forgetSavedFleet)),("Resume saved sign-in",#selector(resumeSavedFleet))]
+        let actionRows = (0..<4).map { _ in NSStackView() }
         for row in actionRows { row.orientation = .horizontal; row.spacing = 8; bar.addArrangedSubview(row) }
         for (index, action) in actions.enumerated() {
             let (title, selector) = action
@@ -240,20 +406,21 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             if selector == #selector(restartProvider) { restartButton = button }
             if selector == #selector(connectFleet) { connectFleetButton = button }
             if selector == #selector(disconnectFleet) { disconnectFleetButton = button; button.isEnabled = false }
-            if previewOnly && [#selector(startMonitor),#selector(stopMonitor),#selector(restartProvider),#selector(connectFleet)].contains(selector) { button.isEnabled = false }
+            if selector == #selector(forgetSavedFleet) { forgetFleetButton=button; button.isEnabled = !previewOnly && self.readRemember() }
+            if previewOnly && [#selector(startMonitor),#selector(stopMonitor),#selector(restartProvider),#selector(connectFleet),#selector(editFleetAliases),#selector(forgetSavedFleet),#selector(resumeSavedFleet)].contains(selector) { button.isEnabled = false }
             actionRows[index / 3].addArrangedSubview(button)
         }
         let config = WKWebViewConfiguration(); config.defaultWebpagePreferences.allowsContentJavaScript = false
         config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self; web.uiDelegate = self
         let scroll = NSScrollView(); scroll.hasHorizontalScroller = true; scroll.documentView = bar
-        bar.frame = NSRect(x:0,y:0,width:bar.fittingSize.width,height:100)
+        bar.frame = NSRect(x:0,y:0,width:bar.fittingSize.width,height:132)
         let stack = NSStackView(views:[scroll,fleetStatus,status,web]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(stack)
         scroll.translatesAutoresizingMaskIntoConstraints = false; status.translatesAutoresizingMaskIntoConstraints = false; fleetStatus.translatesAutoresizingMaskIntoConstraints = false; web.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo:content.leadingAnchor,constant:10),stack.trailingAnchor.constraint(equalTo:content.trailingAnchor,constant:-10),stack.topAnchor.constraint(equalTo:content.topAnchor,constant:10),stack.bottomAnchor.constraint(equalTo:content.bottomAnchor,constant:-10),
-            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:106),
+            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:138),
             fleetStatus.widthAnchor.constraint(equalTo:stack.widthAnchor),status.widthAnchor.constraint(equalTo:stack.widthAnchor),web.widthAnchor.constraint(equalTo:stack.widthAnchor),web.heightAnchor.constraint(greaterThanOrEqualToConstant:300)
         ])
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
@@ -265,7 +432,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier:"GargoylLoopbackOnly",encodedContentRuleList:resourceRules) { [weak self] list, _ in
             DispatchQueue.main.async {
                 guard let self = self, let list = list else { self?.show("Dashboard network isolation unavailable. Display remains blocked."); return }
-                self.web.configuration.userContentController.add(list); self.webReady = true; self.viewPhase = "rules ready"; self.refresh()
+                self.web.configuration.userContentController.add(list); self.webReady = true; self.viewPhase = "rules ready"; self.refresh(); self.restoreSavedFleetIfEnabled()
             }
         }
     }
@@ -336,16 +503,89 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         fleetWorker?.disconnectFleet()
         fleetStatus.stringValue = "Disconnecting account collection. Local monitoring and Darkbloom remain unchanged."
         disconnectFleetButton.isEnabled = false
+        if fleetWorker == nil { connectFleetButton.isEnabled = !previewOnly }
+    }
+    @objc func aliasProviderChanged() {
+        guard let picker=aliasPicker, aliasOptions.indices.contains(picker.indexOfSelectedItem) else { return }
+        let row=aliasOptions[picker.indexOfSelectedItem]
+        aliasField?.stringValue = row["alias"] ?? ""
+        aliasIdentityLabel?.stringValue = "Actual provider ID: " + (row["id"] ?? "") + "\nSource label: " + (row["name"] ?? "")
+    }
+    @objc func editFleetAliases() {
+        guard !previewOnly, ownerActive(), aliasWorker == nil, window.attachedSheet == nil else { return }
+        do {
+            aliasWorker = try Worker(mode:"fleet-alias-list",event:{ [weak self] value in
+                guard let self=self else { return }
+                guard let rows=aliasRows(value), self.ownerForAlias() else { self.show("Local alias inventory unavailable. Connect the account and refresh; actual IDs remain unchanged."); return }
+                self.presentAliasEditor(rows)
+            },finished:{ [weak self] completed in
+                guard let self=self, self.aliasWorker === completed else { return }; self.aliasWorker=nil
+            })
+        } catch { show("Local aliases unavailable. No provider setting was changed.") }
+    }
+    func ownerForAlias() -> Bool { return ownerActive() && window.attachedSheet == nil }
+    func presentAliasEditor(_ rows:[[String:String]]) {
+        guard ownerForAlias() else { return }
+        aliasOptions=rows
+        let picker=NSPopUpButton(frame:NSRect(x:0,y:0,width:540,height:30))
+        picker.addItems(withTitles:rows.map { ($0["name"] ?? "") + " · " + ($0["id"] ?? "") })
+        picker.target=self; picker.action = #selector(aliasProviderChanged); aliasPicker=picker
+        let name=NSTextField(string:""); name.placeholderString="Your local friendly name"; aliasField=name
+        let identity=NSTextField(wrappingLabelWithString:""); identity.font=NSFont.monospacedSystemFont(ofSize:11,weight:.regular); aliasIdentityLabel=identity
+        let controls=NSStackView(views:[picker,identity,name]); controls.orientation = .vertical; controls.alignment = .leading; controls.spacing=10
+        controls.frame=NSRect(x:0,y:0,width:540,height:115)
+        name.widthAnchor.constraint(equalToConstant:540).isActive=true
+        identity.widthAnchor.constraint(equalToConstant:540).isActive=true
+        aliasProviderChanged()
+        let alert=NSAlert(); alert.messageText="Edit local friendly name"
+        alert.informativeText="Choose the actual provider ID, then enter a name you recognize. This alias stays on this Mac; it does not rename Darkbloom records or change identity matching, restart targets or provider settings. Leave the name blank to remove its alias."
+        alert.accessoryView=controls; alert.addButton(withTitle:"Save local alias"); alert.addButton(withTitle:"Cancel")
+        alert.beginSheetModal(for:window) { [weak self] response in
+            guard let self=self else { return }
+            defer { self.aliasOptions=[]; self.aliasPicker=nil; self.aliasField=nil; self.aliasIdentityLabel=nil }
+            guard response == .alertFirstButtonReturn, ownerActive(), rows.indices.contains(picker.indexOfSelectedItem), safeAliasText(name.stringValue) else { return }
+            let selected=rows[picker.indexOfSelectedItem]
+            do {
+                let writer = try Worker(mode:"fleet-alias-set",event:{ [weak self] value in
+                    guard let self=self else { return }
+                    if value["kind"] as? String == "status" { self.show("Local alias saved. Actual provider ID and source name are unchanged."); self.refresh() }
+                    else { self.show("Local alias unavailable. No provider setting was changed.") }
+                },finished:{ [weak self] completed in
+                    guard let self=self, self.aliasWorker === completed else { return }; self.aliasWorker=nil
+                })
+                self.aliasWorker=writer; writer.setAlias(provider:selected["id"]!,alias:name.stringValue)
+            } catch { self.show("Local alias unavailable. No provider setting was changed.") }
+        }
     }
     @objc func connectFleet() {
+        guard !previewOnly, fleetWorker == nil, ownerActive(), window.attachedSheet == nil else { return }
+        let alert=NSAlert(); alert.messageText="Connect your read-only fleet account"
+        alert.informativeText="Darkbloom’s account grant can view Macs, summary and earnings; Gargoyl reads only owned-provider metadata. It cannot control providers. You approve the account grant on the official site. Optionally remember this read-only session in this Mac’s encrypted login Keychain, with standard macOS application access controls. No password, provider credential or synchronization is configured. You may see a macOS Keychain access prompt, including after app updates."
+        let remember=NSButton(checkboxWithTitle:"Remember this read-only account in login Keychain",target:nil,action:nil)
+        remember.state = .off; remember.isEnabled = !keychainBusy; alert.accessoryView=remember
+        alert.addButton(withTitle:"Continue"); alert.addButton(withTitle:"Cancel")
+        alert.beginSheetModal(for:window) { [weak self] response in
+            guard let self=self, response == .alertFirstButtonReturn, ownerActive() else { return }
+            self.beginFleet(remember:remember.state == .on, restored:nil)
+        }
+    }
+    func beginFleet(remember:Bool, restored:SavedFleetCredential?, retryCount:Int=0) {
         guard !previewOnly, fleetWorker == nil, ownerActive() else { return }
+        if remember && keychainBusy { show("Remember is unavailable while another Keychain operation is pending. Try again when it finishes."); return }
+        fleetRetryCount=retryCount; lastFleetReason=""
+        savedFleetState=FleetSavedSessionState(); savedFleetState.credential=restored; savedFleetState.stored=restored != nil
         fleetGeneration += 1; let generation = fleetGeneration; fleetAuthPresented = false
+        rememberCurrentFleet=remember; fleetCredentialGate=FleetCredentialGate()
+        fleetGrantStartedAt=Date().timeIntervalSince1970
         connectFleetButton.isEnabled = false; disconnectFleetButton.isEnabled = true
-        fleetStatus.stringValue = "Requesting Darkbloom’s read-only account scope… No provider grant fallback."
+        fleetStatus.stringValue = restored == nil ? "Requesting Darkbloom’s read-only account scope… No provider grant fallback." : "Checking saved read-only account access… Cached reports do not prove a live session."
         displayView("fleet")
         do {
-            fleetWorker = try Worker(mode:"fleet-session",event:{ [weak self] value in
+            let mode=restored != nil ? "fleet-restore" : (remember ? "fleet-session-remember" : "fleet-session")
+            fleetWorker = try Worker(mode:mode,event:{ [weak self] value in
                 guard let self = self, generation == self.fleetGeneration else { return }
+                // Credentials are consumed here; never enter generic rendering/status paths.
+                if value["kind"] as? String == "fleet-credential" { self.rememberFreshFleetCredential(value,generation:generation); return }
                 self.fleetEvent(value,generation:generation)
             },finished:{ [weak self] completed in
                 guard let self = self, self.fleetWorker === completed else { return }
@@ -353,10 +593,137 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                 self.connectFleetButton.isEnabled = !self.previewOnly; self.disconnectFleetButton.isEnabled = false
                 self.fleetStatus.stringValue = endedFleetStatus(self.fleetStatus.stringValue,disconnected:generation != self.fleetGeneration)
                 self.refresh()
+                if generation == self.fleetGeneration, self.lastFleetReason == "session_busy", completed.mode == "fleet-restore", self.fleetRetryCount < 6, let saved=self.savedFleetState.credential {
+                    let attempt=self.fleetRetryCount+1
+                    self.connectFleetButton.isEnabled=false; self.disconnectFleetButton.isEnabled=true
+                    self.fleetStatus.stringValue="Waiting for the previous account reader to close… No new grant or provider action."
+                    Timer.scheduledTimer(withTimeInterval:3,repeats:false) { [weak self] _ in
+                        guard let self=self, generation == self.fleetGeneration, self.fleetWorker == nil else { return }
+                        self.resetRestoreControls(generation:generation)
+                        guard ownerActive(), saved.expires > Date().timeIntervalSince1970 else { return }
+                        self.beginFleet(remember:false,restored:saved,retryCount:attempt)
+                    }
+                }
             })
+            if let restored=restored { fleetWorker?.restoreCredential(restored) }
         } catch {
             fleetStatus.stringValue = "Account connection unavailable. No provider action or credential fallback was attempted."
             connectFleetButton.isEnabled = !previewOnly; disconnectFleetButton.isEnabled = false
+        }
+    }
+    func rememberFreshFleetCredential(_ value:[String:Any],generation:Int) {
+        guard let token=fleetCredentialGate.take(value,mode:fleetWorker?.mode ?? "",remember:rememberCurrentFleet,owner:self.fleetOwner(),generation:generation,current:fleetGeneration) else { disconnectFleet(); return }
+        let credential=SavedFleetCredential(token:token,created:fleetGrantStartedAt,expires:fleetGrantStartedAt+30*86400)
+        guard let data=credential.encoded(), SavedFleetCredential.decode(data,now:Date().timeIntervalSince1970) != nil else { show("Read-only session could not be saved. Current connection remains memory-only."); return }
+        guard !keychainBusy else { show("Keychain busy; current connection remains memory-only."); return }
+        keychainBusy=true
+        let session=savedFleetState; session.credential=credential
+        let previousRemember=self.readRemember()
+        self.writeRemember(true); forgetFleetButton.isEnabled=true
+        let epoch=credentialEpoch
+        credentialQueue.async { [weak self] in
+            guard let self=self else { return }
+            let allowed=DispatchQueue.main.sync { self.fleetOwner() && epoch == self.credentialEpoch && generation == self.fleetGeneration }
+            guard allowed else { DispatchQueue.main.async { self.finishKeychainOperation() }; return }
+            let status=self.credentialStore.save(data)
+            DispatchQueue.main.async {
+                defer { self.finishKeychainOperation() }
+                guard epoch == self.credentialEpoch else { return }
+                session.stored = status == errSecSuccess
+                if status == errSecSuccess {
+                    self.writeRemember(true); self.forgetFleetButton.isEnabled=true
+                    if session.revoked { self.queueCredentialRemoval(.matching(credential)); return }
+                    self.show("Read-only sign-in saved in this Mac’s login Keychain. Quit/reopen can resume within the original grant lifetime. No provider credential was saved.")
+                } else { self.writeRemember(previousRemember); self.forgetFleetButton.isEnabled=previousRemember; self.show("Keychain save unavailable or declined. The current connection remains memory-only; no plaintext fallback.") }
+            }
+        }
+    }
+    @objc func resumeSavedFleet() {
+        guard !previewOnly, ownerActive(), fleetWorker == nil, !keychainBusy else { return }
+        guard self.readRemember() else { show("No saved sign-in is enabled. Use Connect fleet and choose Remember if desired."); return }
+        startupRestoreAttempted=false; restoreSavedFleetIfEnabled()
+    }
+    func restoreSavedFleetIfEnabled() {
+        guard !startupRestoreAttempted else { return }; startupRestoreAttempted=true
+        guard !previewOnly, self.readRemember(), self.fleetOwner(), fleetWorker == nil else { return }
+        guard !keychainBusy else { return }; keychainBusy=true
+        fleetGeneration += 1; let generation=fleetGeneration; let epoch=credentialEpoch
+        connectFleetButton.isEnabled=false; disconnectFleetButton.isEnabled=true
+        fleetStatus.stringValue="Reading the saved read-only sign-in from login Keychain…"
+        credentialQueue.async { [weak self] in
+            guard let self=self else { return }
+            let allowed=DispatchQueue.main.sync { self.fleetOwner() && generation == self.fleetGeneration && epoch == self.credentialEpoch }
+            guard allowed else { DispatchQueue.main.async { self.finishKeychainOperation(); self.resetRestoreControls(generation:generation) }; return }
+            let (status,data)=self.credentialStore.read()
+            let now=Date().timeIntervalSince1970
+            let credential=data.flatMap { SavedFleetCredential.decode($0,now:now) }
+            var expired=false
+            var removed=false
+            if status == errSecSuccess, let credential=credential, credential.expires <= now {
+                expired=true
+                let stillAllowed=DispatchQueue.main.sync { self.fleetOwner() && generation == self.fleetGeneration && epoch == self.credentialEpoch }
+                if stillAllowed { removed=self.credentialStore.forget(matching:credential,authorize:{ DispatchQueue.main.sync { self.fleetOwner() && generation == self.fleetGeneration && epoch == self.credentialEpoch } }) == errSecSuccess }
+            }
+            DispatchQueue.main.async {
+                defer { self.finishKeychainOperation() }
+                self.resetRestoreControls(generation:generation)
+                guard generation == self.fleetGeneration, epoch == self.credentialEpoch, self.fleetOwner() else { return }
+                if expired || status == errSecItemNotFound {
+                    if removed || status == errSecItemNotFound { self.writeRemember(false); self.forgetFleetButton.isEnabled=false }
+                    self.fleetStatus.stringValue="Saved sign-in expired or is missing. Connect fleet to approve a new read-only session."
+                } else if status == errSecSuccess, let credential=credential {
+                    self.beginFleet(remember:false,restored:credential)
+                } else { self.fleetStatus.stringValue="Saved sign-in unavailable, invalid, locked or access declined. Nothing was deleted. Connect fleet or try reopening after unlocking login Keychain." }
+            }
+        }
+    }
+    @objc func forgetSavedFleet() {
+        guard !previewOnly, self.fleetOwner(), window.attachedSheet == nil else { return }
+        let alert=NSAlert(); alert.messageText="Forget saved read-only sign-in?"
+        alert.informativeText="Remove only Gargoyl’s saved account session from this Mac’s login Keychain. The current memory connection continues until you Disconnect or Quit. No account/provider credential, remote grant, provider setting or machine is changed."
+        alert.addButton(withTitle:"Forget saved sign-in"); alert.addButton(withTitle:"Cancel")
+        alert.beginSheetModal(for:window) { [weak self] response in
+            guard let self=self, response == .alertFirstButtonReturn, self.fleetOwner() else { return }
+            self.removeSavedFleetCredential()
+        }
+    }
+    func resetRestoreControls(generation:Int) {
+        guard generation == fleetGeneration, fleetWorker == nil else { return }
+        connectFleetButton.isEnabled = !previewOnly; disconnectFleetButton.isEnabled=false
+        if !self.fleetOwner() { fleetStatus.stringValue="Saved account restore cancelled because the active Mac owner changed. Connect fleet when the owner returns." }
+    }
+    func finishKeychainOperation() {
+        keychainBusy=false
+        if let pending=pendingCredentialRemoval, self.fleetOwner() { pendingCredentialRemoval=nil; queueCredentialRemoval(pending) }
+    }
+    func removeSavedFleetCredential() {
+        credentialEpoch += 1
+        queueCredentialRemoval(.all)
+    }
+    func queueCredentialRemoval(_ request:FleetRemovalRequest) {
+        if keychainBusy {
+            if case .all=request { pendingCredentialRemoval=request }
+            else if pendingCredentialRemoval == nil { pendingCredentialRemoval=request }
+            return
+        }
+        guard self.fleetOwner() else { pendingCredentialRemoval=request; return }
+        keychainBusy=true
+        let epoch=credentialEpoch
+        credentialQueue.async { [weak self] in
+            guard let self=self else { return }
+            let allowed=DispatchQueue.main.sync { self.fleetOwner() && epoch == self.credentialEpoch }
+            guard allowed else { DispatchQueue.main.async { self.finishKeychainOperation() }; return }
+            let status:OSStatus
+            switch request {
+            case .all: status=self.credentialStore.forget(authorize:{ DispatchQueue.main.sync { self.fleetOwner() && epoch == self.credentialEpoch } })
+            case .matching(let credential): status=self.credentialStore.forget(matching:credential,authorize:{ DispatchQueue.main.sync { self.fleetOwner() && epoch == self.credentialEpoch } })
+            }
+            DispatchQueue.main.async {
+                defer { self.finishKeychainOperation() }
+                guard epoch == self.credentialEpoch else { return }
+                if status == errSecSuccess { self.writeRemember(false); self.forgetFleetButton.isEnabled=false; self.show("Saved sign-in forgotten. Existing memory collection is unchanged.") }
+                else if status != errSecItemNotFound { self.show("Keychain removal unavailable or declined. Saved state was not assumed removed.") }
+            }
         }
     }
     func fleetEvent(_ value:[String:Any], generation:Int) {
@@ -366,7 +733,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                   let code = value["user_code"] as? String, let expires = value["expires_in"] as? Int else { disconnectFleet(); return }
             fleetAuthPresented = true; fleetUserCode = code
             let alert = NSAlert(); alert.messageText = "Connect your Darkbloom fleet · read-only"
-            alert.informativeText = "Use the account that owns your fleet. Copy this one-time code, open the official page and approve its read-only request.\n\nDarkbloom’s desktop_account scope permits fleet, summary and earnings reads, plus revoking this session; it does not grant provider control. Gargoyl requests only owned-provider metadata. Legacy provider grants are refused.\n\nNo token is saved. Closing the window keeps collection running; quitting requires signing in again. No provider restart, enrollment or remote commands."
+            alert.informativeText = "Use the account that owns your fleet. Copy this one-time code, open the official page and approve its read-only request.\n\nDarkbloom’s desktop_account scope permits fleet, summary and earnings reads, plus revoking this session; it does not grant provider control. Gargoyl requests only owned-provider metadata. Legacy provider grants are refused.\n\nIf you selected Remember, the read-only token is saved in login Keychain after the first validated fleet read; otherwise it stays in memory. Closing the window keeps collection running. No provider credential is stored. No provider restart, enrollment or remote commands."
             let field = NSTextField(labelWithString:code); field.isSelectable = true; field.font = NSFont.monospacedSystemFont(ofSize:22,weight:.semibold)
             let copy = NSButton(title:"Copy code",target:self,action:#selector(copyFleetCode))
             let open = NSButton(title:"Open official Darkbloom sign-in",target:self,action:#selector(openFleetSignIn))
@@ -388,7 +755,12 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         } else if kind == "fleet-unavailable" {
             dismissFleetAuthorization()
             let reason = value["reason"] as? String ?? "unavailable"
-            let reasons = ["scope_refused":"Darkbloom did not confirm the read-only scope. Provider-control fallback was refused.","auth_required":"Account authorization is unavailable. Connect again to resume read-only collection.","invalid_data":"Account inventory could not be validated. No substitute fleet or health verdict is shown.","expired":"Account connection expired. Connect again; no credential was saved."]
+            lastFleetReason=reason
+            if reason == "auth_required" {
+                savedFleetState.revoked=true
+                if savedFleetState.stored, let credential=savedFleetState.credential { queueCredentialRemoval(.matching(credential)) }
+            }
+            let reasons = ["session_busy":"Another local account reader is still closing. A saved read-only session may resume after it exits.","scope_refused":"Darkbloom did not confirm the read-only scope. Provider-control fallback was refused.","auth_required":"Account authorization is unavailable. Connect again to resume read-only collection.","invalid_data":"Account inventory could not be validated. No substitute fleet or health verdict is shown.","expired":"Account connection expired. Connect again; no credential was saved."]
             fleetStatus.stringValue = reasons[reason] ?? "Account collection unavailable. Cached reports are not current health evidence."
             if viewSelection.selected.hasPrefix("fleet") { refresh() }
         }
@@ -510,6 +882,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         recordWindow("reopen",reopeningVisibleWindows:flag)
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
+        if !keychainBusy, pendingCredentialRemoval != nil { finishKeychainOperation() }
         if viewSelection.selected.hasPrefix("fleet") { refresh() }
         return false
     }
@@ -591,6 +964,23 @@ if CommandLine.arguments.contains("--self-test") {
         }
         print("actual anchor scroll=\(scrollPosition)"); fflush(stdout)
         precondition(scrollPosition > 0)
+        if let file=ProcessInfo.processInfo.environment["GARGOYL_TEST_FLEET_HTML"], let html=try? String(contentsOfFile:file,encoding:.utf8) {
+            fixture.finished=false; page.loadHTMLString(html,baseURL:URL(string:"about:blank")!)
+            let fleetLimit=Date().addingTimeInterval(3)
+            while !fixture.finished && Date() < fleetLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+            precondition(fixture.finished)
+            for width in [390,760,1180] {
+                page.setFrameSize(NSSize(width:width,height:600))
+                var metrics:[NSNumber]?; var done=false
+                page.evaluateJavaScript("[window.innerWidth,document.documentElement.scrollWidth,document.querySelector('.fleet-inventory').closest('.scroll').clientWidth,document.querySelector('.fleet-inventory').closest('.scroll').scrollWidth]") { value,_ in metrics=value as? [NSNumber]; done=true }
+                let measureEnd=Date().addingTimeInterval(2)
+                while !done && Date() < measureEnd { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+                precondition(metrics?.count == 4)
+                precondition(metrics![0].intValue == width && metrics![1].intValue <= width)
+                if width == 390 { precondition(metrics![3].intValue >= 800 && metrics![2].intValue < 390) }
+            }
+        }
+
 
     }
     if ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] != nil {
@@ -619,8 +1009,88 @@ if CommandLine.arguments.contains("--self-test") {
     }
     precondition(viewDestination(URL(string:"gargoyl-view://tools/"),mainFrame:false) == nil)
     precondition(!allowedNavigation(URL(string:"about:blank"),mainFrame:false))
+
+    let fixtureToken="darkbloom-at-fixture-token-123"
+    let saved=SavedFleetCredential(token:fixtureToken,created:100,expires:100+30*86400)
+    let savedData=saved.encoded()!
+    precondition(SavedFleetCredential.decode(savedData,now:101)?.token == fixtureToken)
+    precondition(SavedFleetCredential.decode(savedData,now:99) == nil)
+    precondition(SavedFleetCredential.decode(savedData+Data(repeating:32,count:4096),now:101) == nil)
+    precondition(SavedFleetCredential.decode(Data("{\"schema\":1,\"purpose\":\"provider\",\"token\":\"eigeninference-pt-fixture\",\"created\":100,\"expires\":200}".utf8),now:101) == nil)
+    var credentialGate=FleetCredentialGate()
+    let credentialEvent:[String:Any] = ["kind":"fleet-credential","purpose":"desktop_account","token":fixtureToken]
+    precondition(credentialGate.take(credentialEvent,mode:"fleet-session",remember:false,owner:true,generation:1,current:1) == nil)
+    precondition(credentialGate.take(credentialEvent,mode:"fleet-session-remember",remember:true,owner:true,generation:1,current:2) == nil)
+    precondition(credentialGate.take(credentialEvent,mode:"fleet-session-remember",remember:true,owner:false,generation:1,current:1) == nil)
+    precondition(credentialGate.take(credentialEvent,mode:"fleet-session-remember",remember:true,owner:true,generation:1,current:1) == fixtureToken)
+    precondition(credentialGate.take(credentialEvent,mode:"fleet-session-remember",remember:true,owner:true,generation:1,current:1) == nil)
+    let loginFixture=NSObject(); let itemFixture=NSObject()
+    var adds=0, updates=0, deletes=0, queries=0
+    let fakeKeychain=LoginFleetCredentialStore(open:{ (errSecSuccess,loginFixture) },copy:{ query in
+        let q=query as NSDictionary; precondition(q[kSecClass as String] as? String == kSecClassGenericPassword as String)
+        precondition(q[kSecAttrService as String] as? String == LoginFleetCredentialStore.service)
+        precondition(q[kSecAttrAccount as String] as? String == LoginFleetCredentialStore.account)
+        precondition(q[kSecMatchSearchList as String] != nil); precondition(q[kSecUseDataProtectionKeychain as String] == nil)
+        queries += 1
+        return (errSecSuccess, q[kSecReturnData as String] as? Bool == true ? savedData as CFData : itemFixture)
+    },add:{ query in
+        let q=query as NSDictionary; precondition(q[kSecUseKeychain as String] != nil); precondition(q[kSecAttrAccess as String] == nil)
+        precondition(q[kSecAttrSynchronizable as String] == nil); adds += 1; return errSecDuplicateItem
+    },update:{ query,data in
+        precondition((query as NSDictionary)[kSecMatchItemList as String] != nil); updates += 1; return errSecSuccess
+    },delete:{ query in precondition((query as NSDictionary)[kSecMatchItemList as String] != nil); deletes += 1; return errSecSuccess })
+    precondition(fakeKeychain.save(savedData) == errSecSuccess)
+    precondition(fakeKeychain.read().1 == savedData)
+    precondition(fakeKeychain.forget(authorize:{true}) == errSecSuccess)
+    precondition(adds == 1 && updates == 1 && deletes == 1 && queries == 3)
+    var deniedReads=0
+    let deniedKeychain=LoginFleetCredentialStore(open:{ (errSecUserCanceled,nil) },copy:{ _ in deniedReads += 1; return (errSecSuccess,savedData as CFData) })
+    precondition(deniedKeychain.read().0 == errSecUserCanceled); precondition(deniedReads == 0)
+
+    func waitFakeKeychain(_ fixture:App) {
+        let until=Date().addingTimeInterval(2)
+        while fixture.keychainBusy && Date() < until { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        precondition(!fixture.keychainBusy)
+    }
+    let ownerChangedFixture=App(); ownerChangedFixture.previewOverride=false; ownerChangedFixture.connectFleetButton=NSButton(); ownerChangedFixture.disconnectFleetButton=NSButton(); var ownerPresent=true; var rememberFlag=true; var expiredDeletes=0
+    ownerChangedFixture.fleetOwner={ownerPresent}; ownerChangedFixture.readRemember={rememberFlag}; ownerChangedFixture.writeRemember={rememberFlag=$0}
+    let expiredRecord=SavedFleetCredential(token:fixtureToken,created:100,expires:200)
+    ownerChangedFixture.credentialStore=LoginFleetCredentialStore(open:{ (errSecSuccess,loginFixture) },copy:{ _ in ownerPresent=false; return (errSecSuccess,expiredRecord.encoded()! as CFData) },delete:{ _ in expiredDeletes += 1; return errSecSuccess })
+    ownerChangedFixture.restoreSavedFleetIfEnabled(); waitFakeKeychain(ownerChangedFixture)
+    precondition(expiredDeletes == 0 && rememberFlag && ownerChangedFixture.connectFleetButton.isEnabled && !ownerChangedFixture.disconnectFleetButton.isEnabled)
+    let cancelledRestore=App(); cancelledRestore.previewOverride=false; cancelledRestore.connectFleetButton=NSButton(); cancelledRestore.disconnectFleetButton=NSButton(); cancelledRestore.fleetGeneration=1; cancelledRestore.connectFleetButton.isEnabled=false; cancelledRestore.disconnectFleetButton.isEnabled=true
+    cancelledRestore.disconnectFleet(); cancelledRestore.resetRestoreControls(generation:1)
+    precondition(cancelledRestore.connectFleetButton.isEnabled && !cancelledRestore.disconnectFleetButton.isEnabled)
+    let deniedRestore=App(); deniedRestore.previewOverride=false; deniedRestore.connectFleetButton=NSButton(); deniedRestore.disconnectFleetButton=NSButton(); var deniedFlag=true
+    deniedRestore.fleetOwner={true}; deniedRestore.readRemember={deniedFlag}; deniedRestore.writeRemember={deniedFlag=$0}
+    deniedRestore.credentialStore=LoginFleetCredentialStore(open:{ (errSecUserCanceled,nil) })
+    deniedRestore.restoreSavedFleetIfEnabled(); waitFakeKeychain(deniedRestore)
+    precondition(deniedFlag && deniedRestore.connectFleetButton.isEnabled && !deniedRestore.disconnectFleetButton.isEnabled)
+    let replacement=SavedFleetCredential(token:fixtureToken,created:101,expires:201)
+    var raceDeletes=0
+    let replacementStore=LoginFleetCredentialStore(open:{ (errSecSuccess,loginFixture) },copy:{ query in
+        let q=query as NSDictionary
+        if q[kSecAttrGeneric as String] as? Data != Data(replacement.recordID.utf8) { return (errSecItemNotFound,nil) }
+        return (errSecSuccess,itemFixture)
+    },delete:{ query in
+        precondition((query as NSDictionary)[kSecAttrGeneric as String] as? Data == Data(replacement.recordID.utf8)); raceDeletes += 1; return errSecSuccess
+    })
+    precondition(replacementStore.forget(matching:saved,authorize:{true}) == errSecItemNotFound)
+    precondition(raceDeletes == 0)
+    precondition(replacementStore.forget(matching:replacement,authorize:{false}) == errSecUserCanceled)
+    precondition(raceDeletes == 0)
+    precondition(replacementStore.forget(matching:replacement,authorize:{true}) == errSecSuccess)
+    precondition(raceDeletes == 1)
+
+    precondition(viewDestination(URL(string:"gargoyl-view://fleet-restore/"),mainFrame:true) == nil)
+
     let accountPreview: [String:Any] = ["kind":"fleet-authorization","purpose":"desktop_account","user_code":"TEST-CODE","expires_in":900]
     precondition(validFleetAuthorization(accountPreview))
+    precondition(safeAliasText("Studio One")); precondition(!safeAliasText("bad\u{202E}name"))
+    let aliasesPreview:[String:Any] = ["kind":"fleet-alias-list","providers":[["id":"test-provider","name":"Mac","alias":"Studio One"]]]
+    precondition(aliasRows(aliasesPreview)?.count == 1)
+    precondition(aliasRows(["kind":"fleet-alias-list","providers":[["id":"test","name":"Mac","alias":"a"],["id":"test","name":"Mac","alias":"b"]]]) == nil)
+    precondition(viewDestination(URL(string:"gargoyl-view://fleet-alias-set/"),mainFrame:true) == nil)
     precondition(fleetSignInURL.absoluteString == "https://console.darkbloom.dev/link?purpose=desktop_account")
     precondition(URLComponents(url:fleetSignInURL,resolvingAgainstBaseURL:false)!.queryItems == [URLQueryItem(name:"purpose",value:"desktop_account")])
     precondition(endedFleetStatus("Account API returned 4 records.",disconnected:false).contains("session ended; cached reports are not live"))

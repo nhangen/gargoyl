@@ -44,6 +44,8 @@ def build(output, python, *, preview=True):
             "WebKit",
             "-framework",
             "LocalAuthentication",
+                    "-framework",
+                    "Security",
             "-framework",
             "SystemConfiguration",
             str(source),

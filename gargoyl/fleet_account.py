@@ -25,6 +25,7 @@ class FleetError(ValueError):
             "scope_refused",
             "invalid_data",
             "expired",
+            "session_busy",
         }:
             reason = "unavailable"
         self.reason = reason

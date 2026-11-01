@@ -2,6 +2,7 @@
 
 import fcntl
 import json
+import math
 import os
 import selectors
 import stat
@@ -9,10 +10,11 @@ import sys
 import time
 from contextlib import contextmanager
 
-from gargoyl.fleet_account import AccountClient, FleetError
+from gargoyl.fleet_account import AccountClient, FleetError, token_valid
 from gargoyl.fleet_state import _directory, normalize_inventory, utc_now
 
 SESSION_SECONDS = 86400
+PERSISTENT_SESSION_SECONDS = 30 * 86400
 POLL_SECONDS = 30
 
 
@@ -38,7 +40,7 @@ def session_lock(cache):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise FleetError("unavailable") from None
+            raise FleetError("session_busy") from None
         yield
     finally:
         if fd is not None:
@@ -51,7 +53,7 @@ class SessionClosed(Exception):
 
 
 def private_send(value):
-    """Only small bounded native events; no token or device code is ever emitted."""
+    """Bounded private native IPC; opted-in credentials never enter status or HTML."""
     payload = json.dumps(value, allow_nan=False, ensure_ascii=False).encode() + b"\n"
     if len(payload) > 4096:
         raise SessionClosed
@@ -78,33 +80,58 @@ def pipe_wait(stream, seconds, owner):
 
 
 def _run_session(
-    cache, *, owner, wait, send, client=None, now=utc_now, monotonic=time.monotonic
+    cache,
+    *,
+    owner,
+    wait,
+    send,
+    client=None,
+    now=utc_now,
+    monotonic=time.monotonic,
+    initial_token=None,
+    remember=False,
+    session_seconds=SESSION_SECONDS,
 ):
     client = client or AccountClient()
     inventory = None
     token = None
-    end = monotonic() + SESSION_SECONDS
+    credential_sent = False
+    end = 0
     try:
         wait(0)
         if not owner():
             raise SessionClosed
+        if (
+            type(session_seconds) not in {int, float}
+            or not math.isfinite(session_seconds)
+            or not 0 < session_seconds <= PERSISTENT_SESSION_SECONDS
+        ):
+            raise FleetError("expired")
+        end = monotonic() + session_seconds
+        if type(remember) is not bool:
+            raise FleetError("scope_refused")
+        if initial_token is not None and (not token_valid(initial_token) or remember):
+            raise FleetError("scope_refused")
         cache.clear()
-        pending = client.begin()
-        wait(0)
-        send(
-            dict(
-                kind="fleet-authorization",
-                purpose="desktop_account",
-                user_code=pending.user_code,
-                expires_in=max(0, int(pending.deadline - monotonic())),
+        token = initial_token
+        if token is None:
+            pending = client.begin()
+            wait(0)
+            send(
+                dict(
+                    kind="fleet-authorization",
+                    purpose="desktop_account",
+                    user_code=pending.user_code,
+                    expires_in=max(0, int(pending.deadline - monotonic())),
+                )
             )
-        )
-        while token is None:
-            wait(pending.interval)
-            if not owner():
-                raise SessionClosed
-            token = client.poll(pending)
-        # No token crosses a pipe or enters the cache. Browser completion is scoped.
+            while token is None:
+                wait(pending.interval)
+                if not owner():
+                    raise SessionClosed
+                token = client.poll(pending)
+        # Only explicit native Remember mode may transfer a fresh scoped credential
+        # over the trusted private pipe, after its first successful fleet read.
         pending = None
         wait(0)
         send(dict(kind="fleet-connected"))
@@ -116,8 +143,23 @@ def _run_session(
             try:
                 raw = client.providers(token)
                 wait(0)
+                if monotonic() >= end:
+                    send(dict(kind="fleet-unavailable", reason="expired"))
+                    raise SessionClosed
                 inventory = normalize_inventory(raw, now())
                 cache.write(inventory)
+                if remember and not credential_sent:
+                    wait(0)
+                    if not owner():
+                        raise SessionClosed
+                    credential_sent = True
+                    send(
+                        dict(
+                            kind="fleet-credential",
+                            purpose="desktop_account",
+                            token=token,
+                        )
+                    )
                 failures = 0
                 send(
                     dict(
@@ -180,8 +222,15 @@ def run_session(cache, **kwargs):
     try:
         with session_lock(cache):
             return _run_session(cache, **kwargs)
-    except (FleetError, OSError, ValueError):
+    except (FleetError, OSError, ValueError) as error:
         try:
-            kwargs["send"](dict(kind="fleet-unavailable", reason="unavailable"))
+            kwargs["send"](
+                dict(
+                    kind="fleet-unavailable",
+                    reason=error.reason
+                    if isinstance(error, FleetError)
+                    else "unavailable",
+                )
+            )
         except SessionClosed:
             pass
