@@ -70,8 +70,8 @@ INVENTORY = (
      'Runs `darkbloom status` and keeps only its daemon running/stopped line. Status also performs an '
      'update check over the network and reads local configuration.'),
     ('doctor', 'Doctor checks', 'Read-only · runs Darkbloom · uses network', 'available',
-     'Runs `darkbloom doctor` with no flags (never --clear-backend-guard) and keeps only pass, warning '
-     'and failure counts. Check details are discarded.'),
+     'Runs `darkbloom doctor` with no flags (never `--clear-backend-guard`). Shows counts and the names of '
+     'failed or warning checks; their details are discarded.'),
     ('evidence', 'Health, model and connection evidence', 'Read-only', 'available',
      'Per-source evidence on the dashboard: liveness, eligibility, attestation, model residency and '
      'coordinator reachability where collected. Model names are withheld by design.'),
@@ -123,6 +123,12 @@ def inspect_executable(executable, environment):
 
 def e(value):
     return escape(str(value), quote=True)
+
+
+def _with_code(text):
+    """Escape, then render `backticked` spans as <code>."""
+    parts = escape(text).split('`')
+    return ''.join(('<code>' + part + '</code>') if index % 2 else part for index, part in enumerate(parts))
 
 
 def _local_time(value):
@@ -242,8 +248,13 @@ class OperatorTools:
         if summary is None:
             return {'state': 'unknown', 'summary': 'Doctor output was not in the recognised 0.10.5/0.10.6 format.'}
         verdict = 'no failed checks' if summary['failed'] == 0 else f"{summary['failed']} failed"
-        return {'state': 'observed', 'summary': f"{summary['passed']} passed, {summary['warnings']} "
-                f"warnings, {verdict} ({summary['info']} informational).", 'counts': summary}
+        text = (f"{summary['passed']} passed, {summary['warnings']} warnings, {verdict} "
+                f"({summary['info']} informational).")
+        if summary['failed_checks']:
+            text += ' Failed: ' + ', '.join(summary['failed_checks']) + '.'
+        if summary['warning_checks']:
+            text += ' Warnings: ' + ', '.join(summary['warning_checks']) + '.'
+        return {'state': 'observed', 'summary': text, 'counts': summary}
 
     def results(self):
         with self._lock:
@@ -252,8 +263,11 @@ class OperatorTools:
     # -- pages ---------------------------------------------------------------
 
     def nav(self, current):
-        items = [(self.base + '/', 'Dashboard', current == 'dashboard'),
-                 (self.base + '/tools', 'Tools', current == 'tools')]
+        items = [(self.base + '/', 'Dashboard', current == 'dashboard')]
+        if current != 'dashboard':  # the dashboard adds its own in-page host links
+            items += [(self.base + '/#fleet-overview', 'Hosts', False),
+                      (self.base + '/#needs-attention', 'Needs attention', False)]
+        items.append((self.base + '/tools', 'Tools', current == 'tools'))
         if self.restart is not None:
             items.append((self.base + '/restart', 'Restart', current == 'restart'))
         return items
@@ -280,12 +294,16 @@ class OperatorTools:
 
     def tools_page(self, now):
         results, running = self.results()
-        rows = []
+        available, unavailable = [], []
         for tool, name, kind, status, description in INVENTORY:
             if status == 'available-if-enabled':
                 status = 'available' if self.restart is not None else 'not enabled'
-            badge = {'available': 'st-observed', 'unsupported': 'st-unknown',
-                     'proposed': 'st-info', 'not enabled': 'st-unknown'}[status]
+            text = _with_code(description)
+            if status != 'available':
+                unavailable.append('<li class="tool"><div class="tool-main"><h3>' + e(name) + '</h3><p>' + text
+                                   + '</p></div><span class="st ' + ('st-info' if status == 'proposed' else 'st-unknown')
+                                   + '">' + e(status) + '</span></li>')
+                continue
             action = ''
             if tool in ('refresh', 'version', 'status', 'doctor'):
                 action = ('<span class="st st-info">running…</span>' if running == tool else
@@ -298,17 +316,18 @@ class OperatorTools:
                                                                     else '/#traffic-history')) + '">Open</a>'
             elif tool == 'details':
                 action = '<a class="btn" href="#local-details">Show</a>'
-            elif tool == 'restart' and self.restart is not None:
-                action = '<a class="btn" href="' + e(self.base + '/restart') + '">Review restart</a>'
+            elif tool == 'restart':
+                action = '<a class="btn btn-danger" href="' + e(self.base + '/restart') + '">Review restart</a>'
             result = results.get(tool)
             outcome = ''
             if result:
                 outcome = ('<p class="tool-result"><span class="ev ev-' + e(result['state']) + '">'
                            + e(result['state']) + '</span> ' + e(result['summary']) + ' <small>Finished '
                            + e(_local_time(result['finished_at'])) + '</small></p>')
-            rows.append('<tr><th scope="row">' + e(name) + '<p class="muted">' + e(description) + '</p>' + outcome
-                        + '</th><td>' + e(kind) + '</td><td><span class="st ' + badge + '">' + e(status)
-                        + '</span></td><td>' + action + '</td></tr>')
+            effect = 'st-warning' if kind == 'Changes service state' else 'st-unknown'
+            available.append('<li class="tool"><div class="tool-main"><h3>' + e(name) + '</h3><p>' + text + '</p>'
+                             + outcome + '</div><span class="st ' + effect + '">' + e(kind) + '</span>'
+                             '<div class="tool-action">' + action + '</div></li>')
         info = self.info
         details = (
             '<section id="local-details" aria-labelledby="details-title"><h2 id="details-title">Local details</h2>'
@@ -326,12 +345,12 @@ class OperatorTools:
             'export raw logs. Terminal equivalents: <code>gargoyl tools inspect</code>, '
             '<code>gargoyl tools restart</code>, <code>gargoyl tools reconcile</code>.</p></section>')
         refresh = '<meta http-equiv="refresh" content="2">' if running else ''
-        body = (refresh + '<h1>Operator tools</h1><p>Read-only checks are separate from the one action that '
-                'changes service state. Checks that run Darkbloom use fixed arguments and keep only '
-                'normalized results. Unsupported tools say what is missing; proposed tools are not built.</p>'
-                '<div class="table-wrap" tabindex="0" role="region" aria-label="Operator tools table"><table>'
-                '<thead><tr><th scope="col">Tool</th><th scope="col">Effect</th><th scope="col">Status</th>'
-                '<th scope="col">Action</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>' + details)
+        body = (refresh + '<h1>Operator tools</h1><p>Each tool says whether it only reads or changes service '
+                'state. Checks that run Darkbloom use fixed arguments and keep only normalized results.</p>'
+                '<section aria-labelledby="tools-title"><h2 id="tools-title" class="sr-only">Available tools</h2>'
+                '<ul class="tool-list">' + ''.join(available) + '</ul></section>'
+                '<details class="unavailable-tools"><summary>Not available yet (' + str(len(unavailable)) + ')</summary>'
+                '<ul class="tool-list">' + ''.join(unavailable) + '</ul></details>' + details)
         return self._page('Operator tools · Gargoyl', 'tools', body)
 
     # -- restart pages -------------------------------------------------------
@@ -378,15 +397,16 @@ class OperatorTools:
             'with automatic restart disabled, which needs your attention.</li>'
             '<li>Gargoyl never passes --force. It waits up to 14 minutes; past that it stops only its own command '
             '(not the provider), and the outcome is unknown.</li></ul></section>'
-            '<section aria-labelledby="guarantee-title"><h2 id="guarantee-title">What is and isn\'t guaranteed</h2><ul>'
-            '<li>The attempt is recorded durably before Darkbloom runs. One attempt at a time, shared with the CLI.</li>'
+            '<p class="guarantee"><strong>Runs once, never retried.</strong> If anything is uncertain, restart '
+            'stays blocked until you reconcile.</p>'
+            '<details class="fine-print"><summary>What is and isn\'t guaranteed</summary><ul>'
+            '<li>The attempt is recorded durably before Darkbloom runs. One attempt at a time, shared with the '
+            'terminal command and the Mac app.</li>'
             '<li>Duplicate or double-clicked submissions are rejected.</li>'
-            '<li>If the outcome is uncertain, for example because the monitor stopped mid-restart, restart stays '
-            'blocked until you reconcile. Nothing retries.</li>'
-            '<li>Darkbloom restarts the provider that is current when it runs. Gargoyl re-checks the target just '
-            'before invoking, but can\'t make that check and Darkbloom\'s own selection atomic.</li>'
-            '<li>Not guaranteed: exactly-once execution across crashes. Darkbloom keeps no durable ledger of '
-            'restart requests.</li></ul></section>'
+            '<li>Darkbloom restarts the provider that is current when it runs; Gargoyl re-checks the target just '
+            'before invoking, but the two checks aren\'t atomic.</li>'
+            '<li>Not exactly-once across crashes: Darkbloom keeps no durable ledger of restart requests.</li>'
+            '</ul></details>'
             '<section aria-labelledby="confirm-title"><h2 id="confirm-title">Confirm</h2>'
             '<form method="post" action="' + e(self.base + '/restart') + '" class="confirm">'
             '<input type="hidden" name="nonce" value="' + e(self.issue('restart')) + '">'
@@ -394,7 +414,7 @@ class OperatorTools:
             '<label for="confirm-host">Type <code>' + e(prefix) + '</code>, the start of the host ID, to confirm</label>'
             '<div class="row"><input class="input" id="confirm-host" name="confirm" autocomplete="off" '
             'spellcheck="false" required maxlength="8" pattern="' + e(prefix) + '">'
-            '<button type="submit" class="btn btn-primary">Restart provider on ' + e(prefix) + '…</button></div>'
+            '<button type="submit" class="btn btn-danger">Restart provider</button></div>'
             '<p class="muted">This page does not refresh. If the provider process changes before you submit, '
             'the restart is refused and you can review the new target.</p></form></section>' + status_link)
         return self._page('Restart · Gargoyl', 'restart', body)
@@ -425,6 +445,9 @@ class OperatorTools:
             facts += ('<div><dt>Operation</dt><dd class="mono">' + e(record['operation_id'][:12]) + '</dd></div>'
                       '<div><dt>Started</dt><dd>' + e(_local_time(record['started_at'])) + '</dd></div>'
                       '<div><dt>Target process</dt><dd>PID ' + e(record['target']['process']['pid']) + '</dd></div>'
+                      + ('<div><dt>Replacement process</dt><dd>PID ' + e(record['replacement']['process']['pid'])
+                         + '</dd></div>' if record.get('replacement') else '')
+                      + 
                       '<div><dt>Finished</dt><dd>' + e(_local_time(record['finished_at']) if record.get('finished_at') else '—')
                       + '</dd></div>')
         facts += '</dl>'
@@ -457,15 +480,25 @@ class OperatorTools:
                          + '</p>' + (f"<p>Exit status {e(live['exit_code'])}.</p>" if live['exit_code'] is not None else ''))
             body += '</section>'
             if state in ('intent', 'unknown'):
-                body += ('<section aria-labelledby="reconcile-title"><h2 id="reconcile-title">Reconcile</h2>'
+                body += ('<section aria-labelledby="next-title"><h2 id="next-title">What to do next</h2><ol>'
+                         '<li>Check the provider: <a href="' + e(self.base + '/#fleet-overview') + '">dashboard '
+                         'evidence</a>, or run <a href="' + e(self.base + '/tools') + '">Daemon status</a> on the Tools page.</li>'
+                         '<li>If the drain timed out, Darkbloom left the provider draining with automatic restart '
+                         'disabled. Restarting again (after reconciling) waits for the drain again. '
+                         '<code>darkbloom restart --force</code> in a terminal would interrupt the remaining requests; '
+                         'Gargoyl never does that.</li>'
+                         '<li>If the provider was relaunched but not confirmed, it may still be starting: give it a few '
+                         'minutes and check again before reconciling.</li></ol></section>'
+                         '<section aria-labelledby="reconcile-title"><h2 id="reconcile-title">Reconcile</h2>'
                          '<p>Restart stays blocked until you reconcile. Reconciling only reads the current provider '
                          'state and records it; it never restarts anything, and it is refused while the restart '
-                         'command is still running. Check the dashboard first; if the provider is left draining with '
-                         'automatic restart disabled, resolve that in Darkbloom.</p>'
-                         + self._form('/restart/reconcile', 'reconcile', 'Reconcile and record current state',
-                                      fields='<label for="reconcile-host">Type <code>' + e(self.monitor.identity[:8])
-                                      + '</code> to confirm</label><input class="input" id="reconcile-host" '
-                                      'name="confirm" autocomplete="off" required maxlength="8">')
+                         'command is still running.</p>'
+                         + '<form method="post" action="' + e(self.base + '/restart/reconcile') + '" class="confirm">'
+                         '<input type="hidden" name="nonce" value="' + e(self.issue('reconcile')) + '">'
+                         '<label for="reconcile-host">Type <code>' + e(self.monitor.identity[:8]) + '</code> to confirm</label>'
+                         '<div class="row"><input class="input" id="reconcile-host" name="confirm" autocomplete="off" '
+                         'spellcheck="false" required maxlength="8">'
+                         '<button type="submit" class="btn">Reconcile and record current state</button></div></form>'
                          + '</section>')
         return self._page('Restart status · Gargoyl', 'restart', body)
 

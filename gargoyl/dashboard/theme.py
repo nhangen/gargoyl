@@ -352,6 +352,25 @@ button.btn { font: 600 14px var(--sans); }
 .tool-result small { display: block; color: var(--text-faint); }
 .confirm label { font-weight: 600; }
 .callout { margin: 12px 0; }
+.btn { white-space: nowrap; }
+.btn-danger { background: transparent; border-color: var(--mismatch); color: var(--text); }
+.btn-danger:hover { background: var(--mismatch-soft); }
+.tool-list { list-style: none; margin: 12px 0; padding: 0; display: grid; gap: 1px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--line); }
+.tool { display: grid; gap: 8px 16px; padding: 14px 16px; background: var(--surface); }
+.tool:first-child { border-radius: 7px 7px 0 0; } .tool:last-child { border-radius: 0 0 7px 7px; }
+.tool h3 { margin: 0 0 2px; font-size: 15px; }
+.tool p { margin: 0; color: var(--text-muted); max-width: 75ch; }
+.tool .st { justify-self: start; white-space: normal; }
+@media (min-width: 760px) { .tool { grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; } }
+.unavailable-tools { margin: 16px 0; }
+.unavailable-tools > .tool-list { margin: 0 14px 14px; }
+main ul, main ol { max-width: 75ch; }
+main ol li, main ul li { margin: 4px 0; }
+.guarantee { margin: 16px 0 8px; }
+.fine-print { margin: 0 0 16px; }
+.fine-print > ul { padding: 0 32px 12px; }
+.confirm .row .input { flex: 1 1 10ch; }
+@media (max-width: 600px) { .confirm .row { flex-direction: column; align-items: stretch; } .confirm .row .input { width: 100%; } }
 """
 
 def page_start(title, *, host_navigation=False, extra_nav=()):

@@ -49,5 +49,6 @@ sharing one journal and gate with `gargoyl tools restart`; see
 
 The [native Mac operator application](docs/native-operator-app.md) provides a
 graphical console, monitor controls, normalized export and a manual restart
-review with Mac owner confirmation. The HTTP dashboard stays read-only;
-automatic provider repair remains disabled.
+review with Mac owner confirmation. The public HTTP dashboard stays read-only;
+the opt-in private operator console above is the browser's admin panel and shares
+the same restart gate. Automatic provider repair remains disabled.

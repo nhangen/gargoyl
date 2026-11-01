@@ -5,8 +5,13 @@ console in a standard resizable Mac window with close, minimize, zoom and full-s
 and **Operation status** in its native toolbar. Start/Stop affects only the
 existing Gargoyl monitoring job, never Darkbloom. Export opens a Mac save dialog
 for bounded normalized evidence; raw provider logs and credentials are excluded.
-The browser dashboard remains read-only. No pairing command or secret URL is
-part of this flow.
+The public browser dashboard remains read-only, and the app needs no pairing
+command or secret URL. Separately, `gargoyl monitor --operator-tools
+--enable-restart` serves an opt-in private browser console (an admin panel behind
+a per-start secret URL) that can request the same manual restart; it shares the
+app's and CLI's journal and gate, so only one restart can be in flight and an
+unresolved one blocks all three until reconciled. See
+[operator console tools](operator-tools.md).
 
 The yellow titlebar control and **Window → Minimize** (Command-M) use the native
 window minimization action. Reopening restores a minimized window explicitly.

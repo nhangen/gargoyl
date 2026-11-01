@@ -163,17 +163,22 @@ def parse_doctor(result):
     if lines is None or lines.count('DETAILED CHECKS') != 1:
         return None
     counts = {'PASS': 0, 'WARN': 0, 'FAIL': 0, 'INFO': 0}
+    named = {'WARN': [], 'FAIL': []}
     for line in lines[lines.index('DETAILED CHECKS') + 1:]:
         if not line:
             break
-        match = re.fullmatch(r'  \[(PASS|WARN|FAIL|INFO)\] [^:\n]{1,200}: .*', line)
+        match = re.fullmatch(r'  \[(PASS|WARN|FAIL|INFO)\] ([^:\n]{1,200}): .*', line)
         if not match:
             return None
         counts[match.group(1)] += 1
+        # Check names are fixed upstream labels; keep only short plain ones. Details are discarded.
+        if match.group(1) in named and re.fullmatch(r'[A-Za-z][A-Za-z0-9 ._()/+-]{0,47}', match.group(2)):
+            named[match.group(1)].append(match.group(2))
     if not sum(counts.values()) or (counts['FAIL'] > 0) != (result.returncode == 1):
         return None
     return {'passed': counts['PASS'], 'warnings': counts['WARN'], 'failed': counts['FAIL'],
-            'info': counts['INFO'], 'exit': result.returncode}
+            'info': counts['INFO'], 'exit': result.returncode,
+            'failed_checks': named['FAIL'][:12], 'warning_checks': named['WARN'][:12]}
 
 
 # Fixed progress/result messages from RestartCommand.swift and ServiceDrain.swift

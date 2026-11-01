@@ -48,7 +48,8 @@ class CliParsingTests(unittest.TestCase):
             self.assertIsNone(parse_version(result))
         doctor = b'DIAGNOSIS\n\nDETAILED CHECKS\n  [PASS] a: x\n  [WARN] b: y\n  [FAIL] c: z\n\n'
         self.assertEqual(parse_doctor(RunResult(1, doctor, None, True)),
-                         {'passed': 1, 'warnings': 1, 'failed': 1, 'info': 0, 'exit': 1})
+                         {'passed': 1, 'warnings': 1, 'failed': 1, 'info': 0, 'exit': 1,
+                          'failed_checks': ['c'], 'warning_checks': ['b']})
         # A failed check with a success exit status (or the reverse) is inconsistent, not a pass.
         self.assertIsNone(parse_doctor(RunResult(0, doctor, None, True)))
         self.assertIsNone(parse_doctor(RunResult(0, b'Darkbloom Doctor\nResult: 8/8\n', None, True)))
@@ -374,7 +375,7 @@ class ConsoleHttpTests(Base):
         self.assertEqual(status, 200)
         self.assertNotIn('http-equiv="refresh"', page)
         for text in ('New work is refused', 'restart --timeout 600 --startup-timeout 180',
-                     'Not guaranteed: exactly-once', f'PID {OLD["pid"]}', 'gargoyl tools restart'):
+                     'Not exactly-once across crashes', f'PID {OLD["pid"]}', 'gargoyl tools restart'):
             self.assertIn(text, page)
         nonce = self.nonce(page, '/restart')
         token = re.search(r'name="target" value="([^"]+)"', page).group(1)

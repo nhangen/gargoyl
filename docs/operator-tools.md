@@ -1,6 +1,7 @@
 # Operator console tools
 
-`gargoyl monitor` can serve private operator tools next to the read-only dashboard.
+`gargoyl monitor` can serve a private operator console, an admin panel for this
+Mac's provider, next to the read-only dashboard.
 They're off by default. The public `http://127.0.0.1:<port>/` page and `/report.json`
 are unchanged: read-only, no forms, no actions, and they keep their original strict
 headers (`Referrer-Policy: no-referrer`, `form-action 'none'`) even with tools enabled. Manual restart in the console is the
@@ -37,7 +38,7 @@ appears on the public page. Under a LaunchAgent it's written to the standard out
 | Refresh diagnostics now | Read-only | Immediate collection through the poll loop |
 | Provider version and build | Read-only, runs `darkbloom --version` | Also hashes the executable against the recorded 0.10.5/0.10.6 builds (shown, not a restart condition) |
 | Daemon status | Read-only, runs `darkbloom status` (network update check) | Keeps only the daemon running/stopped line |
-| Doctor checks | Read-only, runs `darkbloom doctor` with no flags (network) | Keeps only pass/warn/fail/info counts; never `--clear-backend-guard` |
+| Doctor checks | Read-only, runs `darkbloom doctor` with no flags (network) | Keeps pass/warn/fail/info counts and the short names of failed and warning checks (up to 12 each); details are discarded; never `--clear-backend-guard` |
 | Health, model and connection evidence | Read-only | Dashboard per-source evidence; model names withheld |
 | Traffic and normalized history | Read-only | Last 64 in-memory observations |
 | Export redacted diagnostics | Read-only | The monitor's `/report.json` |
@@ -47,6 +48,10 @@ appears on the public page. Under a LaunchAgent it's written to the standard out
 | Raw log export or streaming | — | Unsupported by design (prompts, identifiers, keys) |
 | Earnings or payout verification | — | Unsupported: counters aren't settlement evidence |
 | Stop/start, forced restart, clear backend guard, update | Changes service state | Proposed only, not implemented |
+
+The tools page lists each tool as a card marked read-only or changes service
+state; tools that aren't available on this run are collapsed under a disclosure
+with the reason (for example, restart without `--enable-restart`).
 
 Checks that run Darkbloom use fixed arguments, a minimal environment, a deadline with
 verified cleanup (5 s, 20 s, 45 s), a 64 KiB output cap and one check at a time. Raw
@@ -79,8 +84,9 @@ nonce, so a double click or replay never starts a second attempt. Then the conso
    ends; if the monitor stopped mid-restart it's removed on reconcile or the next attempt.
 
 The status page refreshes every 2 seconds while running and then shows **Verified
-restart**, or **Unresolved** with the reason when known (drain incomplete, relaunch
-unconfirmed, refused, unrecognised). Stopping the monitor doesn't stop the restart:
+restart** with the replacement process, or **Unresolved** with the reason when known
+(drain incomplete, relaunch unconfirmed, refused, unrecognised) and numbered
+"What to do next" steps leading to reconcile. Stopping the monitor doesn't stop the restart:
 the record stays unresolved and the next monitor shows it.
 
 ### Reconcile
