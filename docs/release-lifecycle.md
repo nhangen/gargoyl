@@ -75,7 +75,7 @@ python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 python tools/verify_release_artifact.py dist/gargoyl-0.1.0-py3-none-any.whl
 ```
 
-Build tooling is pinned to setuptools 80.9.0 and wheel 0.45.1. The result is a normal
+Build tooling is pinned to setuptools 84.1.0 and wheel 0.46.2. The result is a normal
 `py3-none-any` wheel with declared Python/runtime dependencies, usable with standard
 pip installation in an approved environment. Pinning tools alone is not a reproducible
 byte-for-byte build claim; record the reviewed source revision and actual artifact
@@ -166,3 +166,28 @@ code executes and no console wrapper is created. A normal pip wheel installation
 creates the `gargoyl` wrapper; lifecycle extraction uses the module invocation
 with its explicitly selected code path. The artifact verifier checks both paths,
 including pip-installed console help, inspection and synthetic-only capture.
+
+## CI and artifact provenance
+
+Actions are pinned to complete commit identities verified against the official
+`actions/checkout` v4, `actions/setup-python` v5 and `actions/upload-artifact` v4
+refs. CI tests Python 3.11–3.14 on Linux and Python 3.14 on macOS 15; the macOS
+suite compiles and runs the existing Swift `--self-test` with fake credentials,
+hidden WebView fixtures and controlled local processes. It neither accesses a
+real login Keychain session nor restarts a provider. This is platform coverage,
+not a substitute for installed user-facing acceptance.
+
+A separate pinned `pip-audit` job resolves the declared runtime, build and development dependency graph and
+fails on
+reported vulnerabilities or audit failures; it has no ignore list. It sends
+package names/versions to advisory services, never application data or credentials.
+The unpublished private root package is not sent for a PyPI lookup; all declared
+third-party requirements are included. This is advisory checking of current
+resolution, not a lockfile or proof that future resolutions are identical.
+The existing protected release-artifact check waits for all platform and audit
+jobs; its name and the repository's required checks are unchanged.
+
+Artifact verification computes the SHA256 of the supplied wheel and tests that
+wheel in isolation. This establishes integrity relative to the supplied artifact,
+not a publisher signature, independent build provenance or a deployed trust chain.
+No artifact signing, new key, permission or account configuration is introduced.
