@@ -114,6 +114,15 @@ class NativeViewTests(unittest.TestCase):
             preflight.assert_not_called()
             invoke.assert_not_called()
 
+    def test_native_fragment_links_are_absolute_for_opaque_about_blank_document(self):
+        for view in VIEWS:
+            page = render_view(view, self.evidence(), None, now=NOW)
+            self.assertNotIn('href="#', page)
+            self.assertIn('href="about:blank#main"', page)
+        page = render_view('evidence', self.evidence(), None, now=NOW)
+        self.assertIn('href="about:blank#fleet-overview"', page)
+        self.assertIn('href="about:blank#host-' + HOST, page)
+
     def test_default_public_dashboard_does_not_gain_private_views(self):
         from gargoyl.dashboard import render_dashboard
         page = render_dashboard([snapshot()], [HOST], NOW)

@@ -1,5 +1,6 @@
 """Compile real native gate/navigation fixtures without starting AppKit or auth."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from gargoyl.gui_runtime import console_owner
 from gargoyl.native_app import SWIFT
 
 
@@ -18,7 +20,7 @@ from gargoyl.native_app import SWIFT
 )
 class NativeGateTests(unittest.TestCase):
     def test_compiled_native_authorization_and_navigation_boundaries(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
             root = Path(directory)
             source = root / "Gargoyl.swift"
             source.write_text(SWIFT)
@@ -49,6 +51,11 @@ class NativeGateTests(unittest.TestCase):
                 capture_output=True,
                 timeout=120,
             )
+            fake = root / ".venv/bin/python"
+            fake.parent.mkdir(parents=True)
+            payload = json.dumps(dict(kind="view", view="tools", html="x" * 23000)) + "\n"
+            fake.write_text("#!/usr/bin/python3\nimport sys\nsys.stdout.write(" + repr(payload) + ")\n")
+            fake.chmod(0o700)
             hits = []
 
             class Handler(BaseHTTPRequestHandler):
@@ -68,6 +75,8 @@ class NativeGateTests(unittest.TestCase):
                     os.environ,
                     GARGOYL_TEST_BLOCKED_RESOURCE=f"http://127.0.0.1:{server.server_port}",
                 )
+                if console_owner():
+                    environment["GARGOYL_FIXTURE_PYTHON"] = str(fake)
                 result = subprocess.run(
                     [str(binary), "--self-test"],
                     check=False,
