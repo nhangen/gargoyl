@@ -25,6 +25,12 @@ class ResourceWarningRunnerTests(unittest.TestCase):
         result = self.run_fixture("with sqlite3.connect(':memory:') as c:\n c.execute('SELECT 1')\nc.close()")
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_runner_imports_this_checkout_not_an_installed_package(self):
+        result = self.run_fixture("import gargoyl,pathlib\n"
+                                  "self.assertEqual(str(pathlib.Path(gargoyl.__file__).resolve().parents[1]), "
+                                  + repr(str(RUNNER.parents[1])) + ")")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_direct_resource_warning_fails_despite_inherited_ignore(self):
         result = self.run_fixture("warnings.warn('synthetic warning',ResourceWarning)")
         self.assertEqual(result.returncode, 1, result.stderr)

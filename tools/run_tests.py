@@ -3,9 +3,13 @@ import gc
 import sys
 import unittest
 import warnings
+from pathlib import Path
 
 
 def main(argv=None):
+    # A script starts with tools/ on sys.path; test the checkout, never a stale
+    # editable installation elsewhere in the shared development environment.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     leaked = 0
     previous_hook = sys.unraisablehook
 
