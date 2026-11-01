@@ -152,8 +152,8 @@ read-only Keychain sign-in was verified on November 1. These observations do not
 establish three-host installation, durable encrypted collection, mTLS deployment
 or a live provider restart. Operator signing/enrollment, spool-key custody,
 endpoint/service topology, compatible upgrade policy and wider pilot feedback
-remain unverified. See [current acceptance evidence](pilot-acceptance.md). Epics #4/#5 stay open. No production paths, settings, credentials, permissions,
-DNS, services, Darkbloom assets, or live host operations were changed in this work.
+remain unverified. See [current acceptance evidence](pilot-acceptance.md). Epics #4/#5 stay open. The synthetic lifecycle tests themselves change no production paths, settings,
+credentials, permissions, DNS, services, Darkbloom assets or live host operations.
 
 
 The optional `entry_points.txt` is accepted only as the exact canonical ASCII
