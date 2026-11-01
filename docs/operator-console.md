@@ -40,6 +40,9 @@ semantics. Responsive browser verification uses an isolated ephemeral-loopback
 preview with actual allowed state/native evidence and no extra log queries;
 prototype fixtures must always remain distinct from live acceptance evidence.
 
+Opt-in operator tools and a confirmed manual restart are described in
+[operator tools](operator-tools.md); they add private routes only when enabled.
+
 Installation does not enable any service. Stage a wheel before a separately
 controlled monitor update; preserve its existing LaunchAgent arguments, IPv4
 loopback binding and disabled repairs. No provider lifecycle action is needed.

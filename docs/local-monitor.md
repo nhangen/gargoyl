@@ -104,7 +104,14 @@ contains the MBP-26 arguments. Replace its absolute venv placeholder before any
 use. Both persistence flags are false. It is documentation only and has not been
 copied into `~/Library/LaunchAgents`, loaded or enabled.
 
-## Why provider restart is unavailable
+## Operator tools and manual restart (opt-in)
+
+With `--operator-tools` (and optionally `--enable-restart --restart-state-dir`),
+the monitor also serves private read-only checks, a redacted export and a
+confirmed manual Darkbloom restart. Without those flags everything below still
+applies. See [operator tools and manual restart](operator-tools.md).
+
+## Why provider restart is unavailable by default
 
 The source dashboard explains target, accepted-work drain, repeated/interrupted
 request safety and per-action authorization separately. This is a statement of

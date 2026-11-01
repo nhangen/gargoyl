@@ -102,6 +102,16 @@ remain rejected. This change is source-only: the installed monitor remains on
 Thus the running dashboard will not show the new explanation until an independently
 authorized package update. Live repair remains disabled in both versions.
 
+## Manual operator restart (later decision)
+
+A later, explicit owner request asked for a **manual, user-confirmed** restart
+using Darkbloom's own `restart` rather than a replacement. That is implemented as
+an opt-in operator tool ([operator tools](operator-tools.md)), separate from the v2
+unattended policy above, which remains unimplemented and disabled. It does not
+claim the missing guarantees: it records attempts durably, prevents duplicate
+submissions, never retries, and keeps uncertain outcomes blocked until a read-only
+reconciliation, but it is not exactly-once across crashes.
+
 ## Smallest upstream addition and acceptance
 
 Extend the existing owner-local lifecycle authority, drain barrier and update

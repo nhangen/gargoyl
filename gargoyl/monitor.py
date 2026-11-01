@@ -96,6 +96,22 @@ class LocalMonitor:
         self._lock = threading.Lock()
         self._history = deque(maxlen=64)
         self._collections = 0
+        # Operator "refresh now": the polling loop performs the collection, so the
+        # collector is never driven from two threads.
+        self._poll_requested = threading.Event()
+
+    def request_poll(self):
+        self._poll_requested.set()
+
+    @property
+    def collections(self):
+        with self._lock:
+            return self._collections
+
+    def history(self):
+        """Detached normalized observations (allowlisted fields only)."""
+        with self._lock:
+            return [validate_snapshot(item) for item in self._history]
 
     def tick(self, *, stop_event=None):
         now = self.clock()
@@ -120,15 +136,16 @@ class LocalMonitor:
             # Never let a previously good sample mask a current failed read.
             return [validate_snapshot(self._history[-1])] if self._history else []
 
-    def render_page(self, now):
+    def render_page(self, now, *, operator_section=None, extra_nav=()):
         with self._lock:
             samples = [validate_snapshot(item) for item in self._history]
             count = self._collections
             log_report = dict(self._log_report) if self._log_report is not None else None
-        page = render_dashboard(samples[-1:], [self.identity], now)
-        summary = ('<section aria-label="Live collection"><h2>Local collection</h2>'
+        page = render_dashboard(samples[-1:], [self.identity], now, extra_nav=extra_nav)
+        summary = ('<section id="local-collection-summary" aria-label="Live collection"><h2>Local collection</h2>'
                    f'<p>{count} completed polls · {self.interval:g}s interval · '
-                   'Repairs disabled · Memory only</p>')
+                   + ('Unattended repair disabled' if operator_section else 'Repairs disabled')
+                   + ' · Memory only</p>')
         if samples:
             fields = samples[-1]['fields']
             summary += '<p>Latest source read: <strong>' + escape(fields['error_code']['value']) + '</strong>. '
@@ -146,7 +163,7 @@ class LocalMonitor:
                 summary += (f'<p>Recent counter change: {requests} requests · {tokens} tokens '
                             f'over {elapsed:.0f}s of source timestamps. Counter changes are '
                             'not confirmed paid work; an undetected reset can affect this comparison.</p>')
-            summary += '<details><summary>Recent traffic observations</summary><div class="scroll"><table><thead><tr><th>Collected at</th><th>Requests total</th><th>Tokens total</th><th>Source timestamp</th><th>Read error</th></tr></thead><tbody>'
+            summary += '<details id="traffic-history"><summary>Recent traffic observations</summary><div class="scroll"><table><thead><tr><th>Collected at</th><th>Requests total</th><th>Tokens total</th><th>Source timestamp</th><th>Read error</th></tr></thead><tbody>'
             for sample in reversed(samples):
                 f = sample['fields']
                 values = [sample['collected_at'], f['requests_total']['value'],
@@ -159,7 +176,8 @@ class LocalMonitor:
         summary += render_log_report(log_report, now)
         summary += '<p>Up to 64 normalized observations remain in this process. Restart clears history. No earnings or daemon liveness are inferred.</p></section>'
         return page.replace('<h1>Fleet evidence</h1>', '<h1>Gargoyl local monitor</h1>').replace(
-            '<div id="local-collection"></div>', summary + render_restart_unavailable())
+            '<div id="local-collection"></div>',
+            summary + (operator_section if operator_section is not None else render_restart_unavailable()))
 
 
 class MonitorViewer(EvidenceViewer):
@@ -168,14 +186,23 @@ class MonitorViewer(EvidenceViewer):
     # permit replacing another active listener.
     allow_reuse_address = True
 
+    def __init__(self, reader, expected_hosts, *, tools=None, **kwargs):
+        self.tools = tools
+        if tools is not None:
+            from gargoyl.operator_console import OperatorHandler
+            self.handler_class = OperatorHandler
+        super().__init__(reader, expected_hosts, **kwargs)
+
     def render_page(self, now):
+        if self.tools is not None:
+            return self.reader.render_page(now, operator_section=self.tools.operator_section(private=False))
         return self.reader.render_page(now)
 
 
-def run_monitor(monitor, *, port=8765, stop=None, ready=None):
+def run_monitor(monitor, *, port=8765, stop=None, ready=None, tools=None):
     """Run until stop; caller owns signal handling. Always close and join viewer."""
     stop = stop or threading.Event()
-    viewer = MonitorViewer(monitor, [monitor.identity], port=port, refresh_seconds=2)
+    viewer = MonitorViewer(monitor, [monitor.identity], port=port, refresh_seconds=2, tools=tools)
     thread = threading.Thread(target=viewer.serve_forever, name='gargoyl-viewer', daemon=True)
     try:
         monitor.tick(stop_event=stop)
@@ -184,6 +211,10 @@ def run_monitor(monitor, *, port=8765, stop=None, ready=None):
             ready(viewer.server_port)
         due = time.monotonic() + monitor.interval
         while not stop.is_set():
+            if monitor._poll_requested.is_set():
+                monitor._poll_requested.clear()
+                monitor.tick(stop_event=stop)
+                continue
             remaining = due - time.monotonic()
             if remaining > 0:
                 stop.wait(min(remaining, 0.2))
@@ -197,6 +228,8 @@ def run_monitor(monitor, *, port=8765, stop=None, ready=None):
             viewer.shutdown()
             thread.join()
         viewer.server_close()
+        if tools is not None and tools.restart is not None:
+            tools.restart.close()
 
 
 def status(port):
@@ -217,6 +250,32 @@ def status(port):
         connection.close()
 
 
+def build_operator_tools(args, monitor):
+    """Explicit opt-in: --operator-tools needs --provider-executable; restart needs both flags."""
+    from gargoyl.darkbloom_cli import cli_environment, validate_executable
+    from gargoyl.operator_console import OperatorTools, inspect_executable
+    if not args.provider_executable:
+        raise ValueError('operator tools require --provider-executable')
+    executable = validate_executable(args.provider_executable, args.owner_uid)
+    environment = cli_environment(args.owner_uid)
+    info = inspect_executable(executable, environment)
+    restart = None
+    if args.enable_restart:
+        from gargoyl.restart_attempts import AttemptStore, RestartController
+        if not args.restart_state_dir:
+            raise ValueError('--enable-restart requires --restart-state-dir')
+        verifier = None
+        if sys.platform == 'darwin':
+            from gargoyl.repair_process_identity import MacOSProcessVerifier
+            verifier = MacOSProcessVerifier(expected_owner_uid=args.owner_uid, expected_executable=executable)
+        restart = RestartController(host=args.host, executable=executable, executable_info=info,
+                                    owner_uid=args.owner_uid, source=args.input,
+                                    store=AttemptStore(args.restart_state_dir, args.owner_uid),
+                                    provider_verifier=verifier, environment=environment)
+    return OperatorTools(monitor, executable=executable, executable_info=info,
+                         environment=environment, restart=restart)
+
+
 def main(args):
     if args.command == 'status':
         return status(args.port)
@@ -224,11 +283,14 @@ def main(args):
         raise ValueError('invalid monitor port')
     if args.coordinator_errors and not args.provider_executable:
         raise ValueError('diagnostic configuration unavailable')
+    if (args.enable_restart and not args.operator_tools) or (args.restart_state_dir and not args.enable_restart):
+        raise ValueError('restart configuration unavailable')
     diagnostics = (LocalDiagnostics(executable=args.provider_executable, owner_uid=args.owner_uid,
                                    clock=utc_now, coordinator_errors=args.coordinator_errors)
                    if args.provider_executable else None)
     monitor = LocalMonitor(args.input, args.owner_uid, args.host, interval=args.interval,
                            diagnostics=diagnostics)
+    tools = build_operator_tools(args, monitor) if args.operator_tools else None
 
     class SignalStop:
         requested = False
@@ -248,8 +310,15 @@ def main(args):
     try:
         for sig in (signal.SIGINT, signal.SIGTERM):
             previous[sig] = signal.signal(sig, request_stop)
-        return run_monitor(monitor, port=args.port, stop=stop,
-                           ready=lambda port: print(f'Gargoyl listening on http://127.0.0.1:{port}/; repairs disabled. Ctrl-C to stop.', flush=True))
+        def ready(port):
+            if tools is None:
+                print(f'Gargoyl listening on http://127.0.0.1:{port}/; repairs disabled. Ctrl-C to stop.', flush=True)
+                return
+            print(f'Gargoyl listening on http://127.0.0.1:{port}/ (public, read-only). Unattended repair disabled.', flush=True)
+            print(f'Operator tools (keep private): http://127.0.0.1:{port}{tools.base}/', flush=True)
+            print('Manual restart enabled: requires typed confirmation in the operator tools.' if tools.restart
+                  else 'Manual restart not enabled.', flush=True)
+        return run_monitor(monitor, port=args.port, stop=stop, ready=ready, tools=tools)
     except Exception:
         print('Local monitoring failed; listener stopped. No repair attempted.', file=sys.stderr)
         return 1

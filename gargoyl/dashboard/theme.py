@@ -344,10 +344,21 @@ section > p, details > p, details > ul { margin: 10px 0; max-width: 75ch; }
 .jump-link:hover { background: var(--surface-2); }
 #fleet-overview, #needs-attention { scroll-margin-top: 12px; }
 @media (min-width: 1000px) { .jump-link { display: none; } }
+.btn { cursor: pointer; }
+button.btn { font: 600 14px var(--sans); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.tool-form { display: inline-flex; margin: 0; }
+.tool-result { margin-top: 8px; }
+.tool-result small { display: block; color: var(--text-faint); }
+.confirm label { font-weight: 600; }
+.callout { margin: 12px 0; }
 """
 
-def page_start(title, *, host_navigation=False):
-    """host_navigation adds Hosts/attention links; only pages rendering the fleet overview set it."""
+def page_start(title, *, host_navigation=False, extra_nav=()):
+    """host_navigation adds Hosts/attention links; only pages rendering the fleet overview set it.
+
+    extra_nav is (href, label, current) for the private operator area; never prototype data.
+    """
     from html import escape
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -355,10 +366,15 @@ def page_start(title, *, host_navigation=False):
             '<body><a class="skip-link" href="#main">Skip to content</a><div class="shell">'
             '<header class="topbar"><a class="brand" href="#main" aria-label="Gargoyl evidence">'
             '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path d="M21 31l8 3-8 1z M43 31l-8 3 8 1z" fill="currentColor"/></svg>gargoyl</a>'
-            '<span class="pill">Read-only evidence</span></header>'
-            '<nav class="nav" aria-label="Sections"><ul><li><a href="#main">Evidence</a></li>'
+            + ('<span class="pill">Operator tools · private</span>' if extra_nav
+               else '<span class="pill">Read-only evidence</span>') + '</header>'
+            '<nav class="nav" aria-label="Sections"><ul>'
+            + ('' if extra_nav else '<li><a href="#main">Evidence</a></li>')
             + ('<li><a href="#fleet-overview">Hosts</a></li><li><a href="#needs-attention">Needs attention</a></li>'
-               if host_navigation else '') + '</ul></nav><main id="main">'
+               if host_navigation else '')
+            + ''.join('<li><a href="' + escape(href, quote=True) + '"' + (' aria-current="page"' if current else '')
+                      + '>' + escape(label) + '</a></li>' for href, label, current in extra_nav)
+            + '</ul></nav><main id="main">'
             + ('<a class="jump-link" href="#fleet-overview">Jump to hosts</a>' if host_navigation else ''))
 
 
