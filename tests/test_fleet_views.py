@@ -61,6 +61,34 @@ class FleetViewTests(unittest.TestCase):
         self.assertIn("unknown — no fresh unique account identity match", page)
         self.assertNotIn("healthy", page.replace("absent or healthy", ""))
 
+    def test_visible_section_navigation_has_real_targets_in_each_surface(self):
+        from html.parser import HTMLParser
+
+        class Links(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.ids = set()
+                self.fragments = []
+
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if "id" in attrs:
+                    self.ids.add(attrs["id"])
+                href = attrs.get("href", "")
+                if href.startswith("about:blank#"):
+                    self.fragments.append(href.split("#", 1)[1])
+
+        value = normalize_inventory(response(), NOW)
+        for inventory, view in [
+            (None, "fleet"),
+            (value, "fleet"),
+            (value, "fleet-node-" + provider_key(value["providers"][0]["id"])),
+        ]:
+            page = Links()
+            page.feed(self.page(inventory, view))
+            self.assertTrue(set(page.fragments) <= page.ids)
+            self.assertTrue({"fleet-overview", "needs-attention"} <= page.ids)
+
     def test_source_text_is_escaped_and_absent_id_is_not_substituted(self):
         raw = response()
         raw["providers"][0]["name"] = "<img src=x onerror=alert(1)>"
