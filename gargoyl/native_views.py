@@ -6,7 +6,7 @@ from html import escape
 from gargoyl.collector_coordinator_log import validate_log_report
 from gargoyl.dashboard import render_dashboard
 from gargoyl.dashboard.theme import PAGE_END, page_start
-from gargoyl.manual_restart import validate_record
+from gargoyl.manual_restart import restart_gate_allows, validate_record
 from gargoyl.telemetry import effective_state, timestamp, validate_snapshot
 
 HOST = "00000000-0000-4000-8000-000000000001"
@@ -147,13 +147,10 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
             body += '<p>No manual operation recorded. This is not proof that a restart is currently available.</p>'
         else:
             verified = record['state'] == 'completed' and record['reason'] == 'cli_success_and_replacement_observed'
-            if verified:
-                badge, headline = 'st-observed', 'Verified replacement observed'
-            elif record['state'] == 'reconciled':
-                badge, headline = 'st-unknown', 'Reconciled read-only — outcome unproven; restart gate reopened'
-            else:
-                badge, headline = 'st-warning', 'Unresolved — native retry blocked'
-            body += '<p><span class="st ' + badge + '">' + headline + '</span></p><dl class="facts">'
+            status = ('Verified replacement observed' if verified else
+                      'Read-only reconciliation recorded — prior outcome remains unverified; a new confirmed attempt is permitted'
+                      if restart_gate_allows(record) else 'Unresolved — native retry blocked')
+            body += '<p><span class="st ' + ('st-observed' if verified else 'st-warning') + '">' + status + '</span></p><dl class="facts">'
             facts = [("Operation", record['operation_id']), ("State", record['state']), ("Reason", record['reason']), ("Started", record['started_at']), ("Target PID", record['target']['process']['pid'])]
             if 'finished_at' in record:
                 facts.append(("Finished", record['finished_at']))
@@ -161,9 +158,9 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
                 facts.append(("Replacement PID", record['replacement']['process']['pid']))
             body += ''.join('<div><dt>' + e(k) + '</dt><dd class="mono">' + e(v) + '</dd></div>' for k, v in facts) + '</dl>'
         body += ('<p>Review the exact target and interruption with Restart provider… in the native toolbar. '
-                 'One shared durable journal prevents concurrent submissions. Intent and unknown records block '
-                 'the native app, the console and the CLI alike until read-only reconciliation; a reconciled '
-                 'record reopens the shared gate. This view never reconciles or clears anything.</p>'
+                 'One shared durable journal prevents concurrent submissions. Intent and unknown records remain '
+                 'blocked. Explicit read-only reconciliation permits a new attempt with fresh target and '
+                 'owner confirmation; it does not prove the previous outcome. This view never clears the gate.</p>'
                  '<p>Accepted work may drain for 10 minutes; startup may take 3 minutes. No force or automatic '
                  'retry. An interrupted or uncertain command may leave the provider draining or unavailable. '
                  'Darkbloom has no durable request ledger; exactly-once execution is not claimed.</p>'

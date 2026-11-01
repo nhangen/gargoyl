@@ -17,9 +17,9 @@ from gargoyl.gui_runtime import (
 )
 from gargoyl.manual_restart import (
     ManualJournal,
-    gate_allows,
     read_operation,
     reconcile_operation,
+    restart_gate_allows,
     run_restart,
 )
 from gargoyl.operator_console import ConsoleRestart
@@ -173,7 +173,7 @@ class GraphicalRestartTests(unittest.TestCase):
             with self.subTest(state=state):
                 path = self.path + "-" + state
                 self.write_record(path, state)
-                self.assertFalse(gate_allows(read_operation(path)))
+                self.assertFalse(restart_gate_allows(read_operation(path)))
                 opened, reason = console(path).gate()
                 self.assertFalse(opened)
                 self.assertIn("Reconcile before another restart", reason)
@@ -190,7 +190,7 @@ class GraphicalRestartTests(unittest.TestCase):
                 self.assertEqual(read_operation(path)["state"], state)
 
         self.write_record(self.path, "reconciled")
-        self.assertTrue(gate_allows(read_operation(self.path)))
+        self.assertTrue(restart_gate_allows(read_operation(self.path)))
         self.assertEqual(console(self.path).gate(), (True, None))
         with ManualJournal(self.path) as journal:
             self.assertEqual(self.run_gui(journal)["state"], "completed")

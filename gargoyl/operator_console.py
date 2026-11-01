@@ -1,7 +1,7 @@
 """Opt-in local operator tools behind a per-process secret path.
 
 The public `/` page is unchanged and read-only. Tools live under `/s/<token>/`, where
-the token is printed once on the monitor's terminal. It is never set as a cookie:
+the token is printed once only when stdout is an interactive terminal. It is never set as a cookie:
 browsers share 127.0.0.1 cookies across ports, so a cookie could reach other local
 servers. Every state-changing request is a POST that must carry the exact Host and
 Origin, a same-origin fetch context, a small form body and a single-use nonce
@@ -39,7 +39,6 @@ from gargoyl.dashboard.theme import PAGE_END, page_start
 from gargoyl.manual_restart import (
     ManualJournal,
     executable_stamp,
-    gate_allows,
     installation_preflight,
     invoke_restart,
     observed_target,
@@ -47,6 +46,7 @@ from gargoyl.manual_restart import (
     process_alive,
     read_operation,
     reconcile_operation,
+    restart_gate_allows,
     run_restart,
 )
 from gargoyl.telemetry import timestamp
@@ -286,7 +286,8 @@ class OperatorTools:
         if not private:
             return ('<section aria-labelledby="operator-title"><h2 id="operator-title">Operator tools</h2>'
                     '<p>Operator tools are enabled for this monitor. Open the private link printed in the '
-                    'monitor\'s terminal. This public page never shows it and offers no actions.</p></section>')
+                    'monitor\'s interactive terminal, or use the native Mac app. Redirected output withholds the '
+                    'private link. This public page never shows it and offers no actions.</p></section>')
         restart = ('<a href="' + e(self.base + '/restart') + '">Manual restart</a> is enabled.'
                    if self.restart is not None else 'Manual restart is not enabled (--enable-restart).')
         return ('<section aria-labelledby="operator-title"><h2 id="operator-title">Operator tools</h2>'
@@ -602,7 +603,7 @@ class ConsoleRestart:
         record = self.record() if record is None else record
         if record and record.get('unreadable'):
             return False, 'The manual restart record is unreadable or has unsafe permissions. Restart is blocked.'
-        if not gate_allows(record):
+        if not restart_gate_allows(record):
             return False, ('The last manual restart (from this console or the terminal) has no verified outcome. '
                            'Reconcile before another restart.')
         return True, None

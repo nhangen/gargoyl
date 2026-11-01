@@ -22,12 +22,12 @@ from gargoyl.dashboard import build_dashboard
 from gargoyl.manual_restart import (
     ManualJournal,
     executable_stamp,
-    gate_allows,
     installation_preflight,
     invoke_restart,
     observed_target,
     owner_home,
     read_operation,
+    restart_gate_allows,
 )
 from gargoyl.manual_restart import run_restart as execute_restart
 from gargoyl.telemetry import timestamp, validate_snapshot
@@ -108,7 +108,8 @@ def graphical_restart(
     """One pending preview, one native confirmation, shared CLI journal semantics."""
     if not owner():
         raise ValueError("inactive owner")
-    if not gate_allows(journal.read()):
+    prior = journal.read()
+    if not restart_gate_allows(prior):
         raise ValueError("unresolved operation")
     target, stamp = preflight()
     began_wall = wall_clock()

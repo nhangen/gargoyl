@@ -95,10 +95,9 @@ class NativeViewTests(unittest.TestCase):
         data = dict(record, state='reconciled', reason='reconciled_read_only',
                     reconciled_at=record['finished_at'], observation='provider_unobservable')
         page = render_view('operation', None, data, now=NOW)
-        self.assertIn('Reconciled read-only', page)
-        self.assertIn('restart gate reopened', page)
-        self.assertNotIn('native retry blocked', page)
-        self.assertNotIn('Verified replacement observed', page)
+        self.assertIn('Read-only reconciliation recorded', page)
+        self.assertIn('prior outcome remains unverified', page)
+        self.assertNotIn('Unresolved — native retry blocked', page)
         page = render_view('operation', None, None, journal_available=False, now=NOW)
         self.assertIn('Operation record unavailable', page)
         self.assertNotIn('No manual operation recorded', page)
