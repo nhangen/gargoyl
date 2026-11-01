@@ -179,17 +179,23 @@ func viewDestination(_ url: URL?, mainFrame: Bool) -> String? {
 let fragmentScripts = [
     "main":"document.getElementById('main')?.scrollIntoView()",
     "fleet-overview":"document.getElementById('fleet-overview')?.scrollIntoView()",
-    "needs-attention":"document.getElementById('needs-attention')?.scrollIntoView()",
-    "host-00000000-0000-4000-8000-000000000001":"document.getElementById('host-00000000-0000-4000-8000-000000000001')?.scrollIntoView()"
+    "needs-attention":"document.getElementById('needs-attention')?.scrollIntoView()"
 ]
-func fragmentScript(_ url: URL?, mainFrame: Bool) -> String? {
-    guard mainFrame, let value = url?.absoluteString else { return nil }
-    // Exact strings only: no decoding or interpolation of supplied URL/page text.
-    return fragmentScripts.first { value == "about:blank#" + $0.key || value == "about:blank%23" + $0.key }?.value
+func canonicalLocalHost(_ value: String) -> String? {
+    guard let id = UUID(uuidString:value), id.uuidString.lowercased() == value else { return nil }
+    return id.uuidString.lowercased()
 }
-func scrollNativeFragment(_ action: WKNavigationAction, in web: WKWebView, cancel: () -> Void) -> Bool {
+func fragmentScript(_ url: URL?, mainFrame: Bool, localHostID: String = "00000000-0000-4000-8000-000000000001") -> String? {
+    guard mainFrame, let value = url?.absoluteString else { return nil }
+    if let fixed = fragmentScripts.first(where:{ value == "about:blank#" + $0.key || value == "about:blank%23" + $0.key }) { return fixed.value }
+    // Reconstruct from the trusted view's canonical identity, never URL text.
+    guard let id = canonicalLocalHost(localHostID),
+          value == "about:blank#host-" + id || value == "about:blank%23host-" + id else { return nil }
+    return "document.getElementById('host-\(id)')?.scrollIntoView()"
+}
+func scrollNativeFragment(_ action: WKNavigationAction, in web: WKWebView, localHostID: String = "00000000-0000-4000-8000-000000000001", cancel: () -> Void) -> Bool {
     guard action.navigationType == .linkActivated,
-          let script = fragmentScript(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) else { return false }
+          let script = fragmentScript(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true,localHostID:localHostID) else { return false }
     cancel()
     web.evaluateJavaScript(script,completionHandler:nil)
     return true
@@ -197,7 +203,7 @@ func scrollNativeFragment(_ action: WKNavigationAction, in web: WKWebView, cance
 
 func ownerActive() -> Bool {
     var uid: uid_t = 0; var gid: gid_t = 0
-    return SCDynamicStoreCopyConsoleUser(nil, &uid, &gid) != nil && uid == 501 && geteuid() == 501
+    return SCDynamicStoreCopyConsoleUser(nil, &uid, &gid) != nil && uid == geteuid() && geteuid() != 0
 }
 
 func allowedNavigation(_ url: URL?, mainFrame: Bool) -> Bool {
@@ -265,7 +271,7 @@ final class Worker {
         else { throw NSError(domain: "Gargoyl", code: 1) }
         let executable = URL(fileURLWithPath: path)
         let attributes = try FileManager.default.attributesOfItem(atPath: executable.resolvingSymlinksInPath().path)
-        guard let owner = attributes[.ownerAccountID] as? NSNumber, [0,501].contains(owner.intValue),
+        guard let owner = attributes[.ownerAccountID] as? NSNumber, [0,Int(geteuid())].contains(owner.intValue),
               let permissions = attributes[.posixPermissions] as? NSNumber, permissions.intValue & 0o022 == 0
         else { throw NSError(domain: "Gargoyl", code: 2) }
         process.executableURL = executable
@@ -336,6 +342,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var webReady = false
     var viewSelection = ViewSelection()
     var viewWorker: Worker?
+    var renderedLocalHostID = ""
     var pending: [String: Any]?
     var approvalGate: ApprovalGate?
     var context: LAContext?
@@ -450,13 +457,16 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         // One read-only worker at a time. A changed selection is loaded after it exits.
         guard viewWorker == nil else { return }
         viewPhase = "loading private view"
+        renderedLocalHostID = ""
         let generation = viewSelection.generation
         var delivered = false
         do {
             viewWorker = try Worker(mode:"view-" + view,event:{ [weak self] value in
                 guard let self = self, self.viewSelection.accepts(generation),
                       value["kind"] as? String == "view", value["view"] as? String == view,
-                      let html = value["html"] as? String, html.utf8.count <= 500000 else { return }
+                      let html = value["html"] as? String, html.utf8.count <= 500000,
+                      let localHostID = value["local_host_id"] as? String, canonicalLocalHost(localHostID) != nil else { return }
+                self.renderedLocalHostID = localHostID
                 delivered = true; self.viewPhase = "received private HTML"
                 self.finishViewLoading()
                 self.web.loadHTMLString(html,baseURL:URL(string:"about:blank"))
@@ -824,13 +834,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
               let digest = request["preview_digest"] as? String, digest.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,
               let target = request["target"] as? [String:Any], let process = target["process"] as? [String:Any],
               let pid = process["pid"] as? Int, pid > 0, let birth = process["born_us"] as? Int64,
-              process["owner_uid"] as? Int == 501, let version = target["version"] as? String, ["0.10.5","0.10.6"].contains(version)
+              process["owner_uid"] as? Int == Int(geteuid()), let version = target["version"] as? String, ["0.10.5","0.10.6"].contains(version)
         else { restartWorker?.reply(request,approved:false); show("Restart preview is unavailable or invalid."); return }
         pending = request
         approvalGate = ApprovalGate(request:id,digest:digest,expires:expiry)
         approvalTimer = Timer.scheduledTimer(withTimeInterval:90,repeats:false) { [weak self] _ in self?.cancelApproval("Confirmation expired. No restart was authorized.") }
-        let alert = NSAlert(); alert.messageText = "Restart Darkbloom on MBP-26?"
-        alert.informativeText = "Current provider: PID \(pid), birth \(birth), version \(version), owner 501.\nExecutable: ~/.darkbloom/Darkbloom.app/Contents/MacOS/darkbloom\nCommand: restart --timeout 600 --startup-timeout 180 (no force).\n\nThe current provider in this installation will refuse new work, drain accepted work, then restart with existing settings. It may be unavailable while restarting. Darkbloom temporarily disables startup/watchdog, removes recovery history, changes termination allowance and restores configured recovery. Replacement can resume configured coordinator traffic/authorization and existing startup/update behavior. Existing model/settings are reused; no credentials or configuration are supplied. A timeout can leave it draining or disabled. No force or automatic retry is permitted.\n\nThis is installation-scoped consent, not an atomic lock to the displayed process. The target is checked again before execution. One operation may take up to 840 seconds plus cleanup. An uncertain result remains blocked.\n\nThe next step is your Mac’s authentication prompt."
+        let alert = NSAlert(); alert.messageText = "Restart Darkbloom on this Mac?"
+        alert.informativeText = "Current provider: PID \(pid), birth \(birth), version \(version), owner \(geteuid()).\nExecutable: ~/.darkbloom/Darkbloom.app/Contents/MacOS/darkbloom\nCommand: restart --timeout 600 --startup-timeout 180 (no force).\n\nThe current provider in this installation will refuse new work, drain accepted work, then restart with existing settings. It may be unavailable while restarting. Darkbloom temporarily disables startup/watchdog, removes recovery history, changes termination allowance and restores configured recovery. Replacement can resume configured coordinator traffic/authorization and existing startup/update behavior. Existing model/settings are reused; no credentials or configuration are supplied. A timeout can leave it draining or disabled. No force or automatic retry is permitted.\n\nThis is installation-scoped consent, not an atomic lock to the displayed process. The target is checked again before execution. One operation may take up to 840 seconds plus cleanup. An uncertain result remains blocked.\n\nThe next step is your Mac’s authentication prompt."
         alert.addButton(withTitle:"Continue to Mac confirmation"); alert.addButton(withTitle:"Cancel")
         consentSheet = alert.window
         alert.beginSheetModal(for:window) { [weak self, weak worker] response in
@@ -841,7 +851,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             var error: NSError?
             guard context.canEvaluatePolicy(.deviceOwnerAuthentication,error:&error) else { self.cancelApproval("Mac owner authentication is unavailable. Restart remains blocked."); return }
             self.context = context
-            context.evaluatePolicy(.deviceOwnerAuthentication,localizedReason:"authorize one manual Darkbloom restart on MBP-26") { success, _ in
+            context.evaluatePolicy(.deviceOwnerAuthentication,localizedReason:"authorize one manual Darkbloom restart on this Mac") { success, _ in
                 DispatchQueue.main.async {
                     guard self.restartWorker === worker, self.pending?["request_id"] as? String == id else { return }
                     guard var gate = self.approvalGate else { return }
@@ -899,7 +909,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if action.navigationType == .linkActivated, let view = viewDestination(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) {
             decisionHandler(.cancel); displayView(view); return
         }
-        if scrollNativeFragment(action,in:webView,cancel:{ decisionHandler(.cancel) }) { return }
+        if scrollNativeFragment(action,in:webView,localHostID:renderedLocalHostID,cancel:{ decisionHandler(.cancel) }) { return }
         guard allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) else { decisionHandler(.cancel); return }
         decisionHandler(.allow)
     }
@@ -909,12 +919,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
 
 #if GARGOYL_NATIVE_TESTS
 final class ResourceFixture: NSObject, WKNavigationDelegate {
+    let localHostID = "00000000-0000-4000-8000-000000000002"
     var finished = false
     var fragmentRequested = false
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if action.request.url?.absoluteString != "about:blank" { fragmentRequested = true }
         print("fixture navigation: \(action.request.url?.absoluteString ?? "nil") main=\(action.targetFrame?.isMainFrame == true) type=\(action.navigationType.rawValue) matched=\(fragmentScript(action.request.url,mainFrame:true) != nil)")
-        if scrollNativeFragment(action,in:webView,cancel:{ decisionHandler(.cancel) }) { return }
+        if scrollNativeFragment(action,in:webView,localHostID:localHostID,cancel:{ decisionHandler(.cancel) }) { return }
         decisionHandler(allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) ? .allow : .cancel)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
@@ -947,7 +958,7 @@ if CommandLine.arguments.contains("--self-test") {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.userContentController.add(compiledRules!)
         let fixture = ResourceFixture(); let page = WKWebView(frame:NSRect(x:0,y:0,width:390,height:600),configuration:configuration); page.navigationDelegate = fixture
-        page.loadHTMLString("<html><head><title>Native admin fixture</title></head><body><a href='about:blank#main'>Jump</a><h1 id='main' style='margin-top:1000px'>Rendered admin</h1><img src='\(endpoint)/image'><iframe src='\(endpoint)/frame'></iframe><link rel='stylesheet' href='\(endpoint)/style'></body></html>",baseURL:URL(string:"about:blank")!)
+        page.loadHTMLString("<html><head><title>Native admin fixture</title></head><body><a href='about:blank#host-\(fixture.localHostID)'>Jump</a><h1 id='host-\(fixture.localHostID)' style='margin-top:1000px'>Rendered admin</h1><img src='\(endpoint)/image'><iframe src='\(endpoint)/frame'></iframe><link rel='stylesheet' href='\(endpoint)/style'></body></html>",baseURL:URL(string:"about:blank")!)
         let end = Date().addingTimeInterval(5)
         // WebKit can publish didFinish before its title property updates.
         // Wait for the actual main document, not only the callback.
@@ -959,8 +970,8 @@ if CommandLine.arguments.contains("--self-test") {
         page.evaluateJavaScript("document.querySelector('a').href") { value, _ in anchor = value as? String; inspected = true }
         let inspectionLimit = Date().addingTimeInterval(3)
         while !inspected && Date() < inspectionLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
-        precondition(anchor == "about:blank#main")
-        precondition(fragmentScript(URL(string:anchor!),mainFrame:true) != nil)
+        precondition(anchor == "about:blank#host-" + fixture.localHostID)
+        precondition(fragmentScript(URL(string:anchor!),mainFrame:true,localHostID:fixture.localHostID) != nil)
         page.evaluateJavaScript("document.querySelector('a').click()",completionHandler:nil)
         let clickedLimit = Date().addingTimeInterval(1)
         while !fixture.fragmentRequested && Date() < clickedLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
@@ -1008,6 +1019,13 @@ if CommandLine.arguments.contains("--self-test") {
         for prefix in ["about:blank#", "about:blank%23"] { precondition(fragmentScript(URL(string:prefix + key),mainFrame:true) == fragmentScripts[key]) }
         precondition(fragmentScript(URL(string:"about:blank#" + key),mainFrame:false) == nil)
     }
+    let configuredHost = "00000000-0000-4000-8000-000000000002"
+    let hostURL = URL(string:"about:blank#host-" + configuredHost)
+    precondition(fragmentScript(hostURL,mainFrame:true) == nil)
+    precondition(fragmentScript(hostURL,mainFrame:true,localHostID:configuredHost) == "document.getElementById('host-\(configuredHost)')?.scrollIntoView()")
+    precondition(fragmentScript(hostURL,mainFrame:false,localHostID:configuredHost) == nil)
+    precondition(fragmentScript(hostURL,mainFrame:true,localHostID:"bad'payload") == nil)
+    precondition(fragmentScript(URL(string:"https://example.invalid/#host-" + configuredHost),mainFrame:true,localHostID:configuredHost) == nil)
     for invalid in ["about:blank#restart", "about:blank%2523main", "about:blank%23main?command=restart", "about:blank#main/extra", "about:blank#main'", "http://127.0.0.1:8766/#main", "file:///tmp/#main", "gargoyl-view://tools/#main"] {
         precondition(fragmentScript(URL(string:invalid),mainFrame:true) == nil)
         precondition(!allowedNavigation(URL(string:invalid),mainFrame:true))

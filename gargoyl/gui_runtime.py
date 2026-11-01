@@ -30,6 +30,7 @@ from gargoyl.manual_restart import (
     restart_gate_allows,
 )
 from gargoyl.manual_restart import run_restart as execute_restart
+from gargoyl.pilot_configuration import load_pilot_configuration
 from gargoyl.telemetry import timestamp, validate_snapshot
 
 HOST = "00000000-0000-4000-8000-000000000001"
@@ -37,7 +38,11 @@ POLICY = "native-manual-installation-v1"
 
 
 def console_owner():
-    if sys.platform != "darwin" or os.getuid() != 501:
+    if sys.platform != "darwin":
+        return False
+    try:
+        policy = load_pilot_configuration(home=owner_home()).require_local()
+    except (OSError, ValueError):
         return False
     sc = ctypes.CDLL(
         "/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration"
@@ -56,7 +61,7 @@ def console_owner():
     name = sc.SCDynamicStoreCopyConsoleUser(None, ctypes.byref(uid), ctypes.byref(gid))
     if name:
         cf.CFRelease(name)
-    return bool(name and uid.value == os.getuid() == 501)
+    return bool(name and uid.value == os.getuid() == policy.owner_uid)
 
 
 def emit(value):
@@ -176,6 +181,8 @@ def monitor_configuration():
     import plistlib
 
     home = owner_home()
+    policy = load_pilot_configuration(home=home).require_local()
+    executable_stamp(policy.monitor_executable)
     path = home / "Library/LaunchAgents/dev.gargoyl.monitor.plist"
     if str(path.resolve(strict=True)) != str(path):
         raise ValueError("monitor configuration unavailable")
@@ -184,7 +191,7 @@ def monitor_configuration():
         s = os.fstat(fd)
         if (
             not stat.S_ISREG(s.st_mode)
-            or s.st_uid != 501
+            or s.st_uid != policy.owner_uid
             or s.st_nlink != 1
             or s.st_mode & 0o022
         ):
@@ -196,14 +203,14 @@ def monitor_configuration():
         os.close(fd)
     value = plistlib.loads(payload)
     expected = [
-        str(owner_home() / "Documents/Codex/2026-10-30/task-2/.venv/bin/gargoyl"),
+        policy.monitor_executable,
         "monitor",
         "--input",
         str(home / ".darkbloom/daemon-state.json"),
         "--owner-uid",
-        "501",
+        str(policy.owner_uid),
         "--host",
-        HOST,
+        policy.host_id,
         "--interval",
         "5",
         "--port",
@@ -225,7 +232,7 @@ def control_monitor(action, *, run=subprocess.run, validate=monitor_configuratio
     if action not in {"start-monitor", "stop-monitor"} or not console_owner():
         raise ValueError("monitor action unavailable")
     path = validate()
-    label = "gui/501/dev.gargoyl.monitor"
+    label = f"gui/{os.getuid()}/dev.gargoyl.monitor"
     job = run(["/bin/launchctl", "print", label], capture_output=True, timeout=10)
     if action == "stop-monitor":
         if job.returncode == 113:
@@ -242,7 +249,7 @@ def control_monitor(action, *, run=subprocess.run, validate=monitor_configuratio
             raise ValueError("monitor state unknown")
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 8766))
-        command = ["/bin/launchctl", "bootstrap", "gui/501", str(path)]
+        command = ["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)]
     result = run(command, capture_output=True, timeout=10)
     if result.returncode != 0:
         raise ValueError("monitor action outcome requires inspection")
@@ -266,7 +273,8 @@ def export_evidence():
     if type(raw) is not list or len(raw) > 64:
         raise ValueError("export limit")
     samples = [validate_snapshot(item) for item in raw]
-    if any(item["host_id"] != HOST for item in samples):
+    local_host = load_pilot_configuration(home=owner_home()).host_id
+    if any(item["host_id"] != local_host for item in samples):
         raise ValueError("export host differs")
     log = supplied.get("coordinator_log_report")
     if log is not None:
@@ -283,7 +291,7 @@ def export_evidence():
         schema_version=1,
         evaluated_at=at,
         snapshots=samples,
-        dashboard=build_dashboard(samples[-1:], [HOST], at),
+        dashboard=build_dashboard(samples[-1:], [local_host], at),
         coordinator_log_report=log,
         automatic_repair_enabled=False,
         note="Normalized evidence only; reported/stale/unknown values are not independent health proof.",
@@ -327,8 +335,10 @@ def native_view(mode):
         except (OSError, ValueError):
             extra["aliases_available"] = False
         extra["local_alias"] = socket.gethostname()
-    return dict(kind="view", view=view, html=render_view(
-        view, evidence, record, journal_available=journal_available, **extra))
+    local_host_id = load_pilot_configuration(home=owner_home()).host_id
+    return dict(kind="view", view=view, local_host_id=local_host_id, html=render_view(
+        view, evidence, record, journal_available=journal_available,
+        local_host_id=local_host_id, **extra))
 
 
 def alias_inventory(home, now):
@@ -356,7 +366,7 @@ def set_local_alias(home, request, now, *, owner=console_owner):
 
 def main():
     # Only a trusted same-owner native process may use these private pipe modes.
-    if len(sys.argv) != 2 or os.getuid() != 501 or not console_owner():
+    if len(sys.argv) != 2 or not console_owner():
         return 1
     mode = sys.argv[1]
     try:
@@ -435,19 +445,19 @@ def main():
                 raise ValueError("private pipes required")
             os.set_blocking(sys.stdout.fileno(), False)
             home = owner_home()
-            executable = str(home / ".darkbloom/Darkbloom.app/Contents/MacOS/darkbloom")
-            source = str(home / ".darkbloom/daemon-state.json")
-            target, stamp = installation_preflight(executable, source, 501)
+            policy = load_pilot_configuration(home=home).require_local()
+            executable, source = policy.provider_executable, policy.source
+            target, stamp = installation_preflight(executable, source, policy.owner_uid)
 
             def inspect():
                 if executable_stamp(executable) != stamp:
                     raise ValueError("image changed")
-                return observed_target(source, executable, 501)
+                return observed_target(source, executable, policy.owner_uid)
 
             with ManualJournal(str(home / ".gargoyl-manual-restart")) as journal:
                 graphical_restart(
                     journal=journal,
-                    preflight=lambda: installation_preflight(executable, source, 501),
+                    preflight=lambda: installation_preflight(executable, source, policy.owner_uid),
                     inspect_target=inspect,
                     invoke=lambda: invoke_restart(
                         executable,

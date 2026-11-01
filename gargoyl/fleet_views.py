@@ -49,6 +49,7 @@ def render_fleet(
     navigation,
     aliases=None,
     aliases_available=True,
+    local_host_id=HOST,
 ):
     from gargoyl.fleet_aliases import validate_aliases
 
@@ -71,7 +72,7 @@ def render_fleet(
     if evidence is None or not evidence["snapshots"]:
         local_body += "<p>Direct local observations unavailable. Local provider health is unknown.</p>"
     else:
-        host = build_dashboard(evidence["snapshots"][-1:], [HOST], now)["hosts"][0]
+        host = build_dashboard(evidence["snapshots"][-1:], [local_host_id], now)["hosts"][0]
         for metric, label, source in [
             ("daemon_state", "Native provider process", "host"),
             ("model_state", "Model residency report", "daemon"),

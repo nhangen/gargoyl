@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from test_dashboard import HOST, NOW, snapshot
@@ -29,7 +30,7 @@ class NativeViewTests(unittest.TestCase):
             self.assertIn('unknown', page)
         with patch('gargoyl.gui_runtime.export_evidence', side_effect=OSError), patch(
             'gargoyl.gui_runtime.read_operation', return_value=None
-        ) as read, patch('gargoyl.gui_runtime.owner_home', return_value=__import__('pathlib').Path('/owner')):
+        ) as read, patch('gargoyl.gui_runtime.load_pilot_configuration', return_value=SimpleNamespace(host_id=HOST)), patch('gargoyl.gui_runtime.owner_home', return_value=__import__('pathlib').Path('/owner')):
             self.assertIn('No manual operation recorded', native_view('view-operation')['html'])
             read.assert_called_once_with('/owner/.gargoyl-manual-restart')
 

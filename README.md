@@ -23,7 +23,8 @@ manager now reads actual owned-provider IDs and coordinator reports through a
 graphical read-only connection; live acceptance confirmed the real account
 inventory. Other machines' status remains coordinator-reported, not independent
 remote process monitoring. The internal pilot UUID is not a Darkbloom provider ID.
-See [fleet operation, aliases and sign-in](docs/fleet-manager.md).
+See [fleet operation, aliases and sign-in](docs/fleet-manager.md) and
+[local installation policy](docs/pilot-configuration.md).
 
 ## Safety and privacy
 

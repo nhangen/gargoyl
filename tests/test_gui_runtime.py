@@ -293,7 +293,7 @@ class MonitorControlTests(unittest.TestCase):
             )
         self.assertEqual(
             runner.call_args_list[1].args[0],
-            ["/bin/launchctl", "bootout", "gui/501/dev.gargoyl.monitor"],
+            ["/bin/launchctl", "bootout", f"gui/{os.getuid()}/dev.gargoyl.monitor"],
         )
         for call in runner.call_args_list:
             self.assertNotIn("io.darkbloom", str(call))
