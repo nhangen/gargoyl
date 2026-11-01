@@ -285,7 +285,7 @@ def render_fleet(
             duplicated = {label for label in labels if labels.count(label) > 1}
             body += (
                 '<p class="fleet-scroll-hint">Scroll the table sideways to see all evidence.</p>'
-                '<div class="table-wrap" tabindex="0" role="region" aria-label="Account provider inventory">'
+                '<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'
                 '<table class="fleet-inventory"><thead><tr><th scope="col">Provider</th><th scope="col">Coordinator report</th>'
                 '<th scope="col">Last heartbeat</th><th scope="col">Version</th><th scope="col">This Mac</th></tr></thead><tbody>'
             )

@@ -130,6 +130,11 @@ class FleetLayoutTests(unittest.TestCase):
         self.assertIn("2 of 3 reported records", page)
         self.assertIn("recent · 0 s before read", page)
 
+    def test_inventory_table_keeps_the_scroll_container_native_layout_measures(self):
+        # The compiled native self-test measures .fleet-inventory inside its .scroll wrapper.
+        self.assertIn('<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'
+                      '<table class="fleet-inventory">', self.page())
+
     def test_filters_show_counts_and_current_page(self):
         page = self.page("fleet-unknown")
         self.assertIn('href="gargoyl-view://fleet-unknown/" aria-current="page">Unknown heartbeat <span class="n">1</span>', page)
