@@ -25,7 +25,7 @@ class NativeViewTests(unittest.TestCase):
     def test_missing_monitor_never_retains_a_healthy_view_and_operation_is_independent(self):
         for view in VIEWS:
             page = render_view(view, None, None, now=NOW)
-            self.assertIn('Monitor evidence unavailable', page)
+            self.assertIn('Direct local observations unavailable' if view == 'fleet' else 'Monitor evidence unavailable', page)
             self.assertIn('unknown', page)
         with patch('gargoyl.gui_runtime.export_evidence', side_effect=OSError), patch(
             'gargoyl.gui_runtime.read_operation', return_value=None

@@ -290,10 +290,10 @@ def export_evidence():
 
 
 def native_view(mode):
-    from gargoyl.native_views import VIEWS, render_view
+    from gargoyl.native_views import render_view, valid_view
 
     view = mode.removeprefix("view-")
-    if view not in VIEWS:
+    if not valid_view(view):
         raise ValueError("unsupported view")
     try:
         evidence = export_evidence()
@@ -306,8 +306,23 @@ def native_view(mode):
             record = read_operation(str(owner_home() / ".gargoyl-manual-restart"))
         except (OSError, ValueError):
             journal_available = False
+    extra = {}
+    if view.startswith("fleet"):
+        from gargoyl.fleet_identity import pilot_identity
+        from gargoyl.fleet_state import FleetCache, utc_now
+        home = owner_home()
+        at = utc_now()
+        try:
+            extra["inventory"] = FleetCache(home / "Library/Application Support/Gargoyl", os.getuid()).read(at)
+        except (OSError, ValueError):
+            extra["inventory"] = None
+        try:
+            extra["local"] = pilot_identity(home, at)
+        except (OSError, ValueError):
+            extra["local"] = None
+        extra["local_alias"] = socket.gethostname()
     return dict(kind="view", view=view, html=render_view(
-        view, evidence, record, journal_available=journal_available))
+        view, evidence, record, journal_available=journal_available, **extra))
 
 
 def main():
@@ -344,6 +359,15 @@ def main():
                 json.dumps(dict(kind="export", payload=export_evidence())) + "\n"
             )
             sys.stdout.flush()
+        elif mode == "fleet-session":
+            from gargoyl.fleet_session import pipe_wait, private_send, run_session
+            from gargoyl.fleet_state import FleetCache
+            if not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode) or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode):
+                raise ValueError("private pipes required")
+            os.set_blocking(sys.stdout.fileno(), False)
+            run_session(FleetCache(owner_home() / "Library/Application Support/Gargoyl", os.getuid()),
+                        owner=console_owner, wait=lambda seconds: pipe_wait(sys.stdin.buffer, seconds, console_owner),
+                        send=private_send)
         elif mode == "restart":
             if not stat.S_ISFIFO(
                 os.fstat(sys.stdin.fileno()).st_mode

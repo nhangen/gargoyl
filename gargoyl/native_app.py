@@ -21,10 +21,28 @@ func makeApplicationMenu(_ application: NSApplication) -> NSMenu {
 }
 
 let resourceRules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}}]"#
-let nativeViews = ["tools", "evidence", "history", "operation", "details"]
+let nativeViews = ["fleet", "tools", "evidence", "history", "operation", "details"]
+func readOnlyView(_ value: String) -> Bool {
+    return nativeViews.contains(value) || ["fleet-recent","fleet-older","fleet-unknown"].contains(value) || value.range(of:"^fleet-node-[a-f0-9]{64}$",options:.regularExpression) != nil
+}
+func validFleetAuthorization(_ value: [String:Any]) -> Bool {
+    guard Set(value.keys) == Set(["kind","purpose","user_code","expires_in"]),
+          value["kind"] as? String == "fleet-authorization", value["purpose"] as? String == "desktop_account",
+          let code = value["user_code"] as? String, code.range(of:"^[A-Za-z0-9-]{4,32}$",options:.regularExpression) != nil,
+          let number = value["expires_in"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+          let expires = value["expires_in"] as? Int, expires > 0 && expires <= 900 else { return false }
+    return true
+}
+func endedFleetStatus(_ previous:String, disconnected:Bool) -> String {
+    return disconnected ? "Account collection disconnected. No credential was saved." : previous + " Account session ended; cached reports are not live. Reconnect to resume."
+}
 func viewDestination(_ url: URL?, mainFrame: Bool) -> String? {
     guard mainFrame, let url = url else { return nil }
-    return nativeViews.first { url.absoluteString == "gargoyl-view://\($0)/" }
+    let prefix = "gargoyl-view://"
+    let value = url.absoluteString
+    guard value.hasPrefix(prefix), value.hasSuffix("/") else { return nil }
+    let view = String(value.dropFirst(prefix.count).dropLast())
+    return readOnlyView(view) && value == prefix + view + "/" ? view : nil
 }
 
 let fragmentScripts = [
@@ -56,10 +74,10 @@ func allowedNavigation(_ url: URL?, mainFrame: Bool) -> Bool {
     return url.absoluteString == "about:blank"
 }
 struct ViewSelection {
-    private(set) var selected = "tools"
+    private(set) var selected = "fleet"
     private(set) var generation = 0
     mutating func select(_ view: String) -> Bool {
-        guard nativeViews.contains(view) else { return false }
+        guard readOnlyView(view) else { return false }
         selected = view; generation += 1; return true
     }
     func accepts(_ generation: Int) -> Bool { return generation == self.generation }
@@ -95,6 +113,7 @@ struct WindowHistory {
     }
 }
 final class Worker {
+    let mode: String
     let process = Process()
     let input = Pipe()
     let output = Pipe()
@@ -104,12 +123,12 @@ final class Worker {
     let event: ([String: Any]) -> Void
     let finished: (Worker) -> Void
     init(mode: String, event: @escaping ([String: Any]) -> Void, finished: @escaping (Worker) -> Void) throws {
-        self.event = event; self.finished = finished
+        self.mode = mode; self.event = event; self.finished = finished
         var pythonPath = Bundle.main.object(forInfoDictionaryKey: "GargoylPython") as? String
         #if GARGOYL_NATIVE_TESTS
         pythonPath = ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] ?? pythonPath
         #endif
-        guard ownerActive(), (["restart", "status", "export", "start-monitor", "stop-monitor"] + nativeViews.map { "view-" + $0 }).contains(mode),
+        guard ownerActive(), (["restart", "status", "export", "start-monitor", "stop-monitor", "fleet-session"].contains(mode) || (mode.hasPrefix("view-") && readOnlyView(String(mode.dropFirst(5))))),
               let path = pythonPath,
               path.hasPrefix(NSHomeDirectory() + "/"), path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
         else { throw NSError(domain: "Gargoyl", code: 1) }
@@ -152,6 +171,10 @@ final class Worker {
         }
         try? input.fileHandleForWriting.close()
     }
+    func disconnectFleet() {
+        guard mode == "fleet-session" else { return }
+        try? input.fileHandleForWriting.close()
+    }
     // No terminate/interrupt method: closing the app never cancels accepted work.
 }
 
@@ -173,6 +196,16 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var consentSheet: NSWindow?
     var approvalTimer: Timer?
     var exportData: Data?
+    let fleetStatus = NSTextField(wrappingLabelWithString:"Account fleet not connected. This Mac’s local collection is separate.")
+    var fleetWorker: Worker?
+    var fleetGeneration = 0
+    var fleetAuthSheet: NSWindow?
+    var fleetUserCode: String?
+    var fleetAuthPresented = false
+    var fleetAuthTimer: Timer?
+    var fleetRefreshTimer: Timer?
+    var connectFleetButton: NSButton!
+    var disconnectFleetButton: NSButton!
     var viewPhase = "not started"
     var previewOnly: Bool { Bundle.main.object(forInfoDictionaryKey: "GargoylReadOnlyPreview") as? Bool ?? true }
 
@@ -197,30 +230,36 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         window.minSize = NSSize(width:390,height:600); window.delegate = self
         let content = NSView(); window.contentView = content
         let bar = NSStackView(); bar.orientation = .vertical; bar.alignment = .leading; bar.spacing = 6
-        let actionRows = [NSStackView(), NSStackView()]
+        let actions: [(String, Selector)] = [("Connect fleet…",#selector(connectFleet)),("Disconnect fleet",#selector(disconnectFleet)),("Refresh",#selector(refresh)),("Start local monitor",#selector(startMonitor)),("Stop local monitor",#selector(stopMonitor)),("Export local…",#selector(exportReport)),("Operation status",#selector(operationStatus)),("Restart local provider…",#selector(restartProvider))]
+        let actionRows = (0..<3).map { _ in NSStackView() }
         for row in actionRows { row.orientation = .horizontal; row.spacing = 8; bar.addArrangedSubview(row) }
-        let actions: [(String, Selector)] = [("Start monitoring",#selector(startMonitor)),("Stop monitoring",#selector(stopMonitor)),("Refresh",#selector(refresh)),("Export…",#selector(exportReport)),("Operation status",#selector(operationStatus)),("Restart provider…",#selector(restartProvider))]
         for (index, action) in actions.enumerated() {
             let (title, selector) = action
             let button = NSButton(title:title,target:self,action:selector); button.bezelStyle = .rounded
             if selector == #selector(restartProvider) { restartButton = button }
-            if previewOnly && [#selector(startMonitor),#selector(stopMonitor),#selector(restartProvider)].contains(selector) { button.isEnabled = false }
+            if selector == #selector(connectFleet) { connectFleetButton = button }
+            if selector == #selector(disconnectFleet) { disconnectFleetButton = button; button.isEnabled = false }
+            if previewOnly && [#selector(startMonitor),#selector(stopMonitor),#selector(restartProvider),#selector(connectFleet)].contains(selector) { button.isEnabled = false }
             actionRows[index / 3].addArrangedSubview(button)
         }
         let config = WKWebViewConfiguration(); config.defaultWebpagePreferences.allowsContentJavaScript = false
         config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self; web.uiDelegate = self
         let scroll = NSScrollView(); scroll.hasHorizontalScroller = true; scroll.documentView = bar
-        bar.frame = NSRect(x:0,y:0,width:bar.fittingSize.width,height:68)
-        let stack = NSStackView(views:[scroll,status,web]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
+        bar.frame = NSRect(x:0,y:0,width:bar.fittingSize.width,height:100)
+        let stack = NSStackView(views:[scroll,fleetStatus,status,web]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(stack)
-        scroll.translatesAutoresizingMaskIntoConstraints = false; status.translatesAutoresizingMaskIntoConstraints = false; web.translatesAutoresizingMaskIntoConstraints = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false; status.translatesAutoresizingMaskIntoConstraints = false; fleetStatus.translatesAutoresizingMaskIntoConstraints = false; web.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo:content.leadingAnchor,constant:10),stack.trailingAnchor.constraint(equalTo:content.trailingAnchor,constant:-10),stack.topAnchor.constraint(equalTo:content.topAnchor,constant:10),stack.bottomAnchor.constraint(equalTo:content.bottomAnchor,constant:-10),
-            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:74),
-            status.widthAnchor.constraint(equalTo:stack.widthAnchor),web.widthAnchor.constraint(equalTo:stack.widthAnchor),web.heightAnchor.constraint(greaterThanOrEqualToConstant:300)
+            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:106),
+            fleetStatus.widthAnchor.constraint(equalTo:stack.widthAnchor),status.widthAnchor.constraint(equalTo:stack.widthAnchor),web.widthAnchor.constraint(equalTo:stack.widthAnchor),web.heightAnchor.constraint(greaterThanOrEqualToConstant:300)
         ])
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+        fleetRefreshTimer = Timer.scheduledTimer(withTimeInterval:30,repeats:true) { [weak self] _ in
+            guard let self = self, self.viewSelection.selected.hasPrefix("fleet"), self.window.isVisible, !NSApp.isHidden else { return }
+            self.refresh()
+        }
         viewPhase = "compiling isolation rules"
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier:"GargoylLoopbackOnly",encodedContentRuleList:resourceRules) { [weak self] list, _ in
             DispatchQueue.main.async {
@@ -275,6 +314,83 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             })
             workers.append(worker)
         } catch { show("Action unavailable. Check that this app and the installed monitor belong to the active Mac owner.") }
+    }
+    func dismissFleetAuthorization() {
+        fleetAuthTimer?.invalidate(); fleetAuthTimer = nil
+        let sheet = fleetAuthSheet; fleetAuthSheet = nil; fleetUserCode = nil
+        if let sheet = sheet { window.endSheet(sheet); sheet.orderOut(nil) }
+    }
+    @objc func openFleetSignIn() {
+        guard fleetAuthSheet != nil, fleetWorker != nil, ownerActive() else { return }
+        NSWorkspace.shared.open(URL(string:"https://console.darkbloom.dev/link")!)
+        fleetStatus.stringValue = "Awaiting your official read-only approval. The one-time code remains in the native sheet."
+    }
+    @objc func copyFleetCode() {
+        guard fleetAuthSheet != nil, ownerActive(), let code = fleetUserCode else { return }
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(code,forType:.string)
+    }
+    @objc func disconnectFleet() {
+        fleetGeneration += 1
+        dismissFleetAuthorization()
+        fleetWorker?.disconnectFleet()
+        fleetStatus.stringValue = "Disconnecting account collection. Local monitoring and Darkbloom remain unchanged."
+        disconnectFleetButton.isEnabled = false
+    }
+    @objc func connectFleet() {
+        guard !previewOnly, fleetWorker == nil, ownerActive() else { return }
+        fleetGeneration += 1; let generation = fleetGeneration; fleetAuthPresented = false
+        connectFleetButton.isEnabled = false; disconnectFleetButton.isEnabled = true
+        fleetStatus.stringValue = "Requesting Darkbloom’s read-only account scope… No provider grant fallback."
+        displayView("fleet")
+        do {
+            fleetWorker = try Worker(mode:"fleet-session",event:{ [weak self] value in
+                guard let self = self, generation == self.fleetGeneration else { return }
+                self.fleetEvent(value,generation:generation)
+            },finished:{ [weak self] completed in
+                guard let self = self, self.fleetWorker === completed else { return }
+                self.dismissFleetAuthorization(); self.fleetWorker = nil
+                self.connectFleetButton.isEnabled = !self.previewOnly; self.disconnectFleetButton.isEnabled = false
+                self.fleetStatus.stringValue = endedFleetStatus(self.fleetStatus.stringValue,disconnected:generation != self.fleetGeneration)
+                self.refresh()
+            })
+        } catch {
+            fleetStatus.stringValue = "Account connection unavailable. No provider action or credential fallback was attempted."
+            connectFleetButton.isEnabled = !previewOnly; disconnectFleetButton.isEnabled = false
+        }
+    }
+    func fleetEvent(_ value:[String:Any], generation:Int) {
+        guard let kind = value["kind"] as? String else { return }
+        if kind == "fleet-authorization" {
+            guard validFleetAuthorization(value), !fleetAuthPresented, fleetAuthSheet == nil, ownerActive(),
+                  let code = value["user_code"] as? String, let expires = value["expires_in"] as? Int else { disconnectFleet(); return }
+            fleetAuthPresented = true; fleetUserCode = code
+            let alert = NSAlert(); alert.messageText = "Connect your Darkbloom fleet · read-only"
+            alert.informativeText = "Use the account that owns your fleet. Copy this one-time code, open the official page and approve its read-only request.\n\nDarkbloom’s desktop_account scope permits fleet, summary and earnings reads, plus revoking this session; it does not grant provider control. Gargoyl requests only owned-provider metadata. Legacy provider grants are refused.\n\nNo token is saved. Closing the window keeps collection running; quitting requires signing in again. No provider restart, enrollment or remote commands."
+            let field = NSTextField(labelWithString:code); field.isSelectable = true; field.font = NSFont.monospacedSystemFont(ofSize:22,weight:.semibold)
+            let copy = NSButton(title:"Copy code",target:self,action:#selector(copyFleetCode))
+            let open = NSButton(title:"Open official Darkbloom sign-in",target:self,action:#selector(openFleetSignIn))
+            let controls = NSStackView(views:[field,copy,open]); controls.orientation = .vertical; controls.alignment = .leading; controls.spacing = 8
+            controls.frame = NSRect(x:0,y:0,width:360,height:100); alert.accessoryView = controls
+            alert.addButton(withTitle:"Cancel connection")
+            fleetAuthSheet = alert.window
+            fleetAuthTimer = Timer.scheduledTimer(withTimeInterval:Double(expires),repeats:false) { [weak self] _ in self?.disconnectFleet() }
+            alert.beginSheetModal(for:window) { [weak self] _ in
+                guard let self = self, generation == self.fleetGeneration, self.fleetAuthSheet != nil else { return }
+                self.disconnectFleet()
+            }
+        } else if kind == "fleet-connected" {
+            dismissFleetAuthorization()
+            fleetStatus.stringValue = "Read-only account scope confirmed. Loading owned-provider metadata…"
+        } else if kind == "fleet-updated", let count = value["count"] as? Int, count >= 0 && count <= 256 {
+            fleetStatus.stringValue = "Account API returned \(count) provider records. Reports are not independent remote process checks."
+            if viewSelection.selected.hasPrefix("fleet") { refresh() }
+        } else if kind == "fleet-unavailable" {
+            dismissFleetAuthorization()
+            let reason = value["reason"] as? String ?? "unavailable"
+            let reasons = ["scope_refused":"Darkbloom did not confirm the read-only scope. Provider-control fallback was refused.","auth_required":"Account authorization is unavailable. Connect again to resume read-only collection.","invalid_data":"Account inventory could not be validated. No substitute fleet or health verdict is shown.","expired":"Account connection expired. Connect again; no credential was saved."]
+            fleetStatus.stringValue = reasons[reason] ?? "Account collection unavailable. Cached reports are not current health evidence."
+            if viewSelection.selected.hasPrefix("fleet") { refresh() }
+        }
     }
     @objc func startMonitor() { if !previewOnly { launch("start-monitor"); refresh() } }
     @objc func stopMonitor() { if !previewOnly { launch("stop-monitor") } }
@@ -393,6 +509,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         recordWindow("reopen",reopeningVisibleWindows:flag)
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
+        if viewSelection.selected.hasPrefix("fleet") { refresh() }
         return false
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { return false }
@@ -501,6 +618,16 @@ if CommandLine.arguments.contains("--self-test") {
     }
     precondition(viewDestination(URL(string:"gargoyl-view://tools/"),mainFrame:false) == nil)
     precondition(!allowedNavigation(URL(string:"about:blank"),mainFrame:false))
+    let accountPreview: [String:Any] = ["kind":"fleet-authorization","purpose":"desktop_account","user_code":"TEST-CODE","expires_in":900]
+    precondition(validFleetAuthorization(accountPreview))
+    precondition(endedFleetStatus("Account API returned 4 records.",disconnected:false).contains("session ended; cached reports are not live"))
+    precondition(endedFleetStatus("scope confirmed",disconnected:true).contains("disconnected"))
+    for change in [["expires_in":true],["purpose":"provider"],["token":"must-not-cross-native-pipe"],["expires_in":901],["user_code":"bad\ncode"]] as [[String:Any]] {
+        var bad = accountPreview; bad.merge(change) { _,new in new }; precondition(!validFleetAuthorization(bad))
+    }
+    precondition(viewDestination(URL(string:"gargoyl-view://fleet-session/"),mainFrame:true) == nil)
+    precondition(viewDestination(URL(string:"gargoyl-view://fleet-node-" + String(repeating:"a",count:64) + "/"),mainFrame:true) != nil)
+    precondition(viewDestination(URL(string:"gargoyl-view://fleet-node-../../restart/"),mainFrame:true) == nil)
     var selection = ViewSelection(); precondition(selection.select("history"))
     let firstView = selection.generation
     precondition(selection.select("operation")); precondition(!selection.accepts(firstView))

@@ -10,8 +10,8 @@ from gargoyl.manual_restart import validate_record
 from gargoyl.telemetry import effective_state, timestamp, validate_snapshot
 
 HOST = "00000000-0000-4000-8000-000000000001"
-VIEWS = ("tools", "evidence", "history", "operation", "details")
-LABELS = ("Operator tools", "Live evidence", "Traffic history", "Manual operation", "Local details")
+VIEWS = ("fleet", "tools", "evidence", "history", "operation", "details")
+LABELS = ("Your fleet", "Operator tools", "Local evidence", "Local traffic", "Manual operation", "Local details")
 
 
 NATIVE_STYLE = """<style>@media (max-width:600px) {
@@ -48,9 +48,14 @@ def card(title, text, *, view=None, state="Read-only"):
             + e(state) + '</span></p></div><div class="tool-action">' + action + '</div></li>')
 
 
-def render_view(view, evidence, record, *, journal_available=True, now=None):
+def valid_view(view):
+    from gargoyl.fleet_views import fleet_mode
+    return view in VIEWS or fleet_mode(view)
+
+
+def render_view(view, evidence, record, *, journal_available=True, now=None, inventory=None, local=None, local_alias="This Mac"):
     """Inputs are reconstructed normalized export and validated journal; never raw HTML."""
-    if view not in VIEWS:
+    if not valid_view(view):
         raise ValueError("unsupported view")
     now = now or datetime.now(timezone.utc).isoformat()
     timestamp(now)
@@ -63,6 +68,12 @@ def render_view(view, evidence, record, *, journal_available=True, now=None):
         if any(sample['host_id'] != HOST for sample in samples):
             raise ValueError("host differs")
         evidence = dict(evidence, snapshots=samples)
+    if view.startswith("fleet"):
+        from gargoyl.fleet_views import render_fleet
+        html = native_document(render_fleet(view, inventory, evidence, local, local_alias, now, nav("fleet")))
+        if len(html.encode()) > 500000:
+            raise ValueError("view limit")
+        return html
     if record is not None:
         record = validate_record(record)
     if view == "evidence" and evidence is not None:
@@ -153,7 +164,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None):
                  'does not prove a current phase or remaining work. Protocol health remains separate.</p></section>')
     elif view == "details":
         body += ('<section><h2>Local collection boundaries</h2><dl class="facts">'
-                 '<div><dt>Host</dt><dd class="mono">' + HOST + '</dd></div>'
+                 '<div><dt>Internal local telemetry ID (not a provider ID)</dt><dd class="mono">' + HOST + '</dd></div>'
                  '<div><dt>Monitor</dt><dd>IPv4 loopback · port 8766 · read-only report</dd></div>'
                  '<div><dt>History</dt><dd>At most 64 normalized samples; memory only</dd></div>'
                  '<div><dt>Owner confirmation</dt><dd>Native Mac authentication and private worker pipe</dd></div>'
