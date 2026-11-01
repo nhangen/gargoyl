@@ -1,36 +1,40 @@
 import http.client
-import json
 import os
 import re
-import stat
+import subprocess
 import threading
 import time
 import unittest
 import urllib.parse
-from datetime import datetime, timezone
-from unittest import mock
+from pathlib import Path
 
 from operator_fixtures import HOST, NEW, OLD, FakeDarkbloom, verifier
 
 from gargoyl.darkbloom_cli import (
-    SUPPORTED_VERSIONS,
     RunResult,
     classify_restart,
-    executable_digest,
-    executable_file,
     parse_doctor,
     parse_version,
     restart_events,
     run_bounded,
 )
+from gargoyl.manual_restart import (
+    ManualJournal,
+    executable_stamp,
+    observed_target,
+    process_start,
+    read_operation,
+)
 from gargoyl.monitor import LocalMonitor, run_monitor
-from gargoyl.operator_console import OperatorTools, inspect_executable
-from gargoyl.restart_attempts import AttemptStore, Refused, RestartController
+from gargoyl.operator_console import (
+    ConsoleRestart,
+    OperatorTools,
+    Refused,
+    inspect_executable,
+)
 from gargoyl.telemetry import PolicyError
 
-
-def now():
-    return datetime.now(timezone.utc).isoformat()
+RESTART = 'restart --timeout 600 --startup-timeout 180'
 
 
 class CliParsingTests(unittest.TestCase):
@@ -84,182 +88,144 @@ class BoundedRunTests(unittest.TestCase):
 
 
 class Base(unittest.TestCase):
+    """Real manual_restart journal, run_restart, invoke_restart and observed_target against the
+    fake darkbloom; only the pilot-host preflight and the macOS kernel check are substituted."""
+
     def setUp(self):
         self.fake = FakeDarkbloom()
         self.addCleanup(self.fake.cleanup)
-        # Treat the fake as the recorded 0.10.6 build so restart is offered.
-        patcher = mock.patch.dict(SUPPORTED_VERSIONS, {'0.10.6': executable_digest(self.fake.executable)})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.info = {'version': '0.10.6', 'digest': SUPPORTED_VERSIONS['0.10.6'], 'recognised_build': True,
-                     'file': executable_file(self.fake.executable)}
+        self.directory = str(Path(self.fake.record_dir) / 'journal')
+        self.restart = self.console()
 
-    def controller(self, *, verify=None, info=None, store=None):
-        store = store or AttemptStore(str(self.fake.record_dir), os.getuid())
-        self.stores.append(store)
-        return RestartController(host=HOST, executable=self.fake.executable, executable_info=info or self.info,
-                                 owner_uid=os.getuid(), source=self.fake.state, store=store,
-                                 provider_verifier=verify if verify is not None else verifier(OLD, NEW),
-                                 environment=self.fake.environment())
+    def console(self, *, kernel=None):
+        check = kernel or verifier(OLD, NEW)
 
-    def run(self, result=None):
-        self.stores = []
-        try:
-            return super().run(result)
-        finally:
-            for store in self.stores:
-                try:
-                    store.close()
-                except OSError:
-                    pass
+        def observe():
+            return observed_target(self.fake.state, self.fake.executable, os.getuid(), verifier=check)
 
-    def finish(self, controller):
-        controller.wait(30)
-        return controller.snapshot()['current']
+        def preflight():
+            return observe(), executable_stamp(self.fake.executable)
+
+        def inspect(stamp):
+            if executable_stamp(self.fake.executable) != stamp:
+                raise ValueError('installation changed')
+            return observe()
+        return ConsoleRestart(executable=self.fake.executable, directory=self.directory,
+                              preflight=preflight, inspect=inspect, observe=observe)
+
+    def finish(self, restart=None, timeout=30):
+        restart = restart or self.restart
+        deadline = time.time() + timeout
+        time.sleep(0.2)
+        while restart.live()['active'] and time.time() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(restart.live()['active'])
+
+    def start(self, restart=None):
+        restart = restart or self.restart
+        target, problem = restart.target()
+        self.assertIsNone(problem)
+        restart.start(now=None, confirmed_token=target['token'])
+        return target
 
 
-class RestartControllerTests(Base):
-    def test_verified_success_reopens_gate_and_discards_raw_output(self):
-        controller = self.controller()
-        target, reason = controller.target(now())
-        self.assertIsNone(reason)
-        self.assertEqual((target['pid'], target['kernel_verified']), (OLD['pid'], True))
-        attempt = controller.start(now=now(), confirmed_token=target['token'])
-        current = self.finish(controller)
-        self.assertEqual((current['attempt_id'], current['outcome'], current['verified']),
-                         (attempt, 'cli_confirmed', True))
-        self.assertIn('new process', current['verification'])
-        self.assertEqual(controller.gate(), (True, None))
-        self.assertEqual(self.fake.calls(), ['restart --timeout 600 --startup-timeout 180'])
-        self.assertEqual(sorted(os.listdir(self.fake.record_dir)), ['lock', 'restart.json'])
-        mode = os.stat(self.fake.record_dir / 'restart.json').st_mode
-        self.assertEqual(stat.S_IMODE(mode), 0o600)
+class ConsoleRestartTests(Base):
+    def test_verified_success_records_child_and_discards_output(self):
+        self.start()
+        self.finish()
+        record = read_operation(self.directory)
+        self.assertEqual(record['state'], 'completed')
+        self.assertEqual(record['replacement']['process']['pid'], NEW['pid'])
+        self.assertIn('child', record)
+        self.assertEqual(self.restart.gate(), (True, None))
+        self.assertEqual(self.fake.calls(), [RESTART])
+        self.assertEqual(sorted(os.listdir(self.directory)), ['lock', 'operation.json'])
+        self.assertEqual(self.restart.live()['outcome'], 'cli_confirmed')
 
-    def test_cli_success_without_a_new_process_is_not_verified(self):
-        self.fake.configure(restart='success_no_change')
-        controller = self.controller()
-        controller.start(now=now(), confirmed_token=controller.target(now())[0]['token'])
-        current = self.finish(controller)
-        self.assertEqual((current['outcome'], current['verified']), ('cli_confirmed', False))
-        self.assertIn('still names the original process', current['verification'])
-        self.assertFalse(controller.gate()[0])
-
-    def test_kernel_rejection_of_new_process_blocks_verification(self):
-        controller = self.controller(verify=verifier(OLD))
-        controller.start(now=now(), confirmed_token=controller.target(now())[0]['token'])
-        current = self.finish(controller)
-        self.assertEqual((current['outcome'], current['verified']), ('cli_confirmed', False))
-        self.assertIn('kernel does not confirm', current['verification'])
-        self.assertFalse(controller.gate()[0])
-
-    def test_every_uncertain_outcome_blocks_until_reconciled_and_never_retries(self):
-        for kind, outcome in (('drain_incomplete', 'not_restarted_attention'),
-                              ('unconfirmed', 'relaunched_unconfirmed'),
-                              ('refused', 'refused_no_change'), ('forced', 'forced_anomaly')):
+    def test_uncertain_outcomes_block_both_surfaces_until_read_only_reconcile(self):
+        for kind, outcome, observation in (
+                ('drain_incomplete', 'not_restarted_attention', 'original_process_observed'),
+                ('unconfirmed', 'relaunched_unconfirmed', 'original_process_observed'),
+                ('refused', 'refused_no_change', 'original_process_observed'),
+                ('success_no_change', 'cli_confirmed', 'original_process_observed')):
             with self.subTest(kind=kind):
                 self.fake.write_state(OLD)
                 self.fake.configure(restart=kind)
-                for store in self.stores:
-                    store.close()
-                self.stores.clear()
                 (self.fake.bin / 'calls.log').unlink(missing_ok=True)
-                (self.fake.record_dir / 'restart.json').unlink(missing_ok=True)
-                controller = self.controller()
-                controller.start(now=now(), confirmed_token=controller.target(now())[0]['token'])
-                current = self.finish(controller)
-                self.assertEqual((current['outcome'], current['verified']), (outcome, False))
-                opened, reason = controller.gate()
-                self.assertFalse(opened)
+                self.start()
+                self.finish()
+                self.assertEqual(read_operation(self.directory)['state'], 'unknown')
+                self.assertEqual(self.restart.live()['outcome'], outcome)
+                self.assertFalse(self.restart.gate()[0])
                 with self.assertRaises(Refused):
-                    controller.start(now=now(), confirmed_token=controller.target(now())[0]['token'])
+                    self.restart.start(now=None, confirmed_token=self.restart.target()[0]['token'])
                 time.sleep(0.3)
-                self.assertEqual(len(self.fake.calls()), 1)  # no retry, no second launch
-                note = controller.reconcile(now=now())
-                self.assertIn('does not prove', note)
-                self.assertEqual(controller.gate(), (True, None))
+                self.assertEqual(self.fake.calls(), [RESTART])  # never retried
+                self.restart.reconcile(now=None)
+                record = read_operation(self.directory)
+                self.assertEqual((record['state'], record['observation']), ('reconciled', observation))
+                self.assertEqual(self.restart.gate(), (True, None))
                 with self.assertRaises(Refused):
-                    controller.reconcile(now=now())
+                    self.restart.reconcile(now=None)
 
-    def test_changed_target_unsupported_version_and_stale_state_refuse_before_claim(self):
-        controller = self.controller()
-        token = controller.target(now())[0]['token']
+    def test_kernel_rejected_replacement_is_not_verified(self):
+        restart = self.console(kernel=verifier(OLD))
+        self.start(restart)
+        self.finish(restart)
+        self.assertEqual(read_operation(self.directory)['state'], 'unknown')
+
+    def test_changed_target_and_cli_lock_refuse_without_a_record(self):
+        target = self.restart.target()[0]
         self.fake.write_state(NEW)
         with self.assertRaises(Refused):
-            controller.start(now=now(), confirmed_token=token)
-        self.fake.write_state(OLD, age=120)
-        self.assertIsNone(controller.target(now())[0])
-        self.fake.write_state(OLD, version='0.10.4')
-        self.assertIsNone(controller.target(now())[0])
-        self.assertIsNone(controller.snapshot()['current'])
+            self.restart.start(now=None, confirmed_token=target['token'])
+        with ManualJournal(self.directory):  # e.g. `gargoyl tools restart` running in a terminal
+            target = self.restart.target()[0]
+            with self.assertRaises(Refused) as caught:
+                self.restart.start(now=None, confirmed_token=target['token'])
+            self.assertIn('holds the restart lock', str(caught.exception))
+        self.assertIsNone(read_operation(self.directory))
         self.assertEqual(self.fake.calls(), [])
-        self.fake.write_state(OLD)
-        for info, text in (({'version': '0.11.0'}, 'unsupported'),
-                           (dict(self.info, recognised_build=False), 'not a recorded'),
-                           (dict(self.info, file=[0, 0, 0, 0]), 'changed after this monitor inspected it')):
-            controller.info = info
-            target, reason = controller.target(now())
-            self.assertIsNone(target)
-            self.assertIn(text, reason)
 
-    def test_concurrent_start_is_refused_while_running(self):
+    def test_concurrent_and_double_start_are_refused(self):
         self.fake.configure(restart='success', drain_delay=1.5)
-        controller = self.controller()
-        token = controller.target(now())[0]['token']
-        controller.start(now=now(), confirmed_token=token)
+        token = self.start()['token']
         with self.assertRaises(Refused):
-            controller.start(now=now(), confirmed_token=token)
+            self.restart.start(now=None, confirmed_token=token)
         with self.assertRaises(Refused):
-            controller.reconcile(now=now())
-        self.assertEqual(self.finish(controller)['verified'], True)
-        self.assertEqual(len(self.fake.calls()), 1)
+            self.restart.reconcile(now=None)
+        deadline = time.time() + 5
+        while self.restart.live()['phase'][0] != 'draining' and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(self.restart.live()['phase'], ('draining', 2))  # live progress from Darkbloom output
+        self.finish()
+        self.assertEqual(self.fake.calls(), [RESTART])
 
-    def test_monitor_restart_mid_attempt_watches_detached_child_and_reports_unknown(self):
-        self.fake.configure(restart='success', drain_delay=1.5)
-        first = self.controller()
-        first.start(now=now(), confirmed_token=first.target(now())[0]['token'])
-        first.close()  # simulate the monitor process ending; its child keeps running
-        first.store.close()
-        self.stores.remove(first.store)
-        second = self.controller()
-        current = second.snapshot()['current']
-        self.assertEqual(current['phase'], 'running')
-        self.assertFalse(second.gate()[0])
-        with self.assertRaises(Refused):
-            second.reconcile(now=now())
-        current = self.finish(second)
-        self.assertEqual((current['outcome'], current['verified'], current['note']),
-                         ('relaunched_unconfirmed', False, 'interrupted'))
-        self.assertFalse(second.gate()[0])
-        second.reconcile(now=now())
-        self.assertTrue(second.gate()[0])
-        self.assertEqual(len(self.fake.calls()), 1)
+    def test_reconcile_refuses_while_recorded_child_is_alive(self):
+        child = subprocess.Popen(['sleep', '30'])
+        self.addCleanup(child.kill)
+        with ManualJournal(self.directory) as journal:
+            journal.write(dict(schema=1, operation_id='a' * 32, state='intent', started_at='2026-11-01T00:00:00Z',
+                               reason='invocation_not_confirmed',
+                               target=observed_target(self.fake.state, self.fake.executable, os.getuid(),
+                                                      verifier=verifier(OLD)),
+                               child=dict(pid=child.pid, born_us=process_start(child.pid))))
+        self.assertFalse(self.restart.gate()[0])
+        with self.assertRaises(Refused) as caught:
+            self.restart.reconcile(now=None)
+        self.assertIn('still running', str(caught.exception))
+        child.kill()
+        child.wait()
+        self.restart.reconcile(now=None)
+        self.assertEqual(read_operation(self.directory)['state'], 'reconciled')
 
-    def test_claim_without_recorded_child_recovers_as_unknown(self):
-        store = AttemptStore(str(self.fake.record_dir), os.getuid())
-        store.save({'schema': 1, 'host': HOST, 'history': [], 'current': {
-            'attempt_id': 'a' * 32, 'phase': 'claimed', 'claimed_at': now(), 'child': None,
-            'target': {'pid': OLD['pid'], 'born_us': OLD['born_us']}}})
-        controller = self.controller(store=store)
-        current = controller.snapshot()['current']
-        self.assertEqual((current['phase'], current['outcome'], current['verified']), ('finished', 'unknown', False))
-        self.assertIn('before the restart command was recorded', current['verification'])
-        self.assertFalse(controller.gate()[0])
-
-    def test_store_requires_private_directory_and_exclusive_lock(self):
-        store = AttemptStore(str(self.fake.record_dir), os.getuid())
-        self.stores.append(store)
-        with self.assertRaises(PolicyError):
-            AttemptStore(str(self.fake.record_dir), os.getuid())
-        os.chmod(self.fake.record_dir, 0o755)
-        try:
-            with self.assertRaises(PolicyError):
-                AttemptStore(str(self.fake.record_dir), os.getuid())
-        finally:
-            os.chmod(self.fake.record_dir, 0o700)
-        store.save({'schema': 1, 'host': HOST, 'current': None, 'history': []})
-        os.chmod(self.fake.record_dir / 'restart.json', 0o644)
-        with self.assertRaises(PolicyError):
-            store.load()
+    def test_unsafe_record_blocks_restart(self):
+        self.start()
+        self.finish()
+        os.chmod(os.path.join(self.directory, 'operation.json'), 0o644)
+        opened, reason = self.restart.gate()
+        self.assertFalse(opened)
+        self.assertIn('unsafe', reason)
 
 
 class ConsoleHttpTests(Base):
@@ -268,9 +234,8 @@ class ConsoleHttpTests(Base):
         self.monitor = LocalMonitor(self.fake.state, os.getuid(), HOST, interval=1)
         info = inspect_executable(self.fake.executable, self.fake.environment())
         self.assertEqual(info['version'], '0.10.6')
-        self.controller_ = self.controller()
         self.tools = OperatorTools(self.monitor, executable=self.fake.executable, executable_info=info,
-                                   environment=self.fake.environment(), restart=self.controller_)
+                                   environment=self.fake.environment(), restart=self.restart)
         self.stop = threading.Event()
         ready = threading.Event()
         self.port = None
@@ -314,7 +279,7 @@ class ConsoleHttpTests(Base):
         self.assertEqual(self.request('GET', '/s/' + 'x' * 43 + '/tools', origin=False)[0], 404)
         status, _, page = self.request('GET', self.tools.base + '/tools', origin=False)
         self.assertEqual(status, 200)
-        for name in ('Refresh diagnostics now', 'Doctor checks', 'Export redacted diagnostics',
+        for name in ('Refresh diagnostics now', 'Doctor checks', 'Export redacted diagnostics', '/report.json',
                      'Coordinator protocol compatibility', 'Forced restart', 'Local details'):
             self.assertIn(name, page)
         csp, referrer = self.tools_headers()
@@ -363,20 +328,12 @@ class ConsoleHttpTests(Base):
         for private in ('private-model-name', '/Users/private', 'private-provider-name', 'SECRET-DIAGNOSIS'):
             self.assertNotIn(private, page)
 
-    def test_export_is_redacted_json(self):
-        status, _, body = self.request('GET', self.tools.base + '/export.json', origin=False)
-        self.assertEqual(status, 200)
-        payload = json.loads(body)
-        self.assertEqual((payload['schema'], payload['host']), (1, HOST))
-        for private in (self.fake.executable, self.fake.state, self.tools.token):
-            self.assertNotIn(private, body)
-
     def test_restart_confirmation_double_submit_and_reconcile_over_http(self):
         status, _, page = self.request('GET', self.tools.base + '/restart', origin=False)
         self.assertEqual(status, 200)
         self.assertNotIn('http-equiv="refresh"', page)
         for text in ('New work is refused', 'restart --timeout 600 --startup-timeout 180',
-                     'Not guaranteed: exactly-once', f'PID {OLD["pid"]}'):
+                     'Not guaranteed: exactly-once', f'PID {OLD["pid"]}', 'gargoyl tools restart'):
             self.assertIn(text, page)
         nonce = self.nonce(page, '/restart')
         token = re.search(r'name="target" value="([^"]+)"', page).group(1)
@@ -391,8 +348,8 @@ class ConsoleHttpTests(Base):
         second = self.request('POST', self.tools.base + '/restart', body=form)  # double click
         self.assertEqual((first[0], first[1]), (303, self.tools.base + '/restart/status'))
         self.assertEqual((second[0], second[1]), (303, self.tools.base + '/restart/status'))
-        current = self.finish(self.controller_)
-        self.assertTrue(current['verified'])
+        self.finish()
+        self.assertEqual(read_operation(self.directory)['state'], 'completed')
         self.assertEqual(self.fake.calls().count('restart --timeout 600 --startup-timeout 180'), 1)
         status, _, page = self.request('GET', self.tools.base + '/restart/status', origin=False)
         self.assertIn('Verified restart', page)

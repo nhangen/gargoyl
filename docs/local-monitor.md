@@ -104,12 +104,11 @@ contains the MBP-26 arguments. Replace its absolute venv placeholder before any
 use. Both persistence flags are false. It is documentation only and has not been
 copied into `~/Library/LaunchAgents`, loaded or enabled.
 
-## Operator tools and manual restart (opt-in)
+## Operator console tools (opt-in)
 
-With `--operator-tools` (and optionally `--enable-restart --restart-state-dir`),
-the monitor also serves private read-only checks, a redacted export and a
-confirmed manual Darkbloom restart. Without those flags everything below still
-applies. See [operator tools and manual restart](operator-tools.md).
+`--operator-tools` (and `--enable-restart`) add private read-only checks and the
+confirmed manual restart to this monitor; see [operator console tools](operator-tools.md).
+Without those flags everything below still applies.
 
 ## Why provider restart is unavailable by default
 

@@ -10,7 +10,7 @@ vectors. The token protects against other local users and web pages; any process
 running as the same user can already run Darkbloom directly.
 """
 import hmac
-import json
+import os
 import secrets
 import threading
 import time
@@ -25,16 +25,35 @@ from gargoyl.darkbloom_cli import (
     RESTART_DRAIN_TIMEOUT,
     RESTART_STARTUP_TIMEOUT,
     SUPPORTED_VERSIONS,
+    classify_restart,
     executable_digest,
     executable_file,
     parse_doctor,
     parse_version,
+    progress,
+    restart_events,
     run_bounded,
 )
 from gargoyl.dashboard.runtime import _Handler
 from gargoyl.dashboard.theme import PAGE_END, page_start
-from gargoyl.restart_attempts import Refused
+from gargoyl.manual_restart import (
+    ManualJournal,
+    executable_stamp,
+    installation_preflight,
+    invoke_restart,
+    observed_target,
+    owner_home,
+    process_alive,
+    read_operation,
+    reconcile_operation,
+    run_restart,
+)
 from gargoyl.telemetry import timestamp
+
+
+class Refused(Exception):
+    """A request was refused; the message is safe to show."""
+
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 NONCE_SECONDS = 600
@@ -59,12 +78,13 @@ INVENTORY = (
     ('history', 'Traffic and normalized history', 'Read-only', 'available',
      'The last 64 normalized observations held in this process, with fresh counter windows.'),
     ('export', 'Export redacted diagnostics', 'Read-only', 'available',
-     'Downloads normalized observations, tool summaries and restart outcomes as JSON. No raw output, '
-     'paths, model names or log text.'),
+     'The monitor\'s /report.json: bounded normalized history, dashboard projection and redacted log '
+     'metadata. No raw output, model names, credentials or executable paths.'),
     ('details', 'Local details', 'Read-only', 'available',
      'Shows this monitor\'s configured files, executable, version and restart record location.'),
     ('restart', 'Manual provider restart', 'Changes service state', 'available-if-enabled',
-     'Runs Darkbloom\'s own graceful `restart` after typed confirmation. Enabled only with --enable-restart.'),
+     'Runs Darkbloom\'s own graceful `restart` once after typed confirmation. Enabled only with '
+     '--enable-restart. Shares one journal, lock and gate with `gargoyl tools restart`.'),
     ('protocol', 'Coordinator protocol compatibility', 'Read-only', 'unsupported',
      'No supported evidence source exists in Darkbloom 0.10.5/0.10.6; it stays unknown.'),
     ('logs', 'Raw log export or streaming', 'Read-only', 'unsupported',
@@ -268,7 +288,7 @@ class OperatorTools:
                           self._form('/tools/run', 'tool', 'Run', fields='<input type="hidden" name="tool" value="'
                                      + tool + '">'))
             elif tool == 'export':
-                action = '<a class="btn" href="' + e(self.base + '/export.json') + '" download>Download JSON</a>'
+                action = '<a class="btn" href="/report.json" download="gargoyl-report.json">Download JSON</a>'
             elif tool in ('evidence', 'history'):
                 action = '<a class="btn" href="' + e(self.base + ('/#fleet-overview' if tool == 'evidence'
                                                                     else '/#traffic-history')) + '">Open</a>'
@@ -297,9 +317,10 @@ class OperatorTools:
             + '</dd></div>'
             '<div><dt>Executable SHA-256</dt><dd class="mono">' + e(info.get('digest') or 'unknown') + '</dd></div>'
             '<div><dt>Restart record</dt><dd class="mono">'
-            + e(self.restart.store.directory if self.restart is not None else 'restart not enabled') + '</dd></div>'
+            + e(self.restart.directory if self.restart is not None else 'restart not enabled in the console') + '</dd></div>'
             '</dl><p>Darkbloom logs: run <code>darkbloom logs</code> in a terminal. Gargoyl does not read or '
-            'export raw logs.</p></section>')
+            'export raw logs. Terminal equivalents: <code>gargoyl tools inspect</code>, '
+            '<code>gargoyl tools restart</code>, <code>gargoyl tools reconcile</code>.</p></section>')
         refresh = '<meta http-equiv="refresh" content="2">' if running else ''
         body = (refresh + '<h1>Operator tools</h1><p>Read-only checks are separate from the one action that '
                 'changes service state. Checks that run Darkbloom use fixed arguments and keep only '
@@ -309,73 +330,59 @@ class OperatorTools:
                 '<th scope="col">Action</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>' + details)
         return self._page('Operator tools · Gargoyl', 'tools', body)
 
-    def export(self, now):
-        results, _ = self.results()
-        record = self.restart.snapshot() if self.restart is not None else None
-        payload = {
-            'schema': 1, 'generated_at': now, 'host': self.monitor.identity,
-            'redaction': 'Normalized fields only: no raw command output, paths, model names, logs or keys.',
-            'executable': {'version': self.info.get('version'), 'recognised_build': self.info.get('recognised_build')},
-            'collections': self.monitor.collections,
-            'observations': self.monitor.history(),
-            'tools': {name: {k: v for k, v in result.items() if k in
-                             ('state', 'summary', 'started_at', 'finished_at', 'version', 'daemon_state', 'counts')}
-                      for name, result in results.items()},
-            'restart': None if record is None else {
-                'current': _public_attempt(record.get('current')),
-                'history': [_public_attempt(item) for item in record.get('history', [])],
-            },
-        }
-        return json.dumps(payload, indent=2, sort_keys=True)
-
     # -- restart pages -------------------------------------------------------
+
+    def _notice(self, message):
+        return ('<div class="callout danger" role="alert"><p>' + e(message) + '</p></div>') if message else ''
 
     def restart_page(self, now, *, message=None):
         restart = self.restart
-        current = restart.snapshot().get('current')
-        opened, reason = restart.gate()
-        notice = ('<div class="callout danger" role="alert"><p>' + e(message) + '</p></div>') if message else ''
-        status_link = ('<p><a href="' + e(self.base + '/restart/status') + '">View the last restart and its outcome</a>.</p>'
-                       if current else '')
+        record = restart.record()
+        opened, reason = restart.gate(record)
+        status_link = ('<p><a href="' + e(self.base + '/restart/status') + '">View the last manual restart and its '
+                       'outcome</a>.</p>' if record else '')
+        head = '<h1>Manual provider restart</h1>' + self._notice(message)
         if not opened:
-            return self._page('Restart · Gargoyl', 'restart', '<h1>Manual provider restart</h1>' + notice
-                              + '<div class="callout warn"><p>' + e(reason) + '</p></div>' + status_link)
-        target, problem = restart.target(now)
-        if target is None:
-            return self._page('Restart · Gargoyl', 'restart', '<h1>Manual provider restart</h1>' + notice
-                              + '<div class="callout warn"><p>Restart is unavailable: ' + e(problem)
+            return self._page('Restart · Gargoyl', 'restart', head + '<div class="callout warn"><p>' + e(reason)
                               + '</p></div>' + status_link)
+        target, problem = restart.target()
+        if target is None:
+            return self._page('Restart · Gargoyl', 'restart', head + '<div class="callout warn"><p>Restart is '
+                              'unavailable: ' + e(problem) + '</p></div>' + status_link)
         prefix = self.monitor.identity[:8]
         born = datetime.fromtimestamp(target['born_us'] / 1e6, timezone.utc).strftime('%Y-%m-%d %H:%M:%SZ')
-        kernel = {True: 'confirmed by the kernel', False: 'not confirmed', None: 'kernel check unavailable on this platform'}[target['kernel_verified']]
         command = 'darkbloom ' + ' '.join(RESTART_ARGUMENTS)
         body = (
-            '<h1>Manual provider restart</h1>' + notice
-            + '<p>This runs Darkbloom\'s own graceful restart once, after you confirm. It is not an automatic '
-            'repair and it is never retried.</p>'
+            head + '<p>This runs Darkbloom\'s own graceful restart once, after you confirm. It is not an automatic '
+            'repair and it is never retried. The terminal command <code>gargoyl tools restart</code> uses the '
+            'same record and gate, so only one restart can be in progress from either place.</p>'
             '<section aria-labelledby="target-title"><h2 id="target-title">Target</h2><dl class="facts">'
             '<div><dt>Host</dt><dd class="mono">' + e(self.monitor.identity) + '</dd></div>'
             '<div><dt>Provider process</dt><dd>PID ' + e(target['pid']) + ', started ' + e(born)
-            + ' · ' + e(kernel) + '</dd></div>'
-            '<div><dt>Darkbloom</dt><dd>' + e(target['version']) + ' · trust status '
-            + e(target['trust_status'] or 'unknown') + '</dd></div>'
+            + ' · confirmed by the kernel</dd></div>'
+            '<div><dt>Darkbloom</dt><dd>' + e(target['version']) + ' · launchd provider and watchdog running</dd></div>'
+            '<div><dt>Executable</dt><dd class="mono">' + e(self.executable) + '</dd></div>'
             '<div><dt>Command</dt><dd class="mono">' + e(command) + '</dd></div>'
             '</dl></section>'
             '<section aria-labelledby="impact-title"><h2 id="impact-title">Expected interruption</h2><ul>'
             '<li>New work is refused as soon as the drain starts.</li>'
             f'<li>Accepted requests may finish, for up to {RESTART_DRAIN_TIMEOUT // 60} minutes, and the coordinator must acknowledge usage.</li>'
-            '<li>The provider then stops and relaunches with its existing configuration and model. It does '
-            f'not serve until it is freshly authorized, for up to {RESTART_STARTUP_TIMEOUT // 60} minutes.</li>'
-            '<li>If the drain does not finish in time, nothing is restarted, but Darkbloom leaves the provider '
-            'draining with automatic restart disabled. That needs your attention afterwards.</li>'
-            '<li>Darkbloom never forces: Gargoyl does not pass --force.</li></ul></section>'
+            '<li>Darkbloom temporarily disables startup and its watchdog, then stops the provider and relaunches it '
+            'with its existing configuration and model. It does not serve until freshly authorized, for up to '
+            f'{RESTART_STARTUP_TIMEOUT // 60} minutes, and then restores configured recovery.</li>'
+            '<li>If the drain or startup times out, nothing more is done: the provider can be left draining or '
+            'with automatic restart disabled, which needs your attention.</li>'
+            '<li>Gargoyl never passes --force. It waits up to 14 minutes; past that it stops only its own command '
+            '(not the provider), and the outcome is unknown.</li></ul></section>'
             '<section aria-labelledby="guarantee-title"><h2 id="guarantee-title">What is and isn\'t guaranteed</h2><ul>'
-            '<li>Gargoyl records the attempt durably before running anything and allows one attempt at a time.</li>'
+            '<li>The attempt is recorded durably before Darkbloom runs. One attempt at a time, shared with the CLI.</li>'
             '<li>Duplicate or double-clicked submissions are rejected.</li>'
             '<li>If the outcome is uncertain, for example because the monitor stopped mid-restart, restart stays '
-            'blocked until you reconcile. Gargoyl never retries.</li>'
+            'blocked until you reconcile. Nothing retries.</li>'
+            '<li>Darkbloom restarts the provider that is current when it runs. Gargoyl re-checks the target just '
+            'before invoking, but can\'t make that check and Darkbloom\'s own selection atomic.</li>'
             '<li>Not guaranteed: exactly-once execution across crashes. Darkbloom keeps no durable ledger of '
-            'restart requests, and a crash at the wrong moment leaves the outcome unknown.</li></ul></section>'
+            'restart requests.</li></ul></section>'
             '<section aria-labelledby="confirm-title"><h2 id="confirm-title">Confirm</h2>'
             '<form method="post" action="' + e(self.base + '/restart') + '" class="confirm">'
             '<input type="hidden" name="nonce" value="' + e(self.issue('restart')) + '">'
@@ -389,85 +396,253 @@ class OperatorTools:
         return self._page('Restart · Gargoyl', 'restart', body)
 
     def restart_status_page(self, now, *, message=None):
-        record = self.restart.snapshot()
-        current = record.get('current')
-        notice = ('<div class="callout danger" role="alert"><p>' + e(message) + '</p></div>') if message else ''
-        if not current:
-            return self._page('Restart status · Gargoyl', 'restart', '<h1>Restart status</h1>' + notice
-                              + '<p>No restart has been attempted from this monitor\'s record.</p>')
-        running = current['phase'] in ('claimed', 'running')
+        restart = self.restart
+        record = restart.record()
+        live = restart.live()
+        head = '<h1>Restart status</h1>' + self._notice(message)
+        if record is None and not live['active']:
+            failure = ('<p>' + e(live['failure']) + '</p>') if live['failure'] else ''
+            return self._page('Restart status · Gargoyl', 'restart', head + failure
+                              + '<p>No manual restart is recorded.</p>')
+        state = record['state'] if record else 'intent'
+        running = live['active']
         refresh = '<meta http-equiv="refresh" content="2">' if running else ''
-        phase = PHASE_TEXT.get(current.get('last_progress') or 'starting', 'In progress')
-        if running and current.get('remaining') and current.get('last_progress') == 'draining':
-            phase += f" {current['remaining']} accepted request(s) remaining."
         if running:
             badge, headline = 'st-info', 'In progress'
-        elif current['phase'] == 'reconciled':
-            badge, headline = 'st-unknown', 'Reconciled'
-        elif current.get('verified'):
+        elif state == 'completed':
             badge, headline = 'st-observed', 'Verified restart'
+        elif state == 'reconciled':
+            badge, headline = 'st-unknown', 'Reconciled'
         else:
             badge, headline = 'st-failed', 'Unresolved'
-        facts = (
-            '<dl class="facts">'
-            '<div><dt>Attempt</dt><dd class="mono">' + e(current['attempt_id'][:12]) + '</dd></div>'
-            '<div><dt>Claimed</dt><dd>' + e(_local_time(current.get('claimed_at'))) + '</dd></div>'
-            '<div><dt>Target process</dt><dd>PID ' + e(current['target']['pid']) + '</dd></div>'
-            '<div><dt>Finished</dt><dd>' + e(_local_time(current.get('finished_at')) if current.get('finished_at') else '—') + '</dd></div>'
-            '</dl>')
-        body = refresh + '<h1>Restart status</h1>' + notice + '<p><span class="st ' + badge + '">' + e(headline) + '</span></p>' + facts
+        facts = '<dl class="facts">'
+        if record:
+            facts += ('<div><dt>Operation</dt><dd class="mono">' + e(record['operation_id'][:12]) + '</dd></div>'
+                      '<div><dt>Started</dt><dd>' + e(_local_time(record['started_at'])) + '</dd></div>'
+                      '<div><dt>Target process</dt><dd>PID ' + e(record['target']['process']['pid']) + '</dd></div>'
+                      '<div><dt>Finished</dt><dd>' + e(_local_time(record['finished_at']) if record.get('finished_at') else '—')
+                      + '</dd></div>')
+        facts += '</dl>'
+        body = refresh + head + '<p><span class="st ' + badge + '">' + e(headline) + '</span></p>' + facts
         if running:
-            body += ('<section aria-labelledby="progress-title"><h2 id="progress-title">Progress</h2><p>' + e(phase)
-                     + '</p><p class="muted">This page refreshes every 2 seconds. Stopping the monitor does not stop '
-                     'the restart; it continues and is reported as unknown until reconciled.</p></section>')
+            phase, remaining = live['phase']
+            text = PHASE_TEXT.get(phase, PHASE_TEXT['starting'])
+            if phase == 'draining' and remaining:
+                text += f' {remaining} accepted request(s) remaining.'
+            body += ('<section aria-labelledby="progress-title"><h2 id="progress-title">Progress</h2><p>' + e(text)
+                     + '</p><p class="muted">' + e(live['message'] or '') + '</p><p class="muted">This page refreshes '
+                     'every 2 seconds. Stopping the monitor does not stop the restart; it is then reported as '
+                     'unknown until reconciled.</p></section>')
         else:
-            outcome = current.get('outcome') or 'unknown'
-            body += ('<section aria-labelledby="outcome-title"><h2 id="outcome-title">Outcome</h2><p>'
-                     + e(OUTCOME_TEXT.get(outcome, OUTCOME_TEXT['unknown'])) + '</p><p>'
-                     + e(current.get('verification') or '') + '</p>'
-                     + (f"<p>Exit status {e(current['exit_code'])}.</p>" if current.get('exit_code') is not None else
-                        '<p>Exit status not observed.</p>')
-                     + ('<p class="muted">' + e(current['unrecognised_lines']) + ' output line(s) were not recognised '
-                        'and were discarded.</p>' if current.get('unrecognised_lines') else '') + '</section>')
-            if current['phase'] == 'reconciled':
-                body += '<p>' + e(current.get('reconciliation', '')) + '</p>'
-            elif not current.get('verified'):
+            body += '<section aria-labelledby="outcome-title"><h2 id="outcome-title">Outcome</h2>'
+            if state == 'completed':
+                body += ('<p>Darkbloom reported success, and fresh provider state names a different process (PID '
+                         + e(record['replacement']['process']['pid']) + ') confirmed by the kernel, on the same '
+                         'version. Protocol health and earnings are not independently proven.</p>')
+            elif state == 'reconciled':
+                body += '<p>' + e(OBSERVATION_TEXT[record['observation']]) + ' Recorded ' + e(_local_time(record['reconciled_at'])) + '. This records the present state; it does not prove what happened during the attempt.</p>'
+            else:
+                detail = OUTCOME_TEXT.get(live['outcome']) if live['outcome'] else None
+                body += ('<p>' + e(detail or 'The outcome is unknown: it was not verified, or the restart was '
+                         'started by another session (the CLI or an earlier monitor) that didn\'t record a result.')
+                         + '</p>' + (f"<p>Exit status {e(live['exit_code'])}.</p>" if live['exit_code'] is not None else ''))
+            body += '</section>'
+            if state in ('intent', 'unknown'):
                 body += ('<section aria-labelledby="reconcile-title"><h2 id="reconcile-title">Reconcile</h2>'
                          '<p>Restart stays blocked until you reconcile. Reconciling only reads the current provider '
-                         'state and records it; it never restarts anything. Check the dashboard first, and if the '
-                         'provider is still draining with automatic restart disabled, resolve that in Darkbloom.</p>'
+                         'state and records it; it never restarts anything, and it is refused while the restart '
+                         'command is still running. Check the dashboard first; if the provider is left draining with '
+                         'automatic restart disabled, resolve that in Darkbloom.</p>'
                          + self._form('/restart/reconcile', 'reconcile', 'Reconcile and record current state')
                          + '</section>')
-        history = record.get('history', [])
-        if history:
-            body += ('<details><summary>Earlier attempts (' + str(len(history)) + ')</summary><div class="table-wrap" '
-                     'tabindex="0" role="region" aria-label="Earlier restart attempts"><table><thead><tr>'
-                     '<th scope="col">Claimed</th><th scope="col">Outcome</th><th scope="col">Verified</th>'
-                     '<th scope="col">Reconciled</th></tr></thead><tbody>'
-                     + ''.join('<tr><td>' + e(_local_time(item.get('claimed_at'))) + '</td><td>'
-                               + e(item.get('outcome') or 'unknown') + '</td><td>' + ('yes' if item.get('verified') else 'no')
-                               + '</td><td>' + e(_local_time(item['reconciled_at']) if item.get('reconciled_at') else '—')
-                               + '</td></tr>' for item in history) + '</tbody></table></div></details>')
         return self._page('Restart status · Gargoyl', 'restart', body)
 
 
 PHASE_TEXT = {
-    'starting': 'Starting: Darkbloom is confirming the provider and publishing the drain request.',
+    'starting': 'Starting: preflight passed; Darkbloom is confirming the provider and publishing the drain request.',
     'draining': 'Draining: new work is refused while accepted requests finish.',
     'awaiting_ack': 'Requests finished; waiting for the coordinator to acknowledge usage.',
     'drained': 'Drained; stopping the provider.',
     'awaiting_authorization': 'Relaunched; waiting for fresh authorization (up to 3 minutes).',
-    'authorized': 'Freshly authorized; verifying independently.',
+    'authorized': 'Freshly authorized; verifying the replacement process independently.',
 }
 
+OBSERVATION_TEXT = {
+    'original_process_observed': 'At reconciliation, the original provider process was still reported and confirmed.',
+    'different_process_observed': 'At reconciliation, a different provider process was reported and confirmed by the kernel.',
+    'provider_unobservable': 'At reconciliation, no fresh, kernel-confirmed provider process could be observed.',
+}
 
-def _public_attempt(item):
-    if not item:
-        return None
-    keys = ('attempt_id', 'phase', 'claimed_at', 'finished_at', 'outcome', 'verified', 'verification',
-            'reconciled_at', 'reconciliation', 'note', 'exit_code')
-    return {key: item.get(key) for key in keys if key in item}
+OUTPUT_NAME = 'console-restart-output'
 
+
+class ConsoleRestart:
+    """Browser front end for gargoyl.manual_restart.
+
+    Same fixed journal directory, lock, gate, installation preflight and invocation as
+    `gargoyl tools restart`. Adds: confirmation bound to the displayed process, the
+    child's PID/start in the record, and progress parsed from a private output file
+    that is deleted afterwards. The restart is never interrupted on monitor shutdown.
+    """
+
+    def __init__(self, *, executable, directory, preflight, inspect, observe, invoke=invoke_restart,
+                 alive=process_alive, run=run_restart):
+        self.executable, self.directory = executable, directory
+        self._preflight, self._inspect, self._observe = preflight, inspect, observe
+        self._invoke, self._alive, self._run = invoke, alive, run
+        self._lock = threading.Lock()
+        self._active = False
+        self._message = None
+        self._outcome = self._exit_code = self._failure = None
+        self._events = []
+        self._never = threading.Event()  # monitor shutdown never interrupts a restart
+
+    @classmethod
+    def for_installation(cls, executable, source, uid):
+        def preflight():
+            return installation_preflight(executable, source, uid)
+
+        def inspect(stamp):
+            if executable_stamp(executable) != stamp:
+                raise ValueError('installation changed')
+            return observed_target(source, executable, uid)
+        return cls(executable=executable, directory=str(owner_home() / '.gargoyl-manual-restart'),
+                   preflight=preflight, inspect=inspect,
+                   observe=lambda: observed_target(source, executable, uid))
+
+    def record(self):
+        try:
+            return read_operation(self.directory)
+        except Exception:
+            return {'unreadable': True}
+
+    def gate(self, record=None):
+        if self._active:
+            return False, 'A manual restart is in progress from this console.'
+        record = self.record() if record is None else record
+        if record and record.get('unreadable'):
+            return False, 'The manual restart record is unreadable or has unsafe permissions. Restart is blocked.'
+        if record and record['state'] not in ('completed', 'reconciled'):
+            return False, ('The last manual restart (from this console or the terminal) has no verified outcome. '
+                           'Reconcile before another restart.')
+        return True, None
+
+    def target(self):
+        try:
+            target, stamp = self._preflight()
+        except Exception as error:
+            if str(error) == 'existing_watchdog_required':
+                return None, 'the provider watchdog is not verified running; Gargoyl will not newly enable it.'
+            return None, ('installation preflight failed (pilot installation only: macOS, owner UID 501, '
+                          'MBP-2026.local, canonical paths, plain launchd provider job, running watchdog, fresh '
+                          'state, Darkbloom 0.10.5/0.10.6 with matching --version).')
+        process = target['process']
+        return {'pid': process['pid'], 'born_us': process['born_us'], 'version': target['version'],
+                'token': f"{process['pid']}:{process['born_us']}", 'target': target, 'stamp': stamp}, None
+
+    def live(self):
+        with self._lock:
+            events = list(self._events)
+            result = {'active': self._active, 'message': self._message, 'outcome': self._outcome,
+                      'exit_code': self._exit_code, 'failure': self._failure}
+        if result['active']:
+            events = restart_events(self._read_output())[0]
+        result['phase'] = progress(events)
+        return result
+
+    def _read_output(self):
+        try:
+            fd = os.open(os.path.join(self.directory, OUTPUT_NAME), os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            return b''
+        with os.fdopen(fd, 'rb') as stream:
+            return stream.read(65536)
+
+    def start(self, *, now, confirmed_token):
+        with self._lock:
+            opened, reason = self.gate()
+            if not opened:
+                raise Refused(reason)
+            target, problem = self.target()
+            if target is None:
+                raise Refused('Restart is unavailable: ' + problem)
+            if confirmed_token != target['token']:
+                raise Refused('The provider process changed since the confirmation page was shown. '
+                              'Review the new target before restarting.')
+            try:
+                journal = ManualJournal(self.directory)
+            except BlockingIOError:
+                raise Refused('Another manual restart (terminal or console) holds the restart lock.') from None
+            except Exception:
+                raise Refused('The manual restart record could not be opened safely.') from None
+            self._active, self._message, self._failure = True, 'Starting.', None
+            self._outcome = self._exit_code = None
+            self._events = []
+        threading.Thread(target=self._attempt, args=(journal, target), name='gargoyl-restart',
+                         daemon=True).start()
+
+    def _attempt(self, journal, chosen):
+        output = None
+        try:
+            try:
+                os.unlink(OUTPUT_NAME, dir_fd=journal.fd)
+            except FileNotFoundError:
+                pass
+            output = os.open(OUTPUT_NAME, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+                             dir_fd=journal.fd)
+            stamp = chosen['stamp']
+
+            def invoke(record_child):
+                fresh, current_stamp = self._preflight()  # revalidate immediately before invoking
+                if fresh['process'] != chosen['target']['process'] or current_stamp != stamp:
+                    raise ValueError('target changed')
+                code = self._invoke(self.executable, interrupted=self._never, progress=self._note,
+                                    started=record_child, output=output)
+                with self._lock:
+                    self._exit_code = code
+                return code
+
+            self._run(journal, chosen['target'], inspect_target=lambda: self._inspect(stamp), invoke=invoke,
+                      confirm=lambda value: value['process'] == chosen['target']['process'],
+                      progress=self._note, invoke_with_child=True)
+        except BaseException:
+            pass  # run_restart has recorded the unknown outcome (or nothing was claimed)
+        finally:
+            events = restart_events(self._read_output())[0]
+            if output is not None:
+                os.close(output)
+            try:
+                os.unlink(OUTPUT_NAME, dir_fd=journal.fd)
+            except OSError:
+                pass
+            journal.close()
+            with self._lock:
+                self._events = events
+                self._outcome = classify_restart(events, self._exit_code) if events or self._exit_code is not None else None
+                self._active = False
+
+    def _note(self, text):
+        with self._lock:
+            self._message = text
+
+    def reconcile(self, *, now):
+        if self._active:
+            raise Refused('A manual restart is in progress from this console.')
+        try:
+            journal = ManualJournal(self.directory)
+        except BlockingIOError:
+            raise Refused('A manual restart (terminal or console) is running and holds the lock.') from None
+        with journal:
+            record = journal.read()
+            if record is None or record['state'] not in ('intent', 'unknown'):
+                raise Refused('There is no unresolved manual restart to reconcile.')
+            try:
+                # Observation only: preflight may legitimately fail after a drain timeout.
+                reconcile_operation(journal, inspect_target=self._observe, alive=self._alive)
+            except ValueError as error:
+                if str(error) == 'restart_still_running':
+                    raise Refused('The restart command is still running. Wait for it to finish.') from None
+                raise Refused('Reconciliation could not be recorded.') from None
 
 class OperatorHandler(_Handler):
     """Public GET / unchanged; private routes under /s/<token>/; POST only there."""
@@ -538,9 +713,6 @@ class OperatorHandler(_Handler):
                 self._page(200, page, refresh=True)
             elif route == '/tools':
                 self._page(200, tools.tools_page(now))
-            elif route == '/export.json':
-                self._respond(200, tools.export(now), content_type='application/json; charset=utf-8',
-                              headers=(('Content-Disposition', 'attachment; filename="gargoyl-diagnostics.json"'),))
             elif route == '/restart' and tools.restart is not None:
                 self._page(200, tools.restart_page(now))
             elif route == '/restart/status' and tools.restart is not None:

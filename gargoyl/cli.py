@@ -69,8 +69,13 @@ def _emit(kind, observed, result, *, completed=None, cleanup=None, interrupted=F
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'tools':
+        from gargoyl.operator_tools import main as tools_main
+        return tools_main(argv[1:])
     parser = _Parser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('tools', help='Explicit read-only inspection and interactive manual operator tools.')
     inspect = commands.add_parser('inspect', help='Parse supplied bytes; execute nothing.')
     inspect.add_argument('source', choices=(*KINDS, 'state'))
     inspect.add_argument('--input', required=True, help='Text: file or stdin (-); state: absolute file path.')
@@ -92,9 +97,8 @@ def main(argv=None):
     monitor.add_argument('--port', type=int, default=8765)
     monitor.add_argument('--provider-executable', help='Explicit canonical provider image; enables owner-local native diagnostics.')
     monitor.add_argument('--coordinator-errors', action='store_true', help='Opt in to a bounded current-provider coordinator error/fault query; requires --provider-executable.')
-    monitor.add_argument('--operator-tools', action='store_true', help='Opt in to private operator tools (read-only checks, export); requires --provider-executable.')
-    monitor.add_argument('--enable-restart', action='store_true', help='Opt in to manual, confirmed Darkbloom restart; requires --operator-tools and --restart-state-dir.')
-    monitor.add_argument('--restart-state-dir', help='Absolute private (0700) directory for the durable restart record.')
+    monitor.add_argument('--operator-tools', action='store_true', help='Opt in to private operator tools (read-only checks); requires --provider-executable.')
+    monitor.add_argument('--enable-restart', action='store_true', help='Opt in to manual, confirmed Darkbloom restart in the console; requires --operator-tools. Shares the gargoyl tools restart journal and gate.')
     status = commands.add_parser('status', help='Check the local viewer; does not imply source health.')
     status.add_argument('--port', type=int, default=8765)
     try:

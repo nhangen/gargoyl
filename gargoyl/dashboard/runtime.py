@@ -47,9 +47,9 @@ class EvidenceViewer(HTTPServer):
     """
 
     allow_reuse_address = False
+    supports_report = False
 
     def __init__(self, reader, expected_hosts, *, clock=utc_now, port=0, refresh_seconds=30):
-        # Subclasses may set self.handler_class before calling this initializer.
         if type(port) is not int or not 0 <= port <= 65535:
             raise ValueError("invalid viewer port")
         if type(refresh_seconds) is not int or not 1 <= refresh_seconds <= 60:
@@ -60,6 +60,7 @@ class EvidenceViewer(HTTPServer):
         self.expected_hosts = tuple(host_id(value) for value in expected_hosts)
         self.clock = clock
         self.refresh_seconds = refresh_seconds
+        # Subclasses may set self.handler_class before calling this initializer.
         super().__init__(('127.0.0.1', port), getattr(self, 'handler_class', _Handler))
 
     def render_page(self, now):
@@ -119,7 +120,8 @@ class _Handler(BaseHTTPRequestHandler):
         if origins is not None and origins != ['http://' + authority]:
             self.send_error(403)
             return
-        if self.path != '/':
+        report = self.path == '/report.json' and self.server.supports_report
+        if self.path != '/' and not report:
             self.send_error(404)
             return
         # Header reads may have shortened the socket timeout. Restore the bounded
@@ -128,6 +130,10 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             now = self.server.clock()
             timestamp(now)
+            if report:
+                payload = self.server.render_report(now)
+                self._respond(200, payload, content_type='application/json; charset=utf-8')
+                return
             page = self.server.render_page(now)
             page = page.replace('Read-only snapshot view. Regenerate after collection and at least every minute.',
                                 'Read-only stored evidence. This page refreshes automatically; evaluation time below identifies the current report.')

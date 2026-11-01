@@ -4,6 +4,7 @@ Only normalized evidence is retained, in bounded process memory. No keys, durabl
 plaintext spool, producer commands, enrollment, delivery or repair capability.
 """
 import http.client
+import json
 import math
 import signal
 import sys
@@ -108,11 +109,6 @@ class LocalMonitor:
         with self._lock:
             return self._collections
 
-    def history(self):
-        """Detached normalized observations (allowlisted fields only)."""
-        with self._lock:
-            return [validate_snapshot(item) for item in self._history]
-
     def tick(self, *, stop_event=None):
         now = self.clock()
         log_report = None
@@ -130,6 +126,25 @@ class LocalMonitor:
             self._collections += 1
         return validate_snapshot(snapshot)
 
+    def export_report(self, now):
+        """Fresh evaluation of bounded normalized memory only; no new reads or actions."""
+        timestamp(now)
+        with self._lock:
+            samples = [validate_snapshot(item) for item in self._history]
+            log = validate_log_report(dict(self._log_report)) if self._log_report is not None else None
+        if log is not None:
+            age = (timestamp(now) - timestamp(log['observed_at'])).total_seconds()
+            log['effective_state'] = 'unknown' if age < 0 else ('stale' if age > log['freshness_seconds'] else log['state'])
+        from gargoyl.dashboard import build_dashboard
+        result = dict(schema_version=1, evaluated_at=now, snapshots=samples,
+                      dashboard=build_dashboard(samples[-1:], [self.identity], now),
+                      coordinator_log_report=log, automatic_repair_enabled=False,
+                      note='Normalized memory only. Reported, stale and unknown evidence is not independent health verification. Counters are not earnings. Log messages and model names are excluded.')
+        payload = json.dumps(result, allow_nan=False, separators=(',', ':'))
+        if len(payload.encode()) > 524288:
+            raise ValueError('report bound exceeded')
+        return payload
+
     def snapshots(self, *, now):
         timestamp(now)
         with self._lock:
@@ -144,8 +159,7 @@ class LocalMonitor:
         page = render_dashboard(samples[-1:], [self.identity], now, extra_nav=extra_nav)
         summary = ('<section id="local-collection-summary" aria-label="Live collection"><h2>Local collection</h2>'
                    f'<p>{count} completed polls · {self.interval:g}s interval · '
-                   + ('Unattended repair disabled' if operator_section else 'Repairs disabled')
-                   + ' · Memory only</p>')
+                   'Repairs disabled · Memory only</p>')
         if samples:
             fields = samples[-1]['fields']
             summary += '<p>Latest source read: <strong>' + escape(fields['error_code']['value']) + '</strong>. '
@@ -163,6 +177,7 @@ class LocalMonitor:
                 summary += (f'<p>Recent counter change: {requests} requests · {tokens} tokens '
                             f'over {elapsed:.0f}s of source timestamps. Counter changes are '
                             'not confirmed paid work; an undetected reset can affect this comparison.</p>')
+            summary += '<p><a href="/report.json">Export normalized diagnostics JSON</a>. Refresh this page to re-read current stored evidence; collection continues independently.</p>'
             summary += '<details id="traffic-history"><summary>Recent traffic observations</summary><div class="scroll"><table><thead><tr><th>Collected at</th><th>Requests total</th><th>Tokens total</th><th>Source timestamp</th><th>Read error</th></tr></thead><tbody>'
             for sample in reversed(samples):
                 f = sample['fields']
@@ -185,6 +200,10 @@ class MonitorViewer(EvidenceViewer):
     # connections are in TIME_WAIT. This does not enable SO_REUSEPORT or
     # permit replacing another active listener.
     allow_reuse_address = True
+    supports_report = True
+
+    def render_report(self, now):
+        return self.reader.export_report(now)
 
     def __init__(self, reader, expected_hosts, *, tools=None, **kwargs):
         self.tools = tools
@@ -228,8 +247,6 @@ def run_monitor(monitor, *, port=8765, stop=None, ready=None, tools=None):
             viewer.shutdown()
             thread.join()
         viewer.server_close()
-        if tools is not None and tools.restart is not None:
-            tools.restart.close()
 
 
 def status(port):
@@ -251,27 +268,19 @@ def status(port):
 
 
 def build_operator_tools(args, monitor):
-    """Explicit opt-in: --operator-tools needs --provider-executable; restart needs both flags."""
+    """Explicit opt-in: --operator-tools needs --provider-executable; --enable-restart adds restart."""
     from gargoyl.darkbloom_cli import cli_environment, validate_executable
-    from gargoyl.operator_console import OperatorTools, inspect_executable
+    from gargoyl.operator_console import (
+        ConsoleRestart,
+        OperatorTools,
+        inspect_executable,
+    )
     if not args.provider_executable:
         raise ValueError('operator tools require --provider-executable')
     executable = validate_executable(args.provider_executable, args.owner_uid)
     environment = cli_environment(args.owner_uid)
     info = inspect_executable(executable, environment)
-    restart = None
-    if args.enable_restart:
-        from gargoyl.restart_attempts import AttemptStore, RestartController
-        if not args.restart_state_dir:
-            raise ValueError('--enable-restart requires --restart-state-dir')
-        verifier = None
-        if sys.platform == 'darwin':
-            from gargoyl.repair_process_identity import MacOSProcessVerifier
-            verifier = MacOSProcessVerifier(expected_owner_uid=args.owner_uid, expected_executable=executable)
-        restart = RestartController(host=args.host, executable=executable, executable_info=info,
-                                    owner_uid=args.owner_uid, source=args.input,
-                                    store=AttemptStore(args.restart_state_dir, args.owner_uid),
-                                    provider_verifier=verifier, environment=environment)
+    restart = ConsoleRestart.for_installation(executable, args.input, args.owner_uid) if args.enable_restart else None
     return OperatorTools(monitor, executable=executable, executable_info=info,
                          environment=environment, restart=restart)
 
@@ -283,7 +292,7 @@ def main(args):
         raise ValueError('invalid monitor port')
     if args.coordinator_errors and not args.provider_executable:
         raise ValueError('diagnostic configuration unavailable')
-    if (args.enable_restart and not args.operator_tools) or (args.restart_state_dir and not args.enable_restart):
+    if args.enable_restart and not args.operator_tools:
         raise ValueError('restart configuration unavailable')
     diagnostics = (LocalDiagnostics(executable=args.provider_executable, owner_uid=args.owner_uid,
                                    clock=utc_now, coordinator_errors=args.coordinator_errors)
@@ -316,8 +325,8 @@ def main(args):
                 return
             print(f'Gargoyl listening on http://127.0.0.1:{port}/ (public, read-only). Unattended repair disabled.', flush=True)
             print(f'Operator tools (keep private): http://127.0.0.1:{port}{tools.base}/', flush=True)
-            print('Manual restart enabled: requires typed confirmation in the operator tools.' if tools.restart
-                  else 'Manual restart not enabled.', flush=True)
+            print('Manual restart available in the operator tools (typed confirmation; shares the CLI gate).'
+                  if tools.restart else 'Manual restart not enabled in the console.', flush=True)
         return run_monitor(monitor, port=args.port, stop=stop, ready=ready, tools=tools)
     except Exception:
         print('Local monitoring failed; listener stopped. No repair attempted.', file=sys.stderr)
