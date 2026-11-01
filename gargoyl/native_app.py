@@ -491,7 +491,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     // The Account title says whether an account session is open, so the state never hides in the menu.
     func syncAccountTitle() {
-        let title = (disconnectFleetButton?.isEnabled ?? false) ? "Account · session open" : "Account · not connected"
+        // Disconnect is also enabled while sign-in is pending, so this never claims a confirmed session.
+        let title = (disconnectFleetButton?.isEnabled ?? false) ? "Account · connecting or connected" : "Account · not connected"
         if let item = accountMenu?.item(at:0), item.title != title { item.title = title }
     }
     @objc func refresh() { displayView(viewSelection.selected) }

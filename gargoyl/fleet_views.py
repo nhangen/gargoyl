@@ -303,7 +303,7 @@ def render_fleet(
             noted = [str(n) + " " + text for n, text in noted if n]
             if rows:
                 body += ('<p class="fleet-summary">' + (" · ".join(noted) if noted
-                         else "Every record has a reported status and a recent heartbeat.") + "</p>")
+                         else "Every returned record has a reported status and a recent heartbeat.") + "</p>")
             labels = [aliases.get(r["id"], r["name"]) for r in rows]
             duplicated = {label for label in labels if labels.count(label) > 1}
             body += (
