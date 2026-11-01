@@ -13,28 +13,55 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.11', '3.12']
+        python-version: ['3.11', '3.12', '3.13', '3.14']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e '.[dev]'
       - run: python -m ruff check .
       - run: python tools/run_tests.py discover -s tests -v
 
+  macos-native:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.14'
+      - run: python -m pip install -e '.[dev]'
+      # Strict file fixtures require the canonical temp path, not /var's symlink.
+      - name: Run full macOS suite including compiled Swift self-test
+        run: |
+          export TMPDIR="$(python -c 'import os,tempfile; print(os.path.realpath(tempfile.gettempdir()))')"
+          python tools/run_tests.py discover -s tests -v
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.14'
+      - run: python -m pip install . pip-audit==2.10.1
+      - run: python -m pip_audit --strict --progress-spinner off
+
   release-artifact:
-    needs: lint-and-test
+    # Keep the existing protected release check dependent on every new gate.
+    needs: [lint-and-test, macos-native, dependency-audit]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
       - run: python -m pip install -e '.[release]'
       - run: python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
       - run: python tools/verify_release_artifact.py dist/gargoyl-0.1.0-py3-none-any.whl
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gargoyl-wheel-${{ github.sha }}
           path: dist/*.whl
