@@ -42,6 +42,12 @@ class ResourceWarningRunnerTests(unittest.TestCase):
         self.assertIn('unraisable ResourceWarning', result.stderr)
         self.assertIn('OK', result.stderr)
 
+    def test_runner_collects_cyclic_leak_without_fixture_collecting(self):
+        result = self.run_fixture("gc.disable()\ncycle=[]\ncycle.append(cycle)\n"
+                                  "cycle.append(open(__file__,'rb'))\ndel cycle")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('unraisable ResourceWarning', result.stderr)
+
     @unittest.skipUnless(sys.version_info >= (3, 13), 'sqlite finalizer ResourceWarning added in3.13')
     def test_sqlite_finalizer_leak_fails(self):
         result = self.run_fixture("c=sqlite3.connect(':memory:')\ndel c\ngc.collect()")
