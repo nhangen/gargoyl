@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock
 
 from gargoyl.fleet_account import (
+    CONSOLE_URL,
     AccountClient,
     BoundedTransport,
     FleetError,
@@ -44,6 +45,28 @@ class AccountTests(unittest.TestCase):
             transport.call_args_list[0].kwargs, {"body": {"purpose": "desktop_account"}}
         )
 
+    def test_graphical_link_preserves_only_fixed_readonly_purpose_context(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        from gargoyl.native_app import SWIFT
+
+        url = urlsplit(CONSOLE_URL)
+        self.assertEqual(
+            (url.scheme, url.netloc, url.path),
+            ("https", "console.darkbloom.dev", "/link"),
+        )
+        self.assertEqual(parse_qs(url.query), {"purpose": ["desktop_account"]})
+        self.assertIn('let fleetSignInURL = URL(string:"' + CONSOLE_URL + '")!', SWIFT)
+        self.assertIn("NSWorkspace.shared.open(fleetSignInURL)", SWIFT)
+        transport = Mock(
+            return_value=dict(
+                self.valid(), verification_uri=CONSOLE_URL + "&code=PRIVATE-CODE"
+            )
+        )
+        pending = AccountClient(transport=transport, monotonic=lambda: 0).begin()
+        self.assertNotIn("PRIVATE-CODE", repr(pending))
+        self.assertNotIn("PRIVATE-CODE", CONSOLE_URL)
+
     def test_refuses_legacy_scope_and_untrusted_verification_origin_before_poll(self):
         for update in (
             {"purpose": "provider"},
@@ -53,6 +76,10 @@ class AccountTests(unittest.TestCase):
             {"verification_uri": "https://console.darkbloom.dev@evil.test/link"},
             {"verification_uri": "https://console.darkbloom.dev/action"},
             {"verification_uri": "http://console.darkbloom.dev/link"},
+            {"verification_uri": "https://console.darkbloom.dev/link?purpose=provider"},
+            {
+                "verification_uri": "https://console.darkbloom.dev/link?purpose=desktop_account&purpose=provider"
+            },
             {"expires_in": True},
             {"interval": 0},
         ):

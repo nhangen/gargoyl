@@ -21,6 +21,7 @@ func makeApplicationMenu(_ application: NSApplication) -> NSMenu {
 }
 
 let resourceRules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}}]"#
+let fleetSignInURL = URL(string:"https://console.darkbloom.dev/link?purpose=desktop_account")!
 let nativeViews = ["fleet", "tools", "evidence", "history", "operation", "details"]
 func readOnlyView(_ value: String) -> Bool {
     return nativeViews.contains(value) || ["fleet-recent","fleet-older","fleet-unknown"].contains(value) || value.range(of:"^fleet-node-[a-f0-9]{64}$",options:.regularExpression) != nil
@@ -322,7 +323,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     @objc func openFleetSignIn() {
         guard fleetAuthSheet != nil, fleetWorker != nil, ownerActive() else { return }
-        NSWorkspace.shared.open(URL(string:"https://console.darkbloom.dev/link")!)
+        NSWorkspace.shared.open(fleetSignInURL)
         fleetStatus.stringValue = "Awaiting your official read-only approval. The one-time code remains in the native sheet."
     }
     @objc func copyFleetCode() {
@@ -620,6 +621,8 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(!allowedNavigation(URL(string:"about:blank"),mainFrame:false))
     let accountPreview: [String:Any] = ["kind":"fleet-authorization","purpose":"desktop_account","user_code":"TEST-CODE","expires_in":900]
     precondition(validFleetAuthorization(accountPreview))
+    precondition(fleetSignInURL.absoluteString == "https://console.darkbloom.dev/link?purpose=desktop_account")
+    precondition(URLComponents(url:fleetSignInURL,resolvingAgainstBaseURL:false)!.queryItems == [URLQueryItem(name:"purpose",value:"desktop_account")])
     precondition(endedFleetStatus("Account API returned 4 records.",disconnected:false).contains("session ended; cached reports are not live"))
     precondition(endedFleetStatus("scope confirmed",disconnected:true).contains("disconnected"))
     for change in [["expires_in":true],["purpose":"provider"],["token":"must-not-cross-native-pipe"],["expires_in":901],["user_code":"bad\ncode"]] as [[String:Any]] {

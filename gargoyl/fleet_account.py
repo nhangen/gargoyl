@@ -8,10 +8,10 @@ import ssl
 import threading
 import time
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 API_HOST = "api.darkbloom.dev"
-CONSOLE_URL = "https://console.darkbloom.dev/link"
+CONSOLE_URL = "https://console.darkbloom.dev/link?purpose=desktop_account"
 PURPOSE = "desktop_account"
 
 
@@ -199,6 +199,8 @@ class AccountClient:
                 or u.password
                 or u.path != "/link"
                 or u.fragment
+                or parse_qs(u.query, keep_blank_values=True).get("purpose", [PURPOSE])
+                != [PURPOSE]
             ):
                 raise ValueError
         except (ValueError, TypeError):
