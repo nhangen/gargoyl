@@ -75,7 +75,7 @@ python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 python tools/verify_release_artifact.py dist/gargoyl-0.1.0-py3-none-any.whl
 ```
 
-Build tooling is pinned to setuptools 80.9.0 and wheel 0.45.1. The result is a normal
+Build tooling is pinned to setuptools 84.1.0 and wheel 0.46.2. The result is a normal
 `py3-none-any` wheel with declared Python/runtime dependencies, usable with standard
 pip installation in an approved environment. Pinning tools alone is not a reproducible
 byte-for-byte build claim; record the reviewed source revision and actual artifact
@@ -146,11 +146,14 @@ and reinstall. They exercise foreign/Darkbloom/symlink paths, changed code, malf
 artifacts, capacity, lock contention and interrupted activation/uninstall. Artifact
 smoke tests import code from the actual built wheel rather than the checkout.
 
-This addresses code packaging and a safe local lifecycle model. Actual macOS/three-host
-installation, interpreter/dependency distribution, operator signing/enrollment, key
-custody, endpoint/service topology, compatible upgrade policy and pilot feedback remain
-unverified. Epics #4/#5 stay open. No production paths, settings, credentials, permissions,
-DNS, services, Darkbloom assets, or live host operations were changed in this work.
+This addresses code packaging and a safe local lifecycle model. A single Mac
+pilot package and native app are now installed; actual quit/reopen with saved
+read-only Keychain sign-in was verified on November 1. These observations do not
+establish three-host installation, durable encrypted collection, mTLS deployment
+or a live provider restart. Operator signing/enrollment, spool-key custody,
+endpoint/service topology, compatible upgrade policy and wider pilot feedback
+remain unverified. See [current acceptance evidence](pilot-acceptance.md). Epics #4/#5 stay open. The synthetic lifecycle tests themselves change no production paths, settings,
+credentials, permissions, DNS, services, Darkbloom assets or live host operations.
 
 
 The optional `entry_points.txt` is accepted only as the exact canonical ASCII
@@ -163,3 +166,30 @@ code executes and no console wrapper is created. A normal pip wheel installation
 creates the `gargoyl` wrapper; lifecycle extraction uses the module invocation
 with its explicitly selected code path. The artifact verifier checks both paths,
 including pip-installed console help, inspection and synthetic-only capture.
+
+## CI and artifact provenance
+
+Actions are pinned to complete commit identities verified against the official
+`actions/checkout` v4, `actions/setup-python` v5 and `actions/upload-artifact` v4
+refs. CI tests Python 3.11–3.14 on Linux and Python 3.14 on macOS 15; the macOS
+suite compiles and runs the existing Swift `--self-test` with fake credentials,
+hidden WebView fixtures and controlled local processes. It neither accesses a
+real login Keychain session nor restarts a provider. This is platform coverage,
+not a substitute for installed user-facing acceptance.
+
+A separate pinned `pip-audit` job resolves the declared runtime, build and development dependency graph and
+fails on
+reported vulnerabilities or audit failures; it has no ignore list. It sends
+package names/versions to advisory services, never application data or credentials.
+The unpublished private root package is not sent for a PyPI lookup; all declared
+third-party requirements are included. This is advisory checking of current
+resolution, not a lockfile or proof that future resolutions are identical.
+The existing protected release-artifact check waits for all platform and audit
+jobs and always runs an explicit prerequisite-result check, so failed, skipped
+or cancelled platform/audit jobs cannot leave the protected release check
+skipped. Its name and the repository's required checks are unchanged.
+
+Artifact verification computes the SHA256 of the supplied wheel and tests that
+wheel in isolation. This establishes integrity relative to the supplied artifact,
+not a publisher signature, independent build provenance or a deployed trust chain.
+No artifact signing, new key, permission or account configuration is introduced.

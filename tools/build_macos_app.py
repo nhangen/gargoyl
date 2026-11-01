@@ -1,7 +1,6 @@
 """Build an unprivileged GUI app; never launch it or request authentication."""
 
 import argparse
-import os
 import platform
 import plistlib
 import subprocess
@@ -10,14 +9,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from gargoyl.native_app import SWIFT  # noqa: E402
+from gargoyl.pilot_configuration import load_pilot_configuration  # noqa: E402
 
 
 def build(output, python, *, preview=True):
-    if sys.platform != "darwin" or os.getuid() != 501:
-        raise ValueError("native MBP pilot only")
+    if sys.platform != "darwin":
+        raise ValueError("native macOS only")
     python = Path(python).absolute()
     if not python.is_relative_to(Path.home()) or not python.is_file():
         raise ValueError("owner-local isolated interpreter required")
+    load_pilot_configuration(python=str(python)).require_local()
     output = Path(output).absolute()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     contents = output / "Gargoyl.app/Contents"

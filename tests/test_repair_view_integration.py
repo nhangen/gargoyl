@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -132,7 +133,7 @@ class RepairViewIntegrationTests(unittest.TestCase):
         self.assertEqual(self.adapter.calls, 0)
 
     def test_actual_finalize_failure_preserves_unknown_claim_and_no_retry(self):
-        with sqlite3.connect(Path(self.temp.name) / 'repair-audit.sqlite3') as connection:
+        with closing(sqlite3.connect(Path(self.temp.name) / 'repair-audit.sqlite3')) as connection, connection:
             connection.execute("CREATE TRIGGER deny_finalize BEFORE UPDATE ON records BEGIN SELECT RAISE(ABORT, 'synthetic-private-marker'); END")
         result = self.execute()
         page = render_receipt(result)

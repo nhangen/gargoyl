@@ -21,6 +21,7 @@ from gargoyl.collector_state_file import (
     _require,
     validate_daemon_state_source,
 )
+from gargoyl.darkbloom_compatibility import SUPPORTED_VERSIONS
 from gargoyl.repair_process_identity import MacOSProcessVerifier
 from gargoyl.telemetry import effective_state, timestamp
 
@@ -54,7 +55,7 @@ class LocalDiagnostics:
             state = json.loads(payload)
             readings = dict(baseline.result.readings)
             readings.pop('model_state', None)
-            _require(state['version'] in {'0.10.5', '0.10.6'})
+            _require(state['version'] in SUPPORTED_VERSIONS)
             process = state.get('process_identity')
             _require(type(process) is dict and set(process) == {'pid', 'start_time_micros'}
                      and type(process['pid']) is int and process['pid'] == state['pid']

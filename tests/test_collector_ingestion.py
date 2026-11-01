@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -178,14 +179,14 @@ class CollectorIngestionTests(unittest.TestCase):
 
     def test_receiver_storage_failure_keeps_pending_and_collection_continues(self):
         first = self.capture()
-        with sqlite3.connect(self.root / "receiver" / "evidence.sqlite3") as database:
+        with closing(sqlite3.connect(self.root / "receiver" / "evidence.sqlite3")) as database, database:
             database.execute("CREATE TRIGGER fail_write BEFORE INSERT ON evidence BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END")
         self.assertEqual(self.runtime.deliver_tick(), "retry")
         self.assertEqual(self.store.snapshots(now=NOW), [])
         self.wall, self.mono = "2026-01-01T00:00:30Z", 30
         second = self.capture()
         self.assertEqual(len(self.history.pending(self.wall)), 2)
-        with sqlite3.connect(self.root / "receiver" / "evidence.sqlite3") as database:
+        with closing(sqlite3.connect(self.root / "receiver" / "evidence.sqlite3")) as database, database:
             database.execute("DROP TRIGGER fail_write")
         self.assertEqual(self.runtime.deliver_tick(), "sent")
         self.assertEqual(self.runtime.deliver_tick(), "sent")

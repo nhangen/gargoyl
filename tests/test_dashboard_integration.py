@@ -7,6 +7,7 @@ import ssl
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from ingestion_test_support import test_pki
@@ -125,7 +126,7 @@ class DashboardIntegrationTests(unittest.TestCase):
         self.assertIn('<td>running</td>', self.page()[1])
         # Inject authenticated-storage damage, not a fake reader exception.
         database = self.root / 'receiver' / 'evidence.sqlite3'
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             original = db.execute('SELECT payload FROM evidence').fetchone()[0]
             damaged = bytearray(original)
             damaged[-1] ^= 1
@@ -135,7 +136,7 @@ class DashboardIntegrationTests(unittest.TestCase):
         self.assertIn('Fleet state is unknown', page)
         self.assertNotIn('running', page)
         self.assertNotIn(str(self.root), page)
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             db.execute('UPDATE evidence SET payload = ?', (original,))
         status, page = self.page()
         self.assertEqual(status, 200)
