@@ -414,7 +414,7 @@ final class ResourceFixture: NSObject, WKNavigationDelegate {
     var fragmentRequested = false
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if action.request.url?.absoluteString != "about:blank" { fragmentRequested = true }
-        print("fixture navigation: \(action.request.url?.absoluteString ?? "nil") main=\(action.targetFrame?.isMainFrame == true)")
+        print("fixture navigation: \(action.request.url?.absoluteString ?? "nil") main=\(action.targetFrame?.isMainFrame == true) type=\(action.navigationType.rawValue) matched=\(fragmentScript(action.request.url,mainFrame:true) != nil)")
         if scrollNativeFragment(action,in:webView,cancel:{ decisionHandler(.cancel) }) { return }
         decisionHandler(allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) ? .allow : .cancel)
     }
@@ -463,10 +463,14 @@ if CommandLine.arguments.contains("--self-test") {
         page.evaluateJavaScript("document.querySelector('a').click()",completionHandler:nil)
         let clickedLimit = Date().addingTimeInterval(1)
         while !fixture.fragmentRequested && Date() < clickedLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
-        var scrollPosition = 0.0; var measured = false
-        page.evaluateJavaScript("document.scrollingElement.scrollTop") { value, _ in scrollPosition = (value as? NSNumber)?.doubleValue ?? 0; measured = true }
-        let measureLimit = Date().addingTimeInterval(1)
-        while !measured && Date() < measureLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        var scrollPosition = 0.0
+        let measureLimit = Date().addingTimeInterval(2)
+        while scrollPosition <= 0 && Date() < measureLimit {
+            var measured = false
+            page.evaluateJavaScript("document.scrollingElement.scrollTop") { value, _ in scrollPosition = (value as? NSNumber)?.doubleValue ?? 0; measured = true }
+            while !measured && Date() < measureLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+            if scrollPosition <= 0 { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        }
         print("actual anchor scroll=\(scrollPosition)"); fflush(stdout)
         precondition(scrollPosition > 0)
 
