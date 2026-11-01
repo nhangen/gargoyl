@@ -177,9 +177,13 @@ hidden WebView fixtures and controlled local processes. It neither accesses a
 real login Keychain session nor restarts a provider. This is platform coverage,
 not a substitute for installed user-facing acceptance.
 
-A separate pinned `pip-audit` job checks the resolved environment and fails on
+A separate pinned `pip-audit` job resolves the declared runtime, build and development dependency graph and
+fails on
 reported vulnerabilities or audit failures; it has no ignore list. It sends
 package names/versions to advisory services, never application data or credentials.
+The unpublished private root package is not sent for a PyPI lookup; all declared
+third-party requirements are included. This is advisory checking of current
+resolution, not a lockfile or proof that future resolutions are identical.
 The existing protected release-artifact check waits for all platform and audit
 jobs; its name and the repository's required checks are unchanged.
 
