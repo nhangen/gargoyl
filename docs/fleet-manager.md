@@ -99,3 +99,19 @@ fresh official console inventory. A completed Gargoyl grant/API inventory and
 rendered native real-data acceptance must be recorded separately before claiming
 the installed fleet manager is connected. Controlled tests do not prove a live
 account grant or remote process health.
+
+## Account linking purpose
+
+The official verification page must be opened as
+`https://console.darkbloom.dev/link?purpose=desktop_account`. The non-secret
+purpose parameter selects the read-only account approval; opening bare `/link`
+selects provider linking and rejects an account code with “authorization purpose
+does not match this code”. This behavior is documented in Darkbloom 0.10.6
+commit `84ddfdba6bb704bf1c68f97c7060289079380ceb`, `CHANGELOG.md` under
+“Console desktop sign-in approval”, and its desktop external-link tests.
+
+Gargoyl constructs only this fixed official URL. It never forwards server-supplied
+query values, codes or tokens to a URL. A contradictory or duplicated purpose in
+a verification response is refused. After a rejected attempt, cancel it and use
+a fresh scoped graphical connection after the corrected app is installed; never
+switch to a provider-purpose grant to work around a mismatch.
