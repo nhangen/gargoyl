@@ -57,8 +57,20 @@ jobs:
   release-artifact:
     # Keep the existing protected release check dependent on every new gate.
     needs: [lint-and-test, macos-native, dependency-audit]
+    # A skipped required check can count as passing. Always run and explicitly
+    # reject any failed/cancelled/skipped prerequisite before producing a wheel.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require successful platform and audit prerequisites
+        env:
+          LINUX_RESULT: ${{ needs.lint-and-test.result }}
+          MACOS_RESULT: ${{ needs.macos-native.result }}
+          AUDIT_RESULT: ${{ needs.dependency-audit.result }}
+        run: |
+          test "$LINUX_RESULT" = success
+          test "$MACOS_RESULT" = success
+          test "$AUDIT_RESULT" = success
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
