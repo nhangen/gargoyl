@@ -75,7 +75,7 @@ python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 python tools/verify_release_artifact.py dist/gargoyl-0.1.0-py3-none-any.whl
 ```
 
-Build tooling is pinned to setuptools 80.9.0 and wheel 0.45.1. The result is a normal
+Build tooling is pinned to setuptools 84.1.0 and wheel 0.46.2. The result is a normal
 `py3-none-any` wheel with declared Python/runtime dependencies, usable with standard
 pip installation in an approved environment. Pinning tools alone is not a reproducible
 byte-for-byte build claim; record the reviewed source revision and actual artifact
