@@ -182,6 +182,17 @@ def executable_stamp(executable):
     return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
 
 
+def restart_gate_allows(record):
+    """Shared admission only; callers still lock, validate and confirm each attempt.
+
+    Reconciled records mean an explicit read-only observation was recorded after
+    the prior command stopped, not that its historical outcome is now known.
+    Nothing here retries an operation or bypasses fresh target/owner checks.
+    """
+    return record is None or (type(record) is dict and record.get("state") in
+                              {"completed", "reconciled"})
+
+
 def run_restart(
     journal, target, *, inspect_target, invoke, confirm, progress, clock=utc_now,
     invoke_with_child=False,
@@ -192,7 +203,7 @@ def run_restart(
     A failed/abandoned invocation is never automatically retried or cleared.
     """
     prior = journal.read()
-    _require(prior is None or prior["state"] in {"completed", "reconciled"})
+    _require(restart_gate_allows(prior))
     _require(confirm(target) is True)
     current = inspect_target()
     _require(

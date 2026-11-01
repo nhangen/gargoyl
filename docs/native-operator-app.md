@@ -94,8 +94,12 @@ Operation status, and Restart local provider…. Export opens the standard Mac S
 and Stop affect only Gargoyl's configured monitor. Restart local provider opens the
 existing exact-target/interruption review followed by Mac owner authentication;
 no page link can invoke it. Progress stays in the native status area and outcome
-in the shared journal. Intent, unknown, and externally reconciled records remain
-blocked by the native app. The operation view cannot reconcile or clear them.
+in the shared journal. Intent and unknown records remain blocked by the shared native/CLI/browser gate.
+After an explicit read-only reconciliation has recorded observations and verified
+that the prior command is no longer running, a new manual attempt is allowed on
+all three surfaces, with fresh preflight and owner confirmation. Reconciliation
+does not prove the previous attempt succeeded. The native operation view cannot
+reconcile or clear records.
 Actual provider restart is not exercised by UI acceptance tests.
 
 The read-only pages are reconstructed by a fixed same-owner worker from validated
