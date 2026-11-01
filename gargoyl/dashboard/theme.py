@@ -378,7 +378,7 @@ main ol li, main ul li { margin: 4px 0; }
 @media (max-width: 600px) { .confirm .row { flex-direction: column; align-items: stretch; } .confirm .row .input { width: 100%; flex: 0 0 auto; } .confirm .row .btn { justify-content: center; } .nav ul { flex-wrap: wrap; overflow-x: visible; } }
 """
 
-def page_start(title, *, host_navigation=False, extra_nav=()):
+def page_start(title, *, host_navigation=False, extra_nav=(), badge=None):
     """host_navigation adds Hosts/attention links; only pages rendering the fleet overview set it.
 
     extra_nav is (href, label, current) for the private operator area; never prototype data.
@@ -390,7 +390,7 @@ def page_start(title, *, host_navigation=False, extra_nav=()):
             '<body><a class="skip-link" href="#main">Skip to content</a><div class="shell">'
             '<header class="topbar"><a class="brand" href="#main" aria-label="Gargoyl evidence">'
             '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path d="M21 31l8 3-8 1z M43 31l-8 3 8 1z" fill="currentColor"/></svg>gargoyl</a>'
-            + ('<span class="pill">Operator tools · private</span>' if extra_nav
+            + ('<span class="pill">' + escape(badge or 'Operator tools · private') + '</span>' if extra_nav
                else '<span class="pill">Read-only evidence</span>') + '</header>'
             '<nav class="nav" aria-label="Sections"><ul>'
             + ('' if extra_nav else '<li><a href="#main">Evidence</a></li>')

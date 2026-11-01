@@ -289,13 +289,40 @@ def export_evidence():
     )
 
 
+def native_view(mode):
+    from gargoyl.native_views import VIEWS, render_view
+
+    view = mode.removeprefix("view-")
+    if view not in VIEWS:
+        raise ValueError("unsupported view")
+    try:
+        evidence = export_evidence()
+    except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
+        evidence = None
+    record = None
+    journal_available = True
+    if view == "operation":
+        try:
+            record = read_operation(str(owner_home() / ".gargoyl-manual-restart"))
+        except (OSError, ValueError):
+            journal_available = False
+    return dict(kind="view", view=view, html=render_view(
+        view, evidence, record, journal_available=journal_available))
+
+
 def main():
     # Only a trusted same-owner native process may use these private pipe modes.
     if len(sys.argv) != 2 or os.getuid() != 501 or not console_owner():
         return 1
     mode = sys.argv[1]
     try:
-        if mode in {"start-monitor", "stop-monitor"}:
+        if mode.startswith("view-"):
+            payload = json.dumps(native_view(mode), ensure_ascii=False) + "\n"
+            if len(payload.encode()) > 590000:
+                raise ValueError("view payload limit")
+            sys.stdout.write(payload)
+            sys.stdout.flush()
+        elif mode in {"start-monitor", "stop-monitor"}:
             emit(dict(kind="status", text=control_monitor(mode)))
         elif mode == "status":
             record = read_operation(str(owner_home() / ".gargoyl-manual-restart"))

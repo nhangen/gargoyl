@@ -155,7 +155,7 @@ def render_overview(dashboard):
             'this is not a health verdict.</p>') + '</div></section>')
 
 
-def render_dashboard(snapshots, expected_hosts, now=None, *, extra_nav=()):
+def render_dashboard(snapshots, expected_hosts, now=None, *, extra_nav=(), badge=None):
     """Render a self-contained evidence view; input always crosses v1 validation."""
     dashboard = build_dashboard(snapshots, expected_hosts, now)
     def e(value):
@@ -169,7 +169,7 @@ def render_dashboard(snapshots, expected_hosts, now=None, *, extra_nav=()):
                        f'<td>{e(item["collected_at"])}; TTL {e(item["freshness_seconds"])}s</td></tr>' for item in items)
     def table(content):
         return '<table><thead><tr><th>Metric</th><th>Evidence state</th><th>Value</th><th>Source</th><th>Source timestamp</th><th>Collection / freshness</th></tr></thead><tbody>' + content + '</tbody></table>'
-    parts = [page_start('Gargoyl fleet evidence', host_navigation=True, extra_nav=extra_nav),
+    parts = [page_start('Gargoyl fleet evidence', host_navigation=True, extra_nav=extra_nav, badge=badge),
              '<h1>Fleet evidence</h1><p>Read-only snapshot view. Regenerate after collection and at least every minute. Missing evidence never means healthy.</p>',
              f'<p>Evaluated at {e(dashboard["evaluated_at"])}</p>',
              render_overview(dashboard), '<div id="local-collection"></div>']

@@ -20,7 +20,12 @@ func makeApplicationMenu(_ application: NSApplication) -> NSMenu {
     return menu
 }
 
-let resourceRules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}},{"trigger":{"url-filter":"^http://127\\.0\\.0\\.1:8766/(report\\.json)?$"},"action":{"type":"ignore-previous-rules"}}]"#
+let resourceRules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}}]"#
+let nativeViews = ["tools", "evidence", "history", "operation", "details"]
+func viewDestination(_ url: URL?, mainFrame: Bool) -> String? {
+    guard mainFrame, let url = url else { return nil }
+    return nativeViews.first { url.absoluteString == "gargoyl-view://\($0)/" }
+}
 
 func ownerActive() -> Bool {
     var uid: uid_t = 0; var gid: gid_t = 0
@@ -28,8 +33,17 @@ func ownerActive() -> Bool {
 }
 
 func allowedNavigation(_ url: URL?, mainFrame: Bool) -> Bool {
-    guard let url = url else { return false }
-    return mainFrame && url.scheme == "http" && url.host == "127.0.0.1" && url.port == 8766 && ["/", "/report.json"].contains(url.path) && url.query == nil && url.user == nil && url.password == nil
+    guard mainFrame, let url = url else { return false }
+    return url.absoluteString == "about:blank" || (url.scheme == "about" && url.path == "blank" && url.fragment != nil && url.query == nil && url.host == nil)
+}
+struct ViewSelection {
+    private(set) var selected = "tools"
+    private(set) var generation = 0
+    mutating func select(_ view: String) -> Bool {
+        guard nativeViews.contains(view) else { return false }
+        selected = view; generation += 1; return true
+    }
+    func accepts(_ generation: Int) -> Bool { return generation == self.generation }
 }
 struct ApprovalGate {
     let request: String
@@ -72,7 +86,7 @@ final class Worker {
     let finished: (Worker) -> Void
     init(mode: String, event: @escaping ([String: Any]) -> Void, finished: @escaping (Worker) -> Void) throws {
         self.event = event; self.finished = finished
-        guard ownerActive(), ["restart", "status", "export", "start-monitor", "stop-monitor"].contains(mode),
+        guard ownerActive(), (["restart", "status", "export", "start-monitor", "stop-monitor"] + nativeViews.map { "view-" + $0 }).contains(mode),
               let path = Bundle.main.object(forInfoDictionaryKey: "GargoylPython") as? String,
               path.hasPrefix(NSHomeDirectory() + "/"), path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
         else { throw NSError(domain: "Gargoyl", code: 1) }
@@ -128,6 +142,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var restartWorker: Worker?
     var restartVerified = false
     var webReady = false
+    var viewSelection = ViewSelection()
+    var viewWorker: Worker?
     var pending: [String: Any]?
     var approvalGate: ApprovalGate?
     var context: LAContext?
@@ -185,7 +201,32 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             }
         }
     }
-    @objc func refresh() { if webReady { web.load(URLRequest(url:URL(string:"http://127.0.0.1:8766/")!)) } }
+    @objc func refresh() { displayView(viewSelection.selected) }
+    func displayView(_ view: String) {
+        guard webReady, viewSelection.select(view) else { return }
+        // One read-only worker at a time. A changed selection is loaded after it exits.
+        guard viewWorker == nil else { return }
+        let generation = viewSelection.generation
+        var delivered = false
+        do {
+            viewWorker = try Worker(mode:"view-" + view,event:{ [weak self] value in
+                guard let self = self, self.viewSelection.accepts(generation),
+                      value["kind"] as? String == "view", value["view"] as? String == view,
+                      let html = value["html"] as? String, html.utf8.count <= 500000 else { return }
+                delivered = true
+                self.web.loadHTMLString(html,baseURL:URL(string:"about:blank"))
+            },finished:{ [weak self] completed in
+                guard let self = self, self.viewWorker === completed else { return }
+                self.viewWorker = nil
+                if !self.viewSelection.accepts(generation) { self.displayView(self.viewSelection.selected); return }
+                if !delivered || completed.process.terminationStatus != 0 {
+                    self.web.loadHTMLString("<html><body><h1>View unavailable</h1><p>Current evidence could not be validated. Health and operation outcome are unknown. Use Refresh to check again. No provider action was performed.</p></body></html>",baseURL:URL(string:"about:blank"))
+                }
+            })
+        } catch {
+            web.loadHTMLString("<html><body><h1>View unavailable</h1><p>Active Mac owner or installed worker unavailable. No provider action was performed.</p></body></html>",baseURL:URL(string:"about:blank"))
+        }
+    }
     func show(_ text: String) { status.stringValue = String(text.prefix(4000)) }
     func launch(_ mode: String, handler: (([String: Any]) -> Void)? = nil) {
         do {
@@ -201,7 +242,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     @objc func startMonitor() { if !previewOnly { launch("start-monitor"); refresh() } }
     @objc func stopMonitor() { if !previewOnly { launch("stop-monitor") } }
-    @objc func operationStatus() { launch("status") }
+    @objc func operationStatus() { displayView("operation") }
     @objc func exportReport() {
         launch("export",handler:{ [weak self] value in
             guard let self = self else { return }
@@ -219,6 +260,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     @objc func restartProvider() {
         guard !previewOnly, restartWorker == nil, ownerActive() else { show("Restart unavailable: the active Mac owner or an existing operation could not be verified."); return }
+        displayView("operation")
         restartButton.isEnabled = false
         restartVerified = false
         do {
@@ -226,7 +268,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                 guard let self = self, self.restartWorker === completed else { return }
                 if completed.process.terminationStatus != 0 || !self.restartVerified { self.show("Restart completion is unverified or was not authorized. No automatic retry. Inspect Operation status before another attempt.") }
                 self.context?.invalidate(); self.context = nil; self.approvalTimer?.invalidate(); self.pending = nil; self.approvalGate = nil
-                self.restartWorker = nil; self.restartButton.isEnabled = !self.previewOnly
+                self.restartWorker = nil; self.restartButton.isEnabled = !self.previewOnly; self.refresh()
             })
         } catch { restartButton.isEnabled = true; show("Restart unavailable. No provider action was invoked.") }
     }
@@ -319,6 +361,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { return false }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if action.navigationType == .linkActivated, let view = viewDestination(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) {
+            decisionHandler(.cancel); displayView(view); return
+        }
         guard allowedNavigation(action.request.url,mainFrame:action.targetFrame?.isMainFrame == true) else { decisionHandler(.cancel); return }
         decisionHandler(.allow)
     }
@@ -359,9 +404,22 @@ if CommandLine.arguments.contains("--self-test") {
         while !fixture.finished && Date() < end { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
         precondition(fixture.finished)
     }
-    precondition(allowedNavigation(URL(string:"http://127.0.0.1:8766/"),mainFrame:true))
-    for value in ["http://localhost:8766/","http://127.0.0.1:8765/","https://127.0.0.1:8766/","http://127.0.0.1:8766/restart","http://127.0.0.1:8766/?action=restart","http://user:pass@127.0.0.1:8766/"] { precondition(!allowedNavigation(URL(string:value),mainFrame:true)) }
-    precondition(!allowedNavigation(URL(string:"http://127.0.0.1:8766/"),mainFrame:false))
+    precondition(allowedNavigation(URL(string:"about:blank"),mainFrame:true))
+    precondition(allowedNavigation(URL(string:"about:blank#main"),mainFrame:true))
+    for view in nativeViews { precondition(viewDestination(URL(string:"gargoyl-view://\(view)/"),mainFrame:true) == view) }
+    for value in ["gargoyl-view://restart/", "gargoyl-view://tools/?action=restart", "gargoyl-view://user@tools/", "gargoyl-view://tools:80/", "gargoyl-view://tools/extra", "gargoyl-view://%74ools/", "gargoyl-view://tools/#restart", "https://example.com", "file:///tmp/test", "http://127.0.0.1:8766/", "data:text/html,test"] {
+        precondition(viewDestination(URL(string:value),mainFrame:true) == nil)
+        precondition(!allowedNavigation(URL(string:value),mainFrame:true))
+    }
+    precondition(viewDestination(URL(string:"gargoyl-view://tools/"),mainFrame:false) == nil)
+    precondition(!allowedNavigation(URL(string:"about:blank"),mainFrame:false))
+    var selection = ViewSelection(); precondition(selection.select("history"))
+    let firstView = selection.generation
+    precondition(selection.select("operation")); precondition(!selection.accepts(firstView))
+    let secondView = selection.generation
+    precondition(selection.select("operation")); precondition(!selection.accepts(secondView))
+    precondition(!selection.select("restart")); precondition(selection.selected == "operation")
+    precondition(selection.accepts(selection.generation))
     var gate = ApprovalGate(request:"one",digest:"bound",expires:100)
     precondition(!gate.consume(request:"other",digest:"bound",owner:true,authenticated:true,now:20))
     precondition(gate.consume(request:"one",digest:"bound",owner:true,authenticated:true,now:20))
