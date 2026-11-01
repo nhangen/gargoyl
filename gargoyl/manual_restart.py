@@ -1,4 +1,9 @@
-"""Explicit owner-local manual restart. No automatic actions or HTTP mutation routes."""
+"""Explicit owner-local manual restart. No automatic actions.
+
+The CLI (`gargoyl tools restart`) and the opt-in operator console share this one
+journal, lock and gate. An unresolved outcome blocks both until a read-only
+reconciliation records current observations (`reconcile_operation`).
+"""
 
 import fcntl
 import json
@@ -178,7 +183,8 @@ def executable_stamp(executable):
 
 
 def run_restart(
-    journal, target, *, inspect_target, invoke, confirm, progress, clock=utc_now
+    journal, target, *, inspect_target, invoke, confirm, progress, clock=utc_now,
+    invoke_with_child=False,
 ):
     """Installation-scoped consent, one invocation, conservative terminal evidence.
 
@@ -186,7 +192,7 @@ def run_restart(
     A failed/abandoned invocation is never automatically retried or cleared.
     """
     prior = journal.read()
-    _require(prior is None or prior["state"] in {"completed"})
+    _require(prior is None or prior["state"] in {"completed", "reconciled"})
     _require(confirm(target) is True)
     current = inspect_target()
     _require(
@@ -203,8 +209,13 @@ def run_restart(
     )
     journal.write(record)  # fsync BEFORE the first potentially mutating call
     progress("Intent saved. One graceful manual restart requested; no automatic retry.")
+    def record_child(pid):
+        # Lets reconciliation refuse while this exact command is still running.
+        record["child"] = dict(pid=pid, born_us=process_start(pid))
+        journal.write(record)
+
     try:
-        code = invoke()
+        code = invoke(record_child) if invoke_with_child else invoke()
         progress(
             "Command finished. Checking replacement evidence; exit status alone is not success."
         )
@@ -236,7 +247,89 @@ def run_restart(
         raise
 
 
-def invoke_restart(executable, *, interrupted, progress, budget=840):
+def process_start(pid):
+    """Kernel start time (microseconds) for pid, or None if unavailable/exited."""
+    import sys
+
+    try:
+        if sys.platform == "darwin":
+            verifier = MacOSProcessVerifier(
+                expected_owner_uid=os.getuid(), expected_executable="/usr/bin/true"
+            )
+            return verifier._identity(pid)["born_us"]
+        with open(f"/proc/{pid}/stat", "rb") as stream:
+            fields = stream.read().rsplit(b")", 1)[1].split()
+        if fields[0] == b"Z":
+            return None
+        with open("/proc/stat", "rb") as stream:
+            boot = next(int(x.split()[1]) for x in stream if x.startswith(b"btime "))
+        return boot * 1_000_000 + int(fields[19]) * 1_000_000 // os.sysconf("SC_CLK_TCK")
+    except Exception:
+        return None
+
+
+def process_alive(child):
+    """Same PID with the same recorded start time; PID reuse never counts.
+
+    If the start time could not be read when recorded, the child is treated as
+    possibly running for as long as any process holds that PID (conservative).
+    """
+    if type(child) is not dict:
+        return False
+    if child.get("born_us") is None:
+        try:
+            os.kill(child["pid"], 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
+    return process_start(child["pid"]) == child["born_us"]
+
+
+# invoke_restart's 840 s budget plus TERM/cleanup margin.
+RECONCILE_UNIDENTIFIED_SECONDS = 900
+
+
+def reconcile_operation(journal, *, inspect_target, alive=process_alive, clock=utc_now):
+    """Read-only: record current observations for an unresolved operation and reopen the gate.
+
+    Never invokes the provider. Refuses while the recorded command is still running.
+    It records what is observable now; it cannot prove what happened during the attempt.
+    """
+    record = journal.read()
+    _require(record is not None and record["state"] in {"intent", "unknown"})
+    if alive(record.get("child")):
+        raise ValueError("restart_still_running")
+    if "child" not in record:
+        # Spawned but not recorded (crash between spawn and write), or written by an
+        # older version: the command may still be running and can't be identified.
+        # Wait out the whole invocation budget before allowing reconciliation.
+        elapsed = (timestamp(clock()) - timestamp(record["started_at"])).total_seconds()
+        if elapsed < RECONCILE_UNIDENTIFIED_SECONDS:
+            raise ValueError("restart_may_still_be_running")
+    try:
+        current = inspect_target()
+        observation = (
+            "original_process_observed"
+            if current["process"] == record["target"]["process"]
+            else "different_process_observed"
+        )
+    except Exception:
+        current, observation = None, "provider_unobservable"
+    record.update(
+        state="reconciled", reason="reconciled_read_only", reconciled_at=clock(),
+        observation=observation,
+    )
+    record.setdefault("finished_at", record["reconciled_at"])
+    if current is not None:
+        record["current"] = current
+    journal.write(record)
+    return record
+
+
+def invoke_restart(executable, *, interrupted, progress, budget=840, started=None,
+                   output=None):
     """Discard output, preserve child after caller interruption, never force provider.
 
     On interruption/deadline only the wrapper-owned CLI is sent TERM, never a
@@ -246,8 +339,9 @@ def invoke_restart(executable, *, interrupted, progress, budget=840):
     child = subprocess.Popen(
         [executable, "restart", "--timeout", "600", "--startup-timeout", "180"],
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        # Output is discarded unless the console supplies a private file for progress.
+        stdout=subprocess.DEVNULL if output is None else output,
+        stderr=subprocess.DEVNULL if output is None else subprocess.STDOUT,
         cwd=str(owner_home()),
         env={
             "HOME": str(owner_home()),
@@ -256,10 +350,12 @@ def invoke_restart(executable, *, interrupted, progress, budget=840):
         },
         start_new_session=True,
     )
-    started = time.monotonic()
-    next_message = started + 10
+    if started is not None:
+        started(child.pid)
+    began = time.monotonic()
+    next_message = began + 10
     while child.poll() is None:
-        if interrupted.is_set() or time.monotonic() - started > budget:
+        if interrupted.is_set() or time.monotonic() - began > budget:
             child.send_signal(signal.SIGTERM)
             try:
                 child.wait(timeout=2)
@@ -403,12 +499,16 @@ def validate_record(data):
             "target",
             "replacement",
             "reason",
+            "child",
+            "reconciled_at",
+            "observation",
+            "current",
         }
         and {"schema", "operation_id", "state", "started_at", "target", "reason"}
         <= set(data)
         and type(data["schema"]) is int
         and data["schema"] == 1
-        and data["state"] in {"intent", "unknown", "completed"}
+        and data["state"] in {"intent", "unknown", "completed", "reconciled"}
         and type(data["operation_id"]) is str
         and len(data["operation_id"]) == 32
         and uuid.UUID(hex=data["operation_id"]).hex == data["operation_id"]
@@ -417,12 +517,31 @@ def validate_record(data):
             "invocation_not_confirmed",
             "completion_unverified",
             "cli_success_and_replacement_observed",
+            "reconciled_read_only",
         }
     )
     timestamp(data["started_at"])
+    if "child" in data:
+        child = data["child"]
+        _require(
+            type(child) is dict
+            and set(child) == {"pid", "born_us"}
+            and type(child["pid"]) is int
+            and child["pid"] > 0
+            and (child["born_us"] is None or (type(child["born_us"]) is int and child["born_us"] > 0))
+        )
+    reconciled = data["state"] == "reconciled"
+    _require(("reconciled_at" in data) == reconciled and ("observation" in data) == reconciled)
+    if reconciled:
+        _require(timestamp(data["reconciled_at"]) >= timestamp(data["started_at"]))
+        _require(
+            data["observation"]
+            in {"original_process_observed", "different_process_observed", "provider_unobservable"}
+        )
+    _require("current" not in data or data["state"] == "reconciled")
     if "finished_at" in data:
         _require(timestamp(data["finished_at"]) >= timestamp(data["started_at"]))
-    for key in ("target", "replacement"):
+    for key in ("target", "replacement", "current"):
         if key in data:
             target = data[key]
             _require(
@@ -442,6 +561,7 @@ def validate_record(data):
             "intent": "invocation_not_confirmed",
             "unknown": "completion_unverified",
             "completed": "cli_success_and_replacement_observed",
+            "reconciled": "reconciled_read_only",
         }[data["state"]]
     )
     _require(

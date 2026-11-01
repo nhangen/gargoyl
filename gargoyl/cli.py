@@ -97,6 +97,8 @@ def main(argv=None):
     monitor.add_argument('--port', type=int, default=8765)
     monitor.add_argument('--provider-executable', help='Explicit canonical provider image; enables owner-local native diagnostics.')
     monitor.add_argument('--coordinator-errors', action='store_true', help='Opt in to a bounded current-provider coordinator error/fault query; requires --provider-executable.')
+    monitor.add_argument('--operator-tools', action='store_true', help='Opt in to private operator tools (read-only checks); requires --provider-executable.')
+    monitor.add_argument('--enable-restart', action='store_true', help='Opt in to manual, confirmed Darkbloom restart in the console; requires --operator-tools. Shares the gargoyl tools restart journal and gate.')
     status = commands.add_parser('status', help='Check the local viewer; does not imply source health.')
     status.add_argument('--port', type=int, default=8765)
     try:

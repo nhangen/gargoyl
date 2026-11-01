@@ -60,7 +60,8 @@ class EvidenceViewer(HTTPServer):
         self.expected_hosts = tuple(host_id(value) for value in expected_hosts)
         self.clock = clock
         self.refresh_seconds = refresh_seconds
-        super().__init__(('127.0.0.1', port), _Handler)
+        # Subclasses may set self.handler_class before calling this initializer.
+        super().__init__(('127.0.0.1', port), getattr(self, 'handler_class', _Handler))
 
     def render_page(self, now):
         return render_dashboard(self.reader.snapshots(now=now), self.expected_hosts, now)
@@ -78,6 +79,8 @@ class EvidenceViewer(HTTPServer):
 class _Handler(BaseHTTPRequestHandler):
     server_version = 'Gargoyl'
     sys_version = ''
+    csp = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    referrer_policy = 'no-referrer'
 
     def setup(self):
         super().setup()
@@ -87,15 +90,17 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-    def _respond(self, status, body, *, content_type='text/html; charset=utf-8'):
+    def _respond(self, status, body, *, content_type='text/html; charset=utf-8', headers=()):
         payload = body.encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', content_type)
+        for name, value in headers:
+            self.send_header(name, value)
         self.send_header('Content-Length', str(len(payload)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Referrer-Policy', 'no-referrer')
-        self.send_header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+        self.send_header('Referrer-Policy', self.referrer_policy)
+        self.send_header('Content-Security-Policy', self.csp)
         self.send_header('Connection', 'close')
         self.end_headers()
         self.close_connection = True

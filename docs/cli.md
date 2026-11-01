@@ -105,3 +105,5 @@ does not migrate registries, load credentials or change live configuration.
 
 `gargoyl monitor` composes the strict state reader and loopback viewer.
 `gargoyl status` checks the local viewer. See [operational setup and lifecycle](local-monitor.md).
+`--operator-tools` and `--enable-restart` add opt-in private console tools; see
+[operator console tools](operator-tools.md).

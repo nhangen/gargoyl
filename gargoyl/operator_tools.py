@@ -39,10 +39,14 @@ def main(argv):
     restart.add_argument("--input", required=True)
     restart.add_argument("--owner-uid", type=int, required=True)
     restart.add_argument("--provider-executable", required=True)
-    commands.add_parser(
+    reconcile = commands.add_parser(
         "reconcile",
-        help="Read the last manual operation; unresolved intent never permits retry.",
+        help="Read the last manual operation; --record reopens the gate after an unresolved one.",
+        description="Without --record: read-only display, creates nothing. With --record (interactive): "
+        "for an unresolved operation whose command is no longer running, record the current read-only "
+        "observation and permit a later manual restart. Never invokes the provider or retries.",
     )
+    reconcile.add_argument("--record", action="store_true")
     try:
         args = parser.parse_args(argv)
     except ValueError:
@@ -86,6 +90,32 @@ def main(argv):
                 )
             )
             return 0 if not item.result.errors else 1
+        if args.action == "reconcile" and args.record:
+            from gargoyl.manual_restart import reconcile_operation
+
+            if not sys.stdin.isatty() or not sys.stdout.isatty():
+                raise ValueError("interactive terminal required")
+            source = str(owner_home() / ".darkbloom/daemon-state.json")
+            executable = str(owner_home() / ".darkbloom/Darkbloom.app/Contents/MacOS/darkbloom")
+            with ManualJournal(directory) as journal:
+                record = journal.read()
+                if record is None or record["state"] not in {"intent", "unknown"}:
+                    print("No unresolved manual restart to reconcile.")
+                    return 0
+                print("Unresolved manual restart", record["operation_id"], "started", record["started_at"])
+                print("Reconciling records the current read-only observation and permits a later manual")
+                print("restart. It does not prove what the interrupted command did; check that the provider")
+                print("is not left draining with automatic restart disabled. Nothing is invoked or retried.")
+                if input("Type RECONCILE MBP-26 to record: ") != "RECONCILE MBP-26":
+                    print("Not recorded.")
+                    return 1
+                result = reconcile_operation(
+                    journal,
+                    inspect_target=lambda: observed_target(source, executable, os.getuid()),
+                )
+                print(json.dumps(dict(operation=result, retry_permitted=False,
+                                      later_manual_restart_permitted=True)))
+                return 0
         if args.action == "reconcile":
             # No new directory/lock/file is created by this read-only command.
             from gargoyl.manual_restart import read_operation
@@ -110,7 +140,7 @@ def main(argv):
                         current_process_observation=current,
                         observation_is_not_terminal_reconciliation=True,
                         retry_permitted=False,
-                        note="Read-only history, not proof that an interrupted upstream request cannot still act. No retry or reset offered.",
+                        note="Read-only history, not proof that an interrupted upstream request cannot still act. No automatic retry. After checking the provider, `gargoyl tools reconcile --record` records a reconciliation that permits a later manual restart.",
                     )
                 )
             )
@@ -161,7 +191,7 @@ def main(argv):
                         sig, lambda *unused: setattr(stop, "requested", True)
                     )
 
-                def invoke():
+                def invoke(record_child):
                     # Revalidate installation/recovery immediately before invoking.
                     fresh, current_stamp = installation_preflight(
                         executable, source, uid
@@ -172,7 +202,8 @@ def main(argv):
                         or current_stamp != stamp
                     ):
                         raise ValueError("target changed or interrupted")
-                    return invoke_restart(executable, interrupted=stop, progress=print)
+                    return invoke_restart(executable, interrupted=stop, progress=print,
+                                          started=record_child)
 
                 run_restart(
                     journal,
@@ -181,6 +212,7 @@ def main(argv):
                     invoke=invoke,
                     confirm=confirm,
                     progress=print,
+                    invoke_with_child=True,
                 )
                 return 0
             finally:

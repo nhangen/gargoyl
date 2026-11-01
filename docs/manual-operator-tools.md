@@ -2,8 +2,10 @@
 
 Automatic Gargoyl repair remains disabled. Its existing launchd KeepAlive restarts
 Gargoyl itself, not Darkbloom. These tools are distinct from the signed unattended
-pre-drained restart protocol. They do not require new keys, enrollment or an HTTP
-mutation endpoint. Installation never invokes a provider action.
+pre-drained restart protocol. They do not require new keys or enrollment. Installation
+never invokes a provider action. The opt-in monitor console (`--operator-tools
+--enable-restart`) offers the same manual restart in a browser, using this journal,
+lock, gate, preflight and invocation; see [operator console tools](operator-tools.md).
 
 ## Useful supported tools
 
@@ -14,7 +16,8 @@ mutation endpoint. Installation never invokes a provider action.
 | Live console refresh | Browser refresh or automatic 2-second refresh evaluates current stored memory. It does not force a source poll or restart a provider. Source timestamp/TTL remain visible. |
 | `/report.json` on local monitor | Bounded normalized 64-sample memory history, dashboard projection and scoped redacted log metadata. Query evidence retains original timestamps and separate effective freshness. No raw logs, model names, credentials or executable paths. Export grants no action authority. |
 | `gargoyl tools restart` | Interactive installation-scoped manual graceful restart, described below. No HTTP button or unattended action. |
-| `gargoyl tools reconcile` | Read-only last-operation history and available current native-process observation. Does not create journal files, clear an unknown gate, prove an old request cannot still act or authorize retry. |
+| `gargoyl tools reconcile` | Read-only last-operation history and current native-process observation. Creates nothing and clears nothing. |
+| `gargoyl tools reconcile --record` | Interactive (`RECONCILE MBP-26`). For an unresolved operation whose recorded command is no longer running, records the current read-only observation and reopens the gate for a later manual restart. Never invokes the provider or retries; does not prove what the interrupted request did. |
 | Existing `inspect state/status/doctor` | Parses explicitly supplied bytes. `capture status/doctor` is separate opt-in command acquisition: upstream may read keys/config, use network/helpers and perform diagnostic side effects. These are not automatically run by this tool set. |
 
 Example read-only inspection:
@@ -75,13 +78,20 @@ The manual CLI uses a fixed private `~/.gargoyl-manual-restart` directory, exclu
 installation-wide lock and atomic fsync-before-invocation last-operation record, including syncing the parent directory on first use.
 It records only normalized identity, version, phase/times and outcome. A second
 process cannot submit while the first holds the lock. An unresolved durable intent
-or unknown outcome blocks all later invocations; changing CLI arguments cannot
-select a different journal to bypass that gate. No reset/unlock command exists.
+or unknown outcome blocks all later invocations, from the CLI and the console, until a
+read-only reconciliation is recorded; changing arguments cannot select a different
+journal to bypass that gate. There is no reset that skips reconciliation. After the
+command starts (CLI or console), its PID and kernel start time are added to the record
+so reconciliation refuses while that exact command is still running. If no child was
+recorded (a crash between spawn and the write), reconciliation waits 15 minutes from
+the start of the attempt, past the 840-second invocation budget.
 The bounded record retains the last operation, not a complete audit history.
 
 Progress says what is known: intent saved, upstream command running, verification,
-and terminal/unknown outcome. Raw child output is discarded. Detailed upstream
-phase and accepted-work counts remain unknown. CLI exit 0 alone is insufficient:
+and terminal/unknown outcome. The CLI discards raw child output, so detailed
+upstream phase and accepted-work counts are unknown there. The console sends output to a
+private file in the journal directory, shows normalized progress from Darkbloom's fixed
+messages, and deletes the file afterwards. CLI exit 0 alone is insufficient:
 Gargoyl also requires a different native PID/birth, unchanged pinned version and fresh matching daemon state.
 It reports upstream CLI success plus independently observed replacement, not an
 independent protocol/earnings verdict or an exactly-once guarantee.
@@ -90,10 +100,12 @@ The wrapper waits up to 840 seconds, then sends TERM only to its own CLI child a
 waits up to 2 seconds. Interrupting/killing a CLI does not cancel accepted upstream
 work. No provider/process-group SIGKILL, restart retry or blind unfencing occurs.
 On interruption, nonzero exit, timeout, changed target or failed verification, the
-record is unknown and the repeat gate remains. `tools reconcile` shows observations
-but cannot prove permanent no-pending outcome across an upstream crash, so it does
-not clear that gate. A genuinely unresolved operation needs a separately designed
-manual recovery decision; deleting the journal is not a supported remedy.
+record is unknown and the repeat gate remains. Reconciliation (console button or
+`tools reconcile --record`) is the owner's explicit decision to reopen it after checking
+the provider: it records the current observation (original process, different process,
+or unobservable) but cannot prove a permanent no-pending outcome across an upstream
+crash. Deleting the journal is not a supported remedy. The console never interrupts a
+running restart when the monitor stops; the record then stays unresolved.
 
 Tests use synthetic files, mocks and adversarial lifecycle outcomes. No real
 provider restart, drain, watchdog update, credential access or unattended repair

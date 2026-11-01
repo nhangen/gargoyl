@@ -40,8 +40,15 @@ owner-local daemon-state file, keeps bounded memory history, displays recent fre
 counter changes, and offers foreground start/stop/status. Counter changes do not
 establish earnings or reliably detect every reset. Repairs remain disabled. No host
 enrollment or persistent service is enabled by installation.
+Opt-in operator tools (`gargoyl monitor --operator-tools [--enable-restart]`) add
+private read-only checks and a confirmed manual Darkbloom restart in the browser,
+sharing one journal and gate with `gargoyl tools restart`; see
+[operator console tools](docs/operator-tools.md) and
+[manual operator tools](docs/manual-operator-tools.md). Unattended repair stays disabled.
+
 
 The [native Mac operator application](docs/native-operator-app.md) provides a
 graphical console, monitor controls, normalized export and a manual restart
-review with Mac owner confirmation. The HTTP dashboard stays read-only;
-automatic provider repair remains disabled.
+review with Mac owner confirmation. The public HTTP dashboard stays read-only;
+the opt-in private operator console above is the browser's admin panel and shares
+the same restart gate. Automatic provider repair remains disabled.
