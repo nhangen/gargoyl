@@ -324,7 +324,12 @@ def main(args):
                 print(f'Gargoyl listening on http://127.0.0.1:{port}/; repairs disabled. Ctrl-C to stop.', flush=True)
                 return
             print(f'Gargoyl listening on http://127.0.0.1:{port}/ (public, read-only). Unattended repair disabled.', flush=True)
-            print(f'Operator tools (keep private): http://127.0.0.1:{port}{tools.base}/', flush=True)
+            # Capability URLs must never enter launchd logs, pipes or redirected files.
+            if sys.stdout.isatty():
+                print(f'Operator tools (keep private): http://127.0.0.1:{port}{tools.base}/', flush=True)
+            else:
+                print('Private operator link withheld: stdout is not an interactive terminal. '
+                      'Use the native Mac app for graphical operation.', flush=True)
             print('Manual restart available in the operator tools (typed confirmation; shares the CLI gate).'
                   if tools.restart else 'Manual restart not enabled in the console.', flush=True)
         return run_monitor(monitor, port=args.port, stop=stop, ready=ready, tools=tools)

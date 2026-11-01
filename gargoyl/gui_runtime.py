@@ -27,6 +27,7 @@ from gargoyl.manual_restart import (
     observed_target,
     owner_home,
     read_operation,
+    restart_gate_allows,
 )
 from gargoyl.manual_restart import run_restart as execute_restart
 from gargoyl.telemetry import timestamp, validate_snapshot
@@ -108,7 +109,7 @@ def graphical_restart(
     if not owner():
         raise ValueError("inactive owner")
     prior = journal.read()
-    if prior is not None and prior["state"] != "completed":
+    if not restart_gate_allows(prior):
         raise ValueError("unresolved operation")
     target, stamp = preflight()
     began_wall = wall_clock()
