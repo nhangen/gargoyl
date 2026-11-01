@@ -102,3 +102,42 @@ class FleetViewTests(unittest.TestCase):
         bad["providers"][0]["secret"] = "private"
         with self.assertRaises(ValueError):
             self.page(bad)
+
+
+class FleetLayoutTests(unittest.TestCase):
+    def inventory(self):
+        raw = response()
+        twin = copy.deepcopy(raw["providers"][0])
+        twin["id"] = "provider-second-test-only"
+        twin["status"] = "offline"
+        twin["last_heartbeat"] = "not-a-time"
+        raw["providers"].append(twin)
+        raw["total_count"] = 3
+        return normalize_inventory(raw, NOW)
+
+    def page(self, view="fleet", **kwargs):
+        return render_view(view, None, None, inventory=self.inventory(), now=NOW, **kwargs)
+
+    def test_full_ids_duplicates_reasons_and_freshness_in_rows(self):
+        page = self.page()
+        self.assertIn('<span class="fleet-id">provider-real-format-test-only</span>', page)
+        self.assertIn('<span class="fleet-id">provider-second-test-only</span>', page)
+        self.assertEqual(page.count("Same label as another record"), 2)
+        self.assertIn("Invalid timestamp", page)
+        self.assertIn("report current", page)
+        self.assertIn('<span class="adv">offline</span>', page)
+        self.assertNotIn('<span class="adv">running</span>', page)
+        self.assertIn("2 of 3 reported records", page)
+        self.assertIn("recent · 0 s before read", page)
+
+    def test_filters_show_counts_and_current_page(self):
+        page = self.page("fleet-unknown")
+        self.assertIn('href="gargoyl-view://fleet-unknown/" aria-current="page">Unknown heartbeat <span class="n">1</span>', page)
+        self.assertIn('Recent heartbeat <span class="n">1</span>', page)
+        self.assertIn("provider-second-test-only", page)
+        self.assertNotIn('<span class="fleet-id">provider-real-format-test-only</span>', page)
+
+    def test_alias_removes_duplicate_flag_and_keeps_label_source(self):
+        page = self.page(aliases={"provider-second-test-only": "Studio Two"})
+        self.assertNotIn("Same label as another record", page)
+        self.assertIn("Local alias · source name “Fixture Mac”", page)
