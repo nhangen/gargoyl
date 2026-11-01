@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from operator_fixtures import HOST, NEW, OLD, FakeDarkbloom, verifier
@@ -22,8 +23,10 @@ from gargoyl.manual_restart import (
     ManualJournal,
     executable_stamp,
     observed_target,
+    process_alive,
     process_start,
     read_operation,
+    reconcile_operation,
 )
 from gargoyl.monitor import LocalMonitor, run_monitor
 from gargoyl.operator_console import (
@@ -66,6 +69,10 @@ class CliParsingTests(unittest.TestCase):
         self.assertEqual(classify('Forced stop: drain acknowledgement unavailable\n' + relaunch + authorized, 0),
                          'forced_anomaly')
         self.assertEqual(classify('', 0), 'unknown')
+        # Darkbloom's notInstalled catch also covers the post-drain stop: not "no change".
+        self.assertEqual(classify('Draining accepted requests (deadline: 600s). New work is refused by the '
+                                  'running provider.\nProvider is not running. Start it with `darkbloom start`.\n', 1),
+                         'not_restarted_attention')
         events, unknown = restart_events(b'private text\n  3 accepted request(s) remaining\n')
         self.assertEqual((events, unknown), ([('remaining', 3)], 1))
 
@@ -219,6 +226,40 @@ class ConsoleRestartTests(Base):
         self.restart.reconcile(now=None)
         self.assertEqual(read_operation(self.directory)['state'], 'reconciled')
 
+    def test_unrecorded_or_unreadable_child_keeps_reconcile_closed(self):
+        child = subprocess.Popen(['sleep', '30'])
+        self.addCleanup(child.kill)
+        self.assertTrue(process_alive({'pid': child.pid, 'born_us': None}))  # start time unreadable
+        child.kill()
+        child.wait()
+        self.assertFalse(process_alive({'pid': child.pid, 'born_us': None}))
+        target = observed_target(self.fake.state, self.fake.executable, os.getuid(), verifier=verifier(OLD))
+        with ManualJournal(self.directory) as journal:  # crash between spawn and recording the child
+            journal.write(dict(schema=1, operation_id='b' * 32, state='intent', reason='invocation_not_confirmed',
+                               started_at=datetime.now(timezone.utc).isoformat(), target=target))
+            with self.assertRaises(ValueError):
+                reconcile_operation(journal, inspect_target=lambda: target)
+            later = (datetime.now(timezone.utc) + timedelta(seconds=901)).isoformat()
+            self.assertEqual(reconcile_operation(journal, inspect_target=lambda: target,
+                                                 clock=lambda: later)['state'], 'reconciled')
+        with self.assertRaises(Refused):
+            self.restart.reconcile(now=None)  # nothing unresolved now
+
+    def test_live_outcome_is_bound_to_its_operation(self):
+        self.fake.configure(restart='drain_incomplete')
+        self.start()
+        self.finish()
+        record = read_operation(self.directory)
+        self.assertEqual(self.restart.live(record)['outcome'], 'not_restarted_attention')
+        other = dict(record, operation_id='c' * 32)  # e.g. a later CLI operation
+        self.assertIsNone(self.restart.live(other)['outcome'])
+
+    def test_cli_restart_records_its_child_too(self):
+        source = Path(__file__).resolve().parent.parent / 'gargoyl' / 'operator_tools.py'
+        text = source.read_text()
+        self.assertIn('invoke_with_child=True', text)
+        self.assertIn('started=record_child', text)
+
     def test_unsafe_record_blocks_restart(self):
         self.start()
         self.finish()
@@ -347,12 +388,37 @@ class ConsoleHttpTests(Base):
         first = self.request('POST', self.tools.base + '/restart', body=form)
         second = self.request('POST', self.tools.base + '/restart', body=form)  # double click
         self.assertEqual((first[0], first[1]), (303, self.tools.base + '/restart/status'))
-        self.assertEqual((second[0], second[1]), (303, self.tools.base + '/restart/status'))
+        self.assertEqual((second[0], second[1]), (303, self.tools.base + '/restart/status?form=used'))
         self.finish()
         self.assertEqual(read_operation(self.directory)['state'], 'completed')
         self.assertEqual(self.fake.calls().count('restart --timeout 600 --startup-timeout 180'), 1)
         status, _, page = self.request('GET', self.tools.base + '/restart/status', origin=False)
         self.assertIn('Verified restart', page)
+        status, _, page = self.request('GET', self.tools.base + '/restart/status?form=used', origin=False)
+        self.assertIn('did not start anything new', page)
+
+    def test_reconcile_over_http_requires_typed_confirmation_and_public_headers_stay_strict(self):
+        self.fake.configure(restart='drain_incomplete')
+        self.start()
+        self.finish()
+        _, _, page = self.request('GET', self.tools.base + '/restart/status', origin=False)
+        self.assertIn('Unresolved', page)
+        nonce = self.nonce(page, '/restart/reconcile')
+        _, _, page = self.request('POST', self.tools.base + '/restart/reconcile', body={'nonce': nonce, 'confirm': 'nope'})
+        self.assertIn('Nothing was recorded', page)
+        self.assertEqual(read_operation(self.directory)['state'], 'unknown')
+        nonce = self.nonce(page, '/restart/reconcile')
+        status, location, _ = self.request('POST', self.tools.base + '/restart/reconcile',
+                                           body={'nonce': nonce, 'confirm': HOST[:8]})
+        self.assertEqual(status, 303)
+        self.assertEqual(read_operation(self.directory)['state'], 'reconciled')
+        connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=10)
+        connection.request('GET', '/', headers={'Host': f'127.0.0.1:{self.port}'})
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+        self.assertEqual(response.getheader('Referrer-Policy'), 'no-referrer')
+        self.assertIn("form-action 'none'", response.getheader('Content-Security-Policy'))
 
 
 if __name__ == '__main__':

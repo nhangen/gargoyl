@@ -81,8 +81,10 @@ process cannot submit while the first holds the lock. An unresolved durable inte
 or unknown outcome blocks all later invocations, from the CLI and the console, until a
 read-only reconciliation is recorded; changing arguments cannot select a different
 journal to bypass that gate. There is no reset that skips reconciliation. After the
-command starts, its PID and kernel start time are added to the record so reconciliation
-refuses while that exact command is still running.
+command starts (CLI or console), its PID and kernel start time are added to the record
+so reconciliation refuses while that exact command is still running. If no child was
+recorded (a crash between spawn and the write), reconciliation waits 15 minutes from
+the start of the attempt, past the 840-second invocation budget.
 The bounded record retains the last operation, not a complete audit history.
 
 Progress says what is known: intent saved, upstream command running, verification,

@@ -269,12 +269,26 @@ def process_start(pid):
 
 
 def process_alive(child):
-    """Same PID with the same recorded start time; PID reuse never counts."""
-    return (
-        type(child) is dict
-        and child.get("born_us") is not None
-        and process_start(child["pid"]) == child["born_us"]
-    )
+    """Same PID with the same recorded start time; PID reuse never counts.
+
+    If the start time could not be read when recorded, the child is treated as
+    possibly running for as long as any process holds that PID (conservative).
+    """
+    if type(child) is not dict:
+        return False
+    if child.get("born_us") is None:
+        try:
+            os.kill(child["pid"], 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
+    return process_start(child["pid"]) == child["born_us"]
+
+
+# invoke_restart's 840 s budget plus TERM/cleanup margin.
+RECONCILE_UNIDENTIFIED_SECONDS = 900
 
 
 def reconcile_operation(journal, *, inspect_target, alive=process_alive, clock=utc_now):
@@ -287,6 +301,13 @@ def reconcile_operation(journal, *, inspect_target, alive=process_alive, clock=u
     _require(record is not None and record["state"] in {"intent", "unknown"})
     if alive(record.get("child")):
         raise ValueError("restart_still_running")
+    if "child" not in record:
+        # Spawned but not recorded (crash between spawn and write), or written by an
+        # older version: the command may still be running and can't be identified.
+        # Wait out the whole invocation budget before allowing reconciliation.
+        elapsed = (timestamp(clock()) - timestamp(record["started_at"])).total_seconds()
+        if elapsed < RECONCILE_UNIDENTIFIED_SECONDS:
+            raise ValueError("restart_may_still_be_running")
     try:
         current = inspect_target()
         observation = (
@@ -509,12 +530,10 @@ def validate_record(data):
             and child["pid"] > 0
             and (child["born_us"] is None or (type(child["born_us"]) is int and child["born_us"] > 0))
         )
-    _require(
-        (data["state"] == "reconciled")
-        == ("reconciled_at" in data and "observation" in data)
-    )
-    if data["state"] == "reconciled":
-        timestamp(data["reconciled_at"])
+    reconciled = data["state"] == "reconciled"
+    _require(("reconciled_at" in data) == reconciled and ("observation" in data) == reconciled)
+    if reconciled:
+        _require(timestamp(data["reconciled_at"]) >= timestamp(data["started_at"]))
         _require(
             data["observation"]
             in {"original_process_observed", "different_process_observed", "provider_unobservable"}

@@ -40,3 +40,8 @@ owner-local daemon-state file, keeps bounded memory history, displays recent fre
 counter changes, and offers foreground start/stop/status. Counter changes do not
 establish earnings or reliably detect every reset. Repairs remain disabled. No host
 enrollment or persistent service is enabled by installation.
+Opt-in operator tools (`gargoyl monitor --operator-tools [--enable-restart]`) add
+private read-only checks and a confirmed manual Darkbloom restart in the browser,
+sharing one journal and gate with `gargoyl tools restart`; see
+[operator console tools](docs/operator-tools.md) and
+[manual operator tools](docs/manual-operator-tools.md). Unattended repair stays disabled.

@@ -238,7 +238,9 @@ def classify_restart(events, returncode):
         return 'cli_confirmed'
     if launched:
         return 'relaunched_unconfirmed'
-    if names & {'drain_incomplete', 'drain_exit', 'stop_timeout'}:
+    # "Not running" can also come after a completed drain stopped the provider.
+    if names & {'drain_incomplete', 'drain_exit', 'stop_timeout'} or (
+            names & {'draining', 'remaining', 'awaiting_ack', 'drained'}):
         return 'not_restarted_attention'
     if names & {'refused_identity', 'refused_no_drain', 'refused_not_installed', 'not_running'} and returncode not in (0, None):
         return 'refused_no_change'

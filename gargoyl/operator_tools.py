@@ -191,7 +191,7 @@ def main(argv):
                         sig, lambda *unused: setattr(stop, "requested", True)
                     )
 
-                def invoke():
+                def invoke(record_child):
                     # Revalidate installation/recovery immediately before invoking.
                     fresh, current_stamp = installation_preflight(
                         executable, source, uid
@@ -202,7 +202,8 @@ def main(argv):
                         or current_stamp != stamp
                     ):
                         raise ValueError("target changed or interrupted")
-                    return invoke_restart(executable, interrupted=stop, progress=print)
+                    return invoke_restart(executable, interrupted=stop, progress=print,
+                                          started=record_child)
 
                 run_restart(
                     journal,
@@ -211,6 +212,7 @@ def main(argv):
                     invoke=invoke,
                     confirm=confirm,
                     progress=print,
+                    invoke_with_child=True,
                 )
                 return 0
             finally:

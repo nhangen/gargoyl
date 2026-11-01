@@ -152,20 +152,24 @@ class OperatorTools:
         return hmac.compare_digest(candidate.encode(), self.token.encode())
 
     def issue(self, purpose):
+        # One bounded pool per form purpose, so auto-refreshing tool forms can't
+        # evict an open restart or reconcile form.
         with self._lock:
             now = time.monotonic()
-            for key in [k for k, (_, expiry) in self._nonces.items() if expiry < now]:
-                del self._nonces[key]
-            while len(self._nonces) >= MAX_NONCES:
-                del self._nonces[next(iter(self._nonces))]
+            pool = self._nonces.setdefault(purpose, {})
+            for key in [k for k, expiry in pool.items() if expiry < now]:
+                del pool[key]
+            while len(pool) >= MAX_NONCES:
+                del pool[next(iter(pool))]
             nonce = secrets.token_urlsafe(24)
-            self._nonces[nonce] = (purpose, now + NONCE_SECONDS)
+            pool[nonce] = now + NONCE_SECONDS
             return nonce
 
     def consume(self, nonce, purpose):
         with self._lock:
-            entry = self._nonces.pop(nonce, None) if type(nonce) is str else None
-        return entry is not None and entry[0] == purpose and entry[1] >= time.monotonic()
+            pool = self._nonces.get(purpose, {})
+            expiry = pool.pop(nonce, None) if type(nonce) is str else None
+        return expiry is not None and expiry >= time.monotonic()
 
     # -- tools ---------------------------------------------------------------
 
@@ -395,11 +399,12 @@ class OperatorTools:
             'the restart is refused and you can review the new target.</p></form></section>' + status_link)
         return self._page('Restart · Gargoyl', 'restart', body)
 
-    def restart_status_page(self, now, *, message=None):
+    def restart_status_page(self, now, *, message=None, note=None):
         restart = self.restart
         record = restart.record()
-        live = restart.live()
-        head = '<h1>Restart status</h1>' + self._notice(message)
+        live = restart.live(record)
+        head = ('<h1>Restart status</h1>' + self._notice(message)
+                + ('<div class="callout" role="status"><p>' + e(note) + '</p></div>' if note else ''))
         if record is None and not live['active']:
             failure = ('<p>' + e(live['failure']) + '</p>') if live['failure'] else ''
             return self._page('Restart status · Gargoyl', 'restart', head + failure
@@ -426,13 +431,17 @@ class OperatorTools:
         body = refresh + head + '<p><span class="st ' + badge + '">' + e(headline) + '</span></p>' + facts
         if running:
             phase, remaining = live['phase']
-            text = PHASE_TEXT.get(phase, PHASE_TEXT['starting'])
+            elapsed = int(live['elapsed'] or 0)
+            text = (f'Running for {elapsed // 60} min {elapsed % 60:02d} s of at most 14 min. '
+                    + (PHASE_TEXT[phase] if phase != 'starting' else
+                       'Darkbloom has not reported a phase yet.'))
             if phase == 'draining' and remaining:
                 text += f' {remaining} accepted request(s) remaining.'
             body += ('<section aria-labelledby="progress-title"><h2 id="progress-title">Progress</h2><p>' + e(text)
-                     + '</p><p class="muted">' + e(live['message'] or '') + '</p><p class="muted">This page refreshes '
-                     'every 2 seconds. Stopping the monitor does not stop the restart; it is then reported as '
-                     'unknown until reconciled.</p></section>')
+                     + '</p><p class="muted">Phases come from Darkbloom\'s own messages, which it may only write out '
+                     'when the command finishes, so detailed phases can lag. The elapsed time is always current.</p>'
+                     '<p class="muted">This page refreshes every 2 seconds. Stopping the monitor does not stop the '
+                     'restart; it is then reported as unknown until reconciled.</p></section>')
         else:
             body += '<section aria-labelledby="outcome-title"><h2 id="outcome-title">Outcome</h2>'
             if state == 'completed':
@@ -453,7 +462,10 @@ class OperatorTools:
                          'state and records it; it never restarts anything, and it is refused while the restart '
                          'command is still running. Check the dashboard first; if the provider is left draining with '
                          'automatic restart disabled, resolve that in Darkbloom.</p>'
-                         + self._form('/restart/reconcile', 'reconcile', 'Reconcile and record current state')
+                         + self._form('/restart/reconcile', 'reconcile', 'Reconcile and record current state',
+                                      fields='<label for="reconcile-host">Type <code>' + e(self.monitor.identity[:8])
+                                      + '</code> to confirm</label><input class="input" id="reconcile-host" '
+                                      'name="confirm" autocomplete="off" required maxlength="8">')
                          + '</section>')
         return self._page('Restart status · Gargoyl', 'restart', body)
 
@@ -494,6 +506,8 @@ class ConsoleRestart:
         self._active = False
         self._message = None
         self._outcome = self._exit_code = self._failure = None
+        self._operation = None  # operation_id the live outcome belongs to
+        self._began = None
         self._events = []
         self._never = threading.Event()  # monitor shutdown never interrupts a restart
 
@@ -540,13 +554,19 @@ class ConsoleRestart:
         return {'pid': process['pid'], 'born_us': process['born_us'], 'version': target['version'],
                 'token': f"{process['pid']}:{process['born_us']}", 'target': target, 'stamp': stamp}, None
 
-    def live(self):
+    def live(self, record=None):
+        """Live state of this console's attempt. Outcome details are shown only for the
+        operation they belong to, never against a later CLI operation."""
         with self._lock:
             events = list(self._events)
             result = {'active': self._active, 'message': self._message, 'outcome': self._outcome,
-                      'exit_code': self._exit_code, 'failure': self._failure}
+                      'exit_code': self._exit_code, 'failure': self._failure,
+                      'elapsed': None if self._began is None else time.monotonic() - self._began}
+            operation = self._operation
         if result['active']:
             events = restart_events(self._read_output())[0]
+        elif record is not None and record.get('operation_id') != operation:
+            result['outcome'] = result['exit_code'] = None
         result['phase'] = progress(events)
         return result
 
@@ -576,10 +596,16 @@ class ConsoleRestart:
             except Exception:
                 raise Refused('The manual restart record could not be opened safely.') from None
             self._active, self._message, self._failure = True, 'Starting.', None
-            self._outcome = self._exit_code = None
+            self._outcome = self._exit_code = self._operation = None
+            self._began = time.monotonic()
             self._events = []
-        threading.Thread(target=self._attempt, args=(journal, target), name='gargoyl-restart',
-                         daemon=True).start()
+            try:
+                threading.Thread(target=self._attempt, args=(journal, target), name='gargoyl-restart',
+                                 daemon=True).start()
+            except BaseException:
+                self._active = False
+                journal.close()
+                raise Refused('The restart could not be started. Nothing was run.') from None
 
     def _attempt(self, journal, chosen):
         output = None
@@ -609,6 +635,10 @@ class ConsoleRestart:
             pass  # run_restart has recorded the unknown outcome (or nothing was claimed)
         finally:
             events = restart_events(self._read_output())[0]
+            try:
+                operation = (journal.read() or {}).get('operation_id')
+            except Exception:
+                operation = None
             if output is not None:
                 os.close(output)
             try:
@@ -619,6 +649,7 @@ class ConsoleRestart:
             with self._lock:
                 self._events = events
                 self._outcome = classify_restart(events, self._exit_code) if events or self._exit_code is not None else None
+                self._operation = operation
                 self._active = False
 
     def _note(self, text):
@@ -632,16 +663,28 @@ class ConsoleRestart:
             journal = ManualJournal(self.directory)
         except BlockingIOError:
             raise Refused('A manual restart (terminal or console) is running and holds the lock.') from None
+        except Exception:
+            raise Refused('The manual restart record could not be opened safely.') from None
         with journal:
-            record = journal.read()
+            try:
+                record = journal.read()
+            except Exception:
+                raise Refused('The manual restart record is unreadable or has unsafe permissions.') from None
             if record is None or record['state'] not in ('intent', 'unknown'):
                 raise Refused('There is no unresolved manual restart to reconcile.')
             try:
                 # Observation only: preflight may legitimately fail after a drain timeout.
                 reconcile_operation(journal, inspect_target=self._observe, alive=self._alive)
-            except ValueError as error:
+                try:  # raw output left behind if a monitor stopped mid-restart
+                    os.unlink(OUTPUT_NAME, dir_fd=journal.fd)
+                except OSError:
+                    pass
+            except Exception as error:
                 if str(error) == 'restart_still_running':
                     raise Refused('The restart command is still running. Wait for it to finish.') from None
+                if str(error) == 'restart_may_still_be_running':
+                    raise Refused('The restart command\'s process was not recorded, so it may still be running. '
+                                  'Reconciliation is available 15 minutes after the attempt started.') from None
                 raise Refused('Reconciliation could not be recorded.') from None
 
 class OperatorHandler(_Handler):
@@ -693,7 +736,9 @@ class OperatorHandler(_Handler):
         self.close_connection = True
 
     def do_GET(self):
-        if self.path == '/' or not self.path.startswith('/s/'):
+        if not self.path.startswith('/s/'):
+            # Public routes keep the read-only viewer's stricter headers.
+            self.csp, self.referrer_policy = _Handler.csp, _Handler.referrer_policy
             return super().do_GET()
         if not self._guard(require_origin=False):
             self.send_error(403)
@@ -716,7 +761,9 @@ class OperatorHandler(_Handler):
             elif route == '/restart' and tools.restart is not None:
                 self._page(200, tools.restart_page(now))
             elif route == '/restart/status' and tools.restart is not None:
-                self._page(200, tools.restart_status_page(now))
+                used = self.path.split('?', 1)[1:] == ['form=used']
+                self._page(200, tools.restart_status_page(now, note='That form was already used or has expired; '
+                                                          'it did not start anything new.' if used else None))
             else:
                 self.send_error(404)
         except Exception:
@@ -745,8 +792,20 @@ class OperatorHandler(_Handler):
             self.send_error(413)
             return
         try:
-            form = urllib.parse.parse_qs(self.rfile.read(length).decode('ascii'), strict_parsing=True,
-                                         max_num_fields=8)
+            # The header deadline started at connection setup; give the body its own bound.
+            self.rfile.raw.deadline = time.monotonic() + 5
+            body = self.rfile.read(length)
+        except OSError:
+            try:
+                self.send_error(408)
+            except OSError:
+                pass
+            return
+        if len(body) != length:
+            self.send_error(400)
+            return
+        try:
+            form = urllib.parse.parse_qs(body.decode('ascii'), strict_parsing=True, max_num_fields=8)
         except (ValueError, UnicodeDecodeError):
             self.send_error(400)
             return
@@ -770,9 +829,9 @@ class OperatorHandler(_Handler):
             self.send_error(404)
             return
         if route == '/restart':
-            if not tools.consume(form.get('nonce'), 'restart'):
-                # Stale, replayed or double-clicked submission: show status, never a second attempt.
-                return self._redirect(base + '/restart/status')
+            if not tools.consume(form.get('nonce'), 'restart'):  # checked before the typed text
+                # Stale, replayed or double-clicked submission: never a second attempt.
+                return self._redirect(base + '/restart/status?form=used')
             if form.get('confirm') != self.server.reader.identity[:8]:
                 return self._page(200, tools.restart_page(now, message='The confirmation text did not match. '
                                                            'Nothing was run.'))
@@ -783,7 +842,10 @@ class OperatorHandler(_Handler):
             return self._redirect(base + '/restart/status')
         if route == '/restart/reconcile':
             if not tools.consume(form.get('nonce'), 'reconcile'):
-                return self._redirect(base + '/restart/status')
+                return self._redirect(base + '/restart/status?form=used')
+            if form.get('confirm') != self.server.reader.identity[:8]:
+                return self._page(200, tools.restart_status_page(now, message='The confirmation text did not '
+                                                                 'match. Nothing was recorded.'))
             try:
                 tools.restart.reconcile(now=now)
             except Refused as refused:

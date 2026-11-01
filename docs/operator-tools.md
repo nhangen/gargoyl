@@ -2,7 +2,8 @@
 
 `gargoyl monitor` can serve private operator tools next to the read-only dashboard.
 They're off by default. The public `http://127.0.0.1:<port>/` page and `/report.json`
-are unchanged: read-only, no forms, no actions. Manual restart in the console is the
+are unchanged: read-only, no forms, no actions, and they keep their original strict
+headers (`Referrer-Policy: no-referrer`, `form-action 'none'`) even with tools enabled. Manual restart in the console is the
 same operation as `gargoyl tools restart`; its policy, preflight and guarantees are in
 [manual operator tools](manual-operator-tools.md).
 
@@ -69,10 +70,13 @@ nonce, so a double click or replay never starts a second attempt. Then the conso
 2. Calls `run_restart`: durable fsynced intent, revalidated preflight, one
    `invoke_restart`, then verification (exit 0 **and** a different kernel-confirmed
    process with fresh matching state).
-3. Records the child's PID and start time, and sends Darkbloom's output to a private
-   file in the journal directory. Progress (draining, requests remaining, awaiting
-   acknowledgement, relaunched, authorized) is parsed from Darkbloom's fixed messages;
-   the file is deleted afterwards.
+3. Records the child's PID and start time (the CLI does too), and sends Darkbloom's
+   output to a private file in the journal directory. The status page always shows
+   elapsed time against the 14-minute bound. Phases (draining, requests remaining,
+   awaiting acknowledgement, relaunched, authorized) are parsed from Darkbloom's fixed
+   messages, but Darkbloom may only write its output when the command finishes, so
+   phases can lag or appear only at the end. The file is deleted when the attempt
+   ends; if the monitor stopped mid-restart it's removed on reconcile or the next attempt.
 
 The status page refreshes every 2 seconds while running and then shows **Verified
 restart**, or **Unresolved** with the reason when known (drain incomplete, relaunch
@@ -82,8 +86,11 @@ the record stays unresolved and the next monitor shows it.
 ### Reconcile
 
 Every outcome except verified blocks the next restart, in the console and the CLI.
-**Reconcile** (console button, or `gargoyl tools reconcile --record`) is read-only: it
-refuses while the recorded command is still running (same PID and start time), reads
+**Reconcile** (console form with the typed host prefix, or `gargoyl tools reconcile
+--record` with `RECONCILE MBP-26`) is read-only. It refuses while the recorded command
+is still running (same PID and start time; if the start time couldn't be read, while
+any process holds that PID), and for 15 minutes after the attempt started when no child
+was recorded at all (a crash between spawn and the record write). Otherwise it reads
 the current kernel-confirmed provider state, records the observation and reopens the
 gate. It never invokes Darkbloom and never retries. It records the present; it doesn't
 prove what happened during the attempt, so check the dashboard first, especially for a
@@ -94,7 +101,9 @@ provider left draining with automatic restart disabled.
 Private routes live under `/s/<token>/` (constant-time comparison; a wrong token is a
 404). Every POST needs the exact `Host` and `Origin`, `Sec-Fetch-Site: same-origin`
 when sent, `application/x-www-form-urlencoded` up to 2 KiB, and an unexpired
-single-use nonce. Private pages use `Referrer-Policy: same-origin` (under `no-referrer`
+single-use nonce (pooled per form, so tool forms can't evict an open restart form; a
+used or expired form says so and starts nothing). The body has its own 5-second read
+deadline. Private pages use `Referrer-Policy: same-origin` (under `no-referrer`
 browsers send `Origin: null` on POST) and `form-action 'self'`, and load nothing
 external. The confirmation page never auto-refreshes.
 
@@ -110,5 +119,6 @@ file. Only the pilot-host preflight and the macOS kernel check are substituted. 
 covers the verified path, each uncertain outcome blocking until reconcile, kernel
 rejection, a changed target, the CLI holding the lock, concurrency, live progress,
 reconcile refusing while a recorded child is alive, unsafe record permissions and the
-HTTP guards. No test contacts or restarts a real provider. A real restart on the pilot
+HTTP guards, typed reconcile confirmation, outcome text bound to its operation, and
+strict public headers. No test contacts or restarts a real provider. A real restart on the pilot
 Mac has not been run.
