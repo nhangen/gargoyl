@@ -26,7 +26,9 @@ from gargoyl.manual_restart import (
     invoke_restart,
     observed_target,
     owner_home,
+    process_alive,
     read_operation,
+    reconciliation_snapshot,
     restart_gate_allows,
 )
 from gargoyl.manual_restart import run_restart as execute_restart
@@ -176,6 +178,56 @@ def graphical_restart(
     deliver(dict(kind="result", state=result["state"], reason=result["reason"]))
     return result
 
+
+
+def graphical_reconcile(*, journal, inspect_target, receive, owner=console_owner,
+                        send=emit, alive=process_alive, clock=None,
+                        monotonic=time.monotonic, wall_clock=time.time):
+    """One owner-confirmed journal observation; no provider command is available."""
+    from gargoyl.dashboard.runtime import utc_now
+    clock = clock or utc_now
+    if not owner():
+        raise ValueError("inactive_owner")
+    prior = journal.read()
+    if prior is None or prior["state"] not in {"intent", "unknown"}:
+        raise ValueError("no_unresolved_operation")
+    if prior["target"]["process"]["owner_uid"] != os.getuid():
+        raise ValueError("inactive_owner")
+    original = json.dumps(prior, sort_keys=True)
+    candidate = reconciliation_snapshot(prior, inspect_target=inspect_target, alive=alive, clock=clock)
+
+    def observation(value):
+        current = value.get("current")
+        return json.dumps(dict(observation=value["observation"], current=None if current is None else
+                               dict(process=current["process"], version=current["version"])), sort_keys=True)
+
+    observed = observation(candidate)
+    began_wall, began = wall_clock(), monotonic()
+    request = dict(request_id=uuid.uuid4().hex, policy="native-readonly-reconciliation-v1",
+                   operation_id=prior["operation_id"], target=prior["target"],
+                   observation=candidate["observation"], current=candidate.get("current"),
+                   expires_at=began_wall+90, expires_in_seconds=90)
+    request["preview_digest"] = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
+    send(dict(kind="preview", **request))
+    reply = receive()
+    if not (type(reply) is dict and set(reply) == {"request_id", "preview_digest", "approved"}
+            and reply["approved"] is True and reply["request_id"] == request["request_id"]
+            and reply["preview_digest"] == request["preview_digest"]
+            and 0 <= monotonic()-began <= 90 and 0 <= wall_clock()-began_wall <= 90
+            and owner()):
+        raise ValueError("confirmation_unavailable")
+    if json.dumps(journal.read(), sort_keys=True) != original:
+        raise ValueError("operation_changed")
+    current = reconciliation_snapshot(journal.read(), inspect_target=inspect_target, alive=alive, clock=clock)
+    if observation(current) != observed or not owner():
+        raise ValueError("observation_changed")
+    journal.write(current)  # Only mutation, after bound native consent and fresh checks.
+    try:
+        send(dict(kind="reconcile-result", state=current["state"], reason=current["reason"],
+                  operation_id=current["operation_id"]))
+    except (OSError, ValueError):
+        pass  # A broken window cannot undo or repeat a committed observation.
+    return current
 
 def monitor_configuration():
     import plistlib
@@ -336,7 +388,9 @@ def native_view(mode):
             extra["aliases_available"] = False
         extra["local_alias"] = socket.gethostname()
     local_host_id = load_pilot_configuration(home=owner_home()).host_id
-    return dict(kind="view", view=view, local_host_id=local_host_id, html=render_view(
+    return dict(kind="view", view=view, local_host_id=local_host_id,
+                operation_state=(record["state"] if record is not None else "none") if journal_available else "unavailable",
+                html=render_view(
         view, evidence, record, journal_available=journal_available,
         local_host_id=local_host_id, **extra))
 
@@ -438,6 +492,19 @@ def main():
             run_session(FleetCache(owner_home() / "Library/Application Support/Gargoyl", os.getuid()),
                         owner=console_owner, wait=lambda seconds: pipe_wait(sys.stdin.buffer, seconds, console_owner),
                         send=private_send, initial_token=restored, remember=mode == "fleet-session-remember", session_seconds=duration)
+        elif mode == "reconcile":
+            if not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode) or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode):
+                raise ValueError("private_pipes_required")
+            home = owner_home()
+            policy = load_pilot_configuration(home=home).require_local()
+            directory = str(home / ".gargoyl-manual-restart")
+            if read_operation(directory) is None:
+                raise ValueError("no_unresolved_operation")
+            os.set_blocking(sys.stdout.fileno(), False)
+            with ManualJournal(directory) as journal:
+                graphical_reconcile(journal=journal,
+                                    inspect_target=lambda: observed_target(policy.source, policy.provider_executable, policy.owner_uid),
+                                    receive=lambda: read_confirmation(sys.stdin.buffer))
         elif mode == "restart":
             if not stat.S_ISFIFO(
                 os.fstat(sys.stdin.fileno()).st_mode
@@ -471,11 +538,20 @@ def main():
         else:
             return 1
         return 0
-    except BaseException:
+    except BaseException as error:
+        reconciliation_reasons = {
+            "no_unresolved_operation": "Reconciliation unavailable: no unresolved operation is recorded.",
+            "restart_still_running": "Reconciliation unavailable: the prior command is still running. Nothing was recorded.",
+            "restart_may_still_be_running": "Reconciliation unavailable: an unidentified prior command may still be running. Wait for the conservative command bound; no retry or force is performed.",
+            "operation_changed": "Recorded operation changed. Review it again before confirming; nothing was recorded by this request.",
+            "observation_changed": "Provider observation or owner changed. Review again; nothing was recorded by this request.",
+            "confirmation_unavailable": "Reconciliation cancelled or confirmation expired. Nothing was recorded.",
+        }
+        explanation = reconciliation_reasons.get(str(error)) if mode == "reconcile" else None
         emit(
             dict(
                 kind="unavailable",
-                text="Action unavailable, cancelled, or completion unverified. No automatic retry. View operation status; unknown intent remains blocked.",
+                text=explanation or "Action unavailable, cancelled, or completion unverified. No automatic retry. View operation status; unknown intent remains blocked.",
             )
         )
         return 1

@@ -165,7 +165,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         if not journal_available:
             body += '<div class="callout warn"><p>Operation record unavailable. Outcome is unknown; this view cannot authorize a retry.</p></div>'
         elif record is None:
-            body += '<p>No manual operation recorded. This is not proof that a restart is currently available.</p>'
+            body += '<p>No manual operation recorded. Reconciliation is unavailable because there is no unresolved record. This is not proof that a restart is currently available.</p>'
         else:
             verified = record['state'] == 'completed' and record['reason'] == 'cli_success_and_replacement_observed'
             status = ('Verified replacement observed' if verified else
@@ -181,7 +181,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         body += ('<p>Review the exact target and interruption with Restart provider… in the native toolbar. '
                  'One shared durable journal prevents concurrent submissions. Intent and unknown records remain '
                  'blocked. Explicit read-only reconciliation permits a new attempt with fresh target and '
-                 'owner confirmation; it does not prove the previous outcome. This view never clears the gate.</p>'
+                 'owner confirmation; it does not prove the previous outcome. This view never clears the gate. For an unresolved record, use Record reconciliation… in the native toolbar to review the exact operation and current observation, then confirm with your Mac. No provider command or backend-guard clearing runs; a running or unidentifiable command may keep recording blocked.</p>'
                  '<p>Accepted work may drain for 10 minutes; startup may take 3 minutes. No force or automatic '
                  'retry. An interrupted or uncertain command may leave the provider draining or unavailable. '
                  'Darkbloom has no durable request ledger; exactly-once execution is not claimed.</p>'

@@ -220,6 +220,10 @@ struct ViewSelection {
     }
     func accepts(_ generation: Int) -> Bool { return generation == self.generation }
 }
+func reconciliationEnabled(state: String, preview: Bool, busy: Bool) -> Bool {
+    !preview && !busy && ["intent","unknown"].contains(state)
+}
+
 struct ApprovalGate {
     let request: String
     let digest: String
@@ -266,7 +270,7 @@ final class Worker {
         #if GARGOYL_NATIVE_TESTS
         pythonPath = ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] ?? pythonPath
         #endif
-        guard ownerActive(), (["restart", "status", "export", "start-monitor", "stop-monitor", "fleet-session", "fleet-alias-list", "fleet-alias-set", "fleet-session-remember", "fleet-restore"].contains(mode) || (mode.hasPrefix("view-") && readOnlyView(String(mode.dropFirst(5))))),
+        guard ownerActive(), (["restart", "reconcile", "status", "export", "start-monitor", "stop-monitor", "fleet-session", "fleet-alias-list", "fleet-alias-set", "fleet-session-remember", "fleet-restore"].contains(mode) || (mode.hasPrefix("view-") && readOnlyView(String(mode.dropFirst(5))))),
               let path = pythonPath,
               path.hasPrefix(NSHomeDirectory() + "/"), path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
         else { throw NSError(domain: "Gargoyl", code: 1) }
@@ -337,9 +341,12 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var web: WKWebView!
     let status = NSTextField(wrappingLabelWithString: "Loading read-only operator console… Automatic repair is off.")
     var restartButton: NSButton!
+    var reconcileButton: NSButton!
+    var operationState = "unavailable"
     var workers: [Worker] = []
     var restartWorker: Worker?
-    var restartVerified = false
+    var manualVerified = false
+    var acceptedOperationID: String?
     var webReady = false
     var viewSelection = ViewSelection()
     var viewWorker: Worker?
@@ -443,6 +450,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         // Manual operation sits apart at the trailing edge; its confirmation sheet does the safety work.
         let statusButton = NSButton(title:"Operation status",target:self,action:#selector(operationStatus)); statusButton.bezelStyle = .rounded
         bar.addView(statusButton,in:.trailing)
+        reconcileButton = NSButton(title:"Record reconciliation…",target:self,action:#selector(reconcileOperation)); reconcileButton.bezelStyle = .rounded
+        reconcileButton.isEnabled = false; reconcileButton.isHidden = true
+        bar.addView(reconcileButton,in:.trailing)
         restartButton = NSButton(title:"Restart local provider…",target:self,action:#selector(restartProvider)); restartButton.bezelStyle = .rounded
         if previewOnly { restartButton.isEnabled = false }
         bar.addView(restartButton,in:.trailing)
@@ -499,6 +509,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     @objc func refresh() { displayView(viewSelection.selected) }
     func displayView(_ view: String) {
         guard webReady, viewSelection.select(view) else { return }
+        if view == "operation" { operationState = "unavailable" }
+        updateReconciliationControl()
         // One read-only worker at a time. A changed selection is loaded after it exits.
         guard viewWorker == nil else { return }
         viewPhase = "loading private view"
@@ -511,6 +523,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                       value["kind"] as? String == "view", value["view"] as? String == view,
                       let html = value["html"] as? String, html.utf8.count <= 500000,
                       let localHostID = value["local_host_id"] as? String, canonicalLocalHost(localHostID) != nil else { return }
+                if view == "operation" {
+                    let state = value["operation_state"] as? String ?? "unavailable"
+                    self.operationState = ["none","intent","unknown","completed","reconciled","unavailable"].contains(state) ? state : "unavailable"
+                    self.updateReconciliationControl()
+                }
                 self.renderedLocalHostID = localHostID
                 delivered = true; self.viewPhase = "received private HTML"
                 self.finishViewLoading()
@@ -846,34 +863,51 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             }
         })
     }
-    @objc func restartProvider() {
-        guard !previewOnly, restartWorker == nil, ownerActive() else { show("Restart unavailable: the active Mac owner or an existing operation could not be verified."); return }
+    func updateReconciliationControl() {
+        reconcileButton.isHidden = viewSelection.selected != "operation"
+        reconcileButton.isEnabled = reconciliationEnabled(state:operationState,preview:previewOnly,busy:restartWorker != nil)
+        reconcileButton.toolTip = operationState == "none" ? "No unresolved operation is recorded." : (reconcileButton.isEnabled ? "Review read-only observations; recording requires Mac confirmation. No provider command runs." : "No eligible unresolved record, preview-only mode, or another operation is active. Refresh Operation status.")
+    }
+    @objc func restartProvider() { startManualOperation("restart") }
+    @objc func reconcileOperation() {
+        guard reconciliationEnabled(state:operationState,preview:previewOnly,busy:restartWorker != nil) else { show("Reconciliation unavailable: no eligible unresolved operation. Refresh Operation status."); return }
+        startManualOperation("reconcile")
+    }
+    func startManualOperation(_ mode: String) {
+        guard ["restart","reconcile"].contains(mode), !previewOnly, restartWorker == nil, ownerActive() else { show("Manual operation unavailable: active owner or an existing operation could not be verified."); return }
         displayView("operation")
-        restartButton.isEnabled = false
-        restartVerified = false
+        restartButton.isEnabled = false; reconcileButton.isEnabled = false
+        manualVerified = false; acceptedOperationID = nil
         do {
-            restartWorker = try Worker(mode:"restart",event:{ [weak self] value in self?.restartEvent(value) },finished:{ [weak self] completed in
+            restartWorker = try Worker(mode:mode,event:{ [weak self] value in self?.restartEvent(value) },finished:{ [weak self] completed in
                 guard let self = self, self.restartWorker === completed else { return }
-                if completed.process.terminationStatus != 0 || !self.restartVerified { self.show("Restart completion is unverified or was not authorized. No automatic retry. Inspect Operation status before another attempt.") }
-                self.context?.invalidate(); self.context = nil; self.approvalTimer?.invalidate(); self.pending = nil; self.approvalGate = nil
-                self.restartWorker = nil; self.restartButton.isEnabled = !self.previewOnly; self.refresh()
+                if completed.process.terminationStatus != 0 || !self.manualVerified { self.show("Manual operation completion is unverified or was not authorized. No automatic retry. Refresh Operation status before another attempt.") }
+                self.context?.invalidate(); self.context = nil; self.approvalTimer?.invalidate(); self.pending = nil; self.approvalGate = nil; self.acceptedOperationID = nil
+                self.restartWorker = nil; self.restartButton.isEnabled = !self.previewOnly; self.updateReconciliationControl(); self.refresh()
             })
-        } catch { restartButton.isEnabled = true; show("Restart unavailable. No provider action was invoked.") }
+        } catch { restartButton.isEnabled = !previewOnly; updateReconciliationControl(); show("Manual operation unavailable. No provider action was invoked.") }
     }
     func restartEvent(_ value: [String: Any]) {
         guard let kind = value["kind"] as? String else { return }
         if kind == "preview" { review(value) }
         else if kind == "result" {
             if value["state"] as? String == "completed" && value["reason"] as? String == "cli_success_and_replacement_observed" {
-                restartVerified = true
+                manualVerified = true
                 show("Manual restart reported complete; replacement process verified. Protocol health remains unknown."); refresh()
             } else { show("Restart completion is unverified. No retry is permitted. Inspect Operation status.") }
+        }
+        else if kind == "reconcile-result" {
+            if restartWorker?.mode == "reconcile", value["state"] as? String == "reconciled", value["reason"] as? String == "reconciled_read_only", let accepted = acceptedOperationID, value["operation_id"] as? String == accepted {
+                manualVerified = true
+                show("Read-only reconciliation recorded. Prior outcome remains unproven. No provider command ran. A later restart needs fresh preflight and Mac confirmation."); refresh()
+            } else { show("Reconciliation completion is unverified. Refresh Operation status; no automatic retry.") }
         }
         else if let text = value["text"] as? String { show(text) }
     }
     func review(_ request: [String: Any]) {
         guard ownerActive(), pending == nil, let worker = restartWorker,
-              request["policy"] as? String == "native-manual-installation-v1",
+              ["restart","reconcile"].contains(worker.mode),
+              request["policy"] as? String == (worker.mode == "reconcile" ? "native-readonly-reconciliation-v1" : "native-manual-installation-v1"),
               let id = request["request_id"] as? String, id.range(of:"^[a-f0-9]{32}$",options:.regularExpression) != nil,
               let expiry = request["expires_at"] as? Double, expiry >= Date().timeIntervalSince1970, expiry <= Date().timeIntervalSince1970+90,
               let digest = request["preview_digest"] as? String, digest.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,
@@ -881,32 +915,51 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
               let pid = process["pid"] as? Int, pid > 0, let birth = process["born_us"] as? Int64,
               process["owner_uid"] as? Int == Int(geteuid()), let version = target["version"] as? String, ["0.10.5","0.10.6"].contains(version)
         else { restartWorker?.reply(request,approved:false); show("Restart preview is unavailable or invalid."); return }
+        let reconciling = worker.mode == "reconcile"
+        var reconciliationText = ""
+        if reconciling {
+            guard let operation = request["operation_id"] as? String, operation.range(of:"^[a-f0-9]{32}$",options:.regularExpression) != nil,
+                  let observation = request["observation"] as? String,
+                  let description = ["original_process_observed":"The original process is observed now.","different_process_observed":"A different process is observed now.","provider_unobservable":"The provider could not be verified now."][observation]
+            else { worker.reply(request,approved:false); show("Reconciliation preview is invalid."); return }
+            var currentText = "Current provider identity: unverified."
+            if observation != "provider_unobservable" {
+                guard let current = request["current"] as? [String:Any], let process = current["process"] as? [String:Any],
+                      let currentPID = process["pid"] as? Int, currentPID > 0, let currentBirth = process["born_us"] as? Int64, currentBirth > 0,
+                      process["owner_uid"] as? Int == Int(geteuid()), let currentVersion = current["version"] as? String, ["0.10.5","0.10.6"].contains(currentVersion)
+                else { worker.reply(request,approved:false); show("Current reconciliation observation is invalid."); return }
+                currentText = "Current observed provider: PID \(currentPID), birth \(currentBirth), version \(currentVersion)."
+            } else if !(request["current"] is NSNull) { worker.reply(request,approved:false); return }
+            reconciliationText = "Operation \(operation). Prior target: PID \(pid), birth \(birth), version \(version).\n\n\(description) \(currentText)\n\nThis records only read-only observations in Gargoyl’s journal. No provider command, restart, retry or backend-guard clearing runs. The prior command must be absent, or the conservative unidentified-command bound must have elapsed. These observations do not prove what the interrupted request did or that no upstream work remains.\n\nRecording permits a later separately confirmed manual restart after fresh preflight. It does not establish exactly-once execution or a successful prior restart. Changed observations cancel this request.\n\nContinue to your Mac’s confirmation?"
+        }
         pending = request
         approvalGate = ApprovalGate(request:id,digest:digest,expires:expiry)
-        approvalTimer = Timer.scheduledTimer(withTimeInterval:90,repeats:false) { [weak self] _ in self?.cancelApproval("Confirmation expired. No restart was authorized.") }
-        let alert = NSAlert(); alert.messageText = "Restart Darkbloom on this Mac?"
+        approvalTimer = Timer.scheduledTimer(withTimeInterval:90,repeats:false) { [weak self] _ in self?.cancelApproval("Confirmation expired. No manual operation was authorized.") }
+        let alert = NSAlert(); alert.messageText = reconciling ? "Record read-only reconciliation?" : "Restart Darkbloom on this Mac?"
         alert.informativeText = "Current provider: PID \(pid), birth \(birth), version \(version), owner \(geteuid()).\nExecutable: ~/.darkbloom/Darkbloom.app/Contents/MacOS/darkbloom\nCommand: restart --timeout 600 --startup-timeout 180 (no force).\n\nThe current provider in this installation will refuse new work, drain accepted work, then restart with existing settings. It may be unavailable while restarting. Darkbloom temporarily disables startup/watchdog, removes recovery history, changes termination allowance and restores configured recovery. Replacement can resume configured coordinator traffic/authorization and existing startup/update behavior. Existing model/settings are reused; no credentials or configuration are supplied. A timeout can leave it draining or disabled. No force or automatic retry is permitted.\n\nThis is installation-scoped consent, not an atomic lock to the displayed process. The target is checked again before execution. One operation may take up to 840 seconds plus cleanup. An uncertain result remains blocked.\n\nThe next step is your Mac’s authentication prompt."
+        if reconciling { alert.informativeText = reconciliationText }
         alert.addButton(withTitle:"Continue to Mac confirmation"); alert.addButton(withTitle:"Cancel")
         consentSheet = alert.window
         alert.beginSheetModal(for:window) { [weak self, weak worker] response in
             guard let self = self, let worker = worker, self.restartWorker === worker, self.pending?["request_id"] as? String == id else { return }
             self.consentSheet = nil
-            guard response == .alertFirstButtonReturn, ownerActive() else { self.cancelApproval("Cancelled. No restart was authorized."); return }
-            let context = LAContext(); context.touchIDAuthenticationAllowableReuseDuration = 0; context.localizedCancelTitle = "Cancel restart"
+            guard response == .alertFirstButtonReturn, ownerActive() else { self.cancelApproval("Cancelled. No manual operation was authorized."); return }
+            let context = LAContext(); context.touchIDAuthenticationAllowableReuseDuration = 0; context.localizedCancelTitle = reconciling ? "Cancel reconciliation" : "Cancel restart"
             var error: NSError?
-            guard context.canEvaluatePolicy(.deviceOwnerAuthentication,error:&error) else { self.cancelApproval("Mac owner authentication is unavailable. Restart remains blocked."); return }
+            guard context.canEvaluatePolicy(.deviceOwnerAuthentication,error:&error) else { self.cancelApproval("Mac owner authentication is unavailable. The manual operation remains blocked."); return }
             self.context = context
-            context.evaluatePolicy(.deviceOwnerAuthentication,localizedReason:"authorize one manual Darkbloom restart on this Mac") { success, _ in
+            context.evaluatePolicy(.deviceOwnerAuthentication,localizedReason:reconciling ? "record one read-only Gargoyl reconciliation" : "authorize one manual Darkbloom restart on this Mac") { success, _ in
                 DispatchQueue.main.async {
                     guard self.restartWorker === worker, self.pending?["request_id"] as? String == id else { return }
                     guard var gate = self.approvalGate else { return }
                     let approved = gate.consume(request:id,digest:digest,owner:ownerActive(),authenticated:success,now:Date().timeIntervalSince1970)
                     self.approvalGate = gate
-                    guard approved else { self.cancelApproval("Mac confirmation failed or was cancelled. No restart was authorized."); return }
+                    guard approved else { self.cancelApproval("Mac confirmation failed or was cancelled. No manual operation was authorized."); return }
                     self.approvalTimer?.invalidate(); self.context?.invalidate(); self.context = nil
+                    self.acceptedOperationID = reconciling ? request["operation_id"] as? String : nil
                     self.pending = nil
                     worker.reply(request,approved:true)
-                    self.show("Mac owner confirmed. Rechecking the target before one graceful restart. Closing the app will not cancel or retry accepted work.")
+                    self.show(reconciling ? "Mac owner confirmed. Rechecking current observations before recording reconciliation. No provider command runs." : "Mac owner confirmed. Rechecking the target before one graceful restart. Closing the app will not cancel or retry accepted work.")
                 }
             }
         }
@@ -1075,6 +1128,12 @@ if CommandLine.arguments.contains("--self-test") {
         precondition(fragmentScript(URL(string:invalid),mainFrame:true) == nil)
         precondition(!allowedNavigation(URL(string:invalid),mainFrame:true))
     }
+    precondition(reconciliationEnabled(state:"unknown",preview:false,busy:false))
+    precondition(reconciliationEnabled(state:"intent",preview:false,busy:false))
+    for state in ["none","completed","reconciled","unavailable","forged"] { precondition(!reconciliationEnabled(state:state,preview:false,busy:false)) }
+    precondition(!reconciliationEnabled(state:"unknown",preview:true,busy:false))
+    precondition(!reconciliationEnabled(state:"unknown",preview:false,busy:true))
+    precondition(viewDestination(URL(string:"gargoyl-view://reconcile/"),mainFrame:true) == nil)
     for view in nativeViews { precondition(viewDestination(URL(string:"gargoyl-view://\(view)/"),mainFrame:true) == view) }
     for value in ["gargoyl-view://restart/", "gargoyl-view://tools/?action=restart", "gargoyl-view://user@tools/", "gargoyl-view://tools:80/", "gargoyl-view://tools/extra", "gargoyl-view://%74ools/", "gargoyl-view://tools/#restart", "https://example.com", "file:///tmp/test", "http://127.0.0.1:8766/", "data:text/html,test"] {
         precondition(viewDestination(URL(string:value),mainFrame:true) == nil)
