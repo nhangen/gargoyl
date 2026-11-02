@@ -113,6 +113,7 @@ class HistoryWorkflowTests(unittest.TestCase):
                            now='2026-11-01T00:00:06Z')
         self.assertIn('3 requests · 30 tokens across 5.0 seconds', page)
         self.assertIn('2 of at most 64 samples', page)
+        self.assertIn('An undetected reset can affect this comparison', page)
         table = page.split('<tbody>',1)[1]
         self.assertLess(table.index(last['collected_at']), table.index(first['collected_at']))
         self.assertIn('Zero traffic alone is not failure', page)
@@ -131,5 +132,5 @@ class HistoryWorkflowTests(unittest.TestCase):
                              ([sparse,sparse],NOW)):
             with self.subTest(samples=samples):
                 page=render_view('history',dict(evaluated_at=NOW,snapshots=samples),None,now=now)
-                self.assertIn('Unknown — needs fresh, contiguous, monotonic observations', page)
+                self.assertIn('Unknown — needs fresh, ordered observations', page)
                 self.assertNotIn('Observed counter change', page)

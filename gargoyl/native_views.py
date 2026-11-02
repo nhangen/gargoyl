@@ -140,10 +140,10 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
             {"requests_total", "tokens_total", "error_code"} <= set(item["fields"])
             and timestamp(item["collected_at"]) <= timestamp(now) for item in samples) else None)
         if window is None:
-            body += '<div><dt>Counter change</dt><dd>Unknown — needs fresh, contiguous, monotonic observations without errors or counter reset.</dd></div>'
+            body += '<div><dt>Counter change</dt><dd>Unknown — needs fresh, ordered observations with no detected error or counter decrease.</dd></div>'
         else:
             requests, tokens, seconds = window
-            body += '<div><dt>Observed counter change</dt><dd>' + e(requests) + ' requests · ' + e(tokens) + ' tokens across ' + e(round(seconds, 1)) + ' seconds. This is not billing, routing success or demand proof.</dd></div>'
+            body += '<div><dt>Observed counter change</dt><dd>' + e(requests) + ' requests · ' + e(tokens) + ' tokens across ' + e(round(seconds, 1)) + ' seconds. An undetected reset can affect this comparison. This is not billing, routing success, restart-free uptime or demand proof.</dd></div>'
         body += '</dl><p>Monitor restart clears this history. Durable history is not activated; its separate encryption key and retention policy need approval. Other fleet records have no direct history here. <a href="gargoyl-view://management/">Inspect coverage</a>.</p></section>'
         body += '<section><h2>Retained local counter observations</h2><p>In-memory history, lost when the monitor restarts. Cumulative samples; the bounded change above is derived only when evidence permits. No earnings inference. Zero traffic alone is not failure.</p><div class="scroll" tabindex="0"><table><thead><tr><th>Collected</th><th>Metric</th><th>Value</th><th>Source</th><th>Observed</th><th>Effective state</th></tr></thead><tbody>'
         rows = 0

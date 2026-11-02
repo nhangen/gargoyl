@@ -135,8 +135,9 @@ remote restart controls are provided. **Local aliases…**, Refresh, Export loca
 and Gargoyl's own Start/Stop monitoring remain graphical native tools.
 
 **Local traffic** shows the retained sample count/range and newest observations
-first. It derives counter changes only from fresh contiguous observations with
-consistent timestamps, no collection error and no counter reset. Sparse, future,
+first. It derives counter changes only from fresh ordered observations with
+consistent timestamps, no observed collection error and no detected counter
+decrease. An undetected reset between observations can still affect the comparison. Sparse, future,
 stale or reset evidence yields an explicit unknown change. Zero observed traffic
 is not failure, a billing measure or proof about demand/routing. At most64samples
 are held in monitor memory. Restart clears them. No durable history key is created
