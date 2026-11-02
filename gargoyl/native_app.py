@@ -139,7 +139,8 @@ func makeApplicationMenu(_ application: NSApplication) -> NSMenu {
 
 let resourceRules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}}]"#
 let fleetSignInURL = URL(string:"https://console.darkbloom.dev/link?purpose=desktop_account")!
-let nativeViews = ["fleet", "tools", "evidence", "history", "operation", "details"]
+let nativeViews = ["fleet", "management", "tools", "evidence", "history", "operation", "details"]
+func accountView(_ value: String) -> Bool { value == "management" || value.hasPrefix("fleet") }
 func readOnlyView(_ value: String) -> Bool {
     return nativeViews.contains(value) || ["fleet-recent","fleet-older","fleet-unknown"].contains(value) || value.range(of:"^fleet-node-[a-f0-9]{64}$",options:.regularExpression) != nil
 }
@@ -468,7 +469,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
         accountTitleTimer = Timer.scheduledTimer(withTimeInterval:1,repeats:true) { [weak self] _ in self?.syncAccountTitle() }
         fleetRefreshTimer = Timer.scheduledTimer(withTimeInterval:30,repeats:true) { [weak self] _ in
-            guard let self = self, self.viewSelection.selected.hasPrefix("fleet"), self.window.isVisible, !NSApp.isHidden else { return }
+            guard let self = self, accountView(self.viewSelection.selected), self.window.isVisible, !NSApp.isHidden else { return }
             self.refresh()
         }
         viewPhase = "compiling isolation rules"
@@ -813,7 +814,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             fleetStatus.stringValue = "Read-only account scope confirmed. Loading owned-provider metadata…"
         } else if kind == "fleet-updated", let count = value["count"] as? Int, count >= 0 && count <= 256 {
             fleetStatus.stringValue = "Account API returned \(count) provider records. Reports are not independent remote process checks."
-            if viewSelection.selected.hasPrefix("fleet") { refresh() }
+            if accountView(viewSelection.selected) { refresh() }
         } else if kind == "fleet-unavailable" {
             dismissFleetAuthorization()
             let reason = value["reason"] as? String ?? "unavailable"
@@ -824,7 +825,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             }
             let reasons = ["session_busy":"Another local account reader is still closing. A saved read-only session may resume after it exits.","scope_refused":"Darkbloom did not confirm the read-only scope. Provider-control fallback was refused.","auth_required":"Account authorization is unavailable. Connect again to resume read-only collection.","invalid_data":"Account inventory could not be validated. No substitute fleet or health verdict is shown.","expired":"Account connection expired. Connect again; no credential was saved."]
             fleetStatus.stringValue = reasons[reason] ?? "Account collection unavailable. Cached reports are not current health evidence."
-            if viewSelection.selected.hasPrefix("fleet") { refresh() }
+            if accountView(viewSelection.selected) { refresh() }
         }
     }
     @objc func startMonitor() { if !previewOnly { launch("start-monitor"); refresh() } }
@@ -945,7 +946,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
         if !keychainBusy, pendingCredentialRemoval != nil { finishKeychainOperation() }
-        if viewSelection.selected.hasPrefix("fleet") { refresh() }
+        if accountView(viewSelection.selected) { refresh() }
         return false
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { return false }

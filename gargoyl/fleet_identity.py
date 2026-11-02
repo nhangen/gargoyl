@@ -58,6 +58,7 @@ def matching_provider(inventory, local, now):
         inventory is None
         or type(local) is not dict
         or inventory["connection"] != "connected"
+        or inventory["partial"]
     ):
         return None
     digest = local.get("identity_digest")
