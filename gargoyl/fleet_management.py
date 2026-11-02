@@ -47,7 +47,8 @@ def management_projection(inventory, local, evidence, now, local_host_id):
                          process_state=process_state,
                          history_samples=len(samples) if associated and evidence is not None else None,
                          manual_restart='native_review' if associated else 'unavailable'))
-    return dict(inventory_available=True, partial=inventory['partial'], rows=rows)
+    return dict(inventory_available=True, partial=inventory['partial'], rows=rows,
+                fetched_at=inventory['fetched_at'], connection=inventory['connection'])
 
 
 def management_html(projection, aliases):
@@ -61,6 +62,7 @@ def management_html(projection, aliases):
     if not projection['inventory_available']:
         return body + ('<p>Inventory unavailable — coverage is unknown, not an empty fleet. '
                        'Use Account to inspect the saved session; no new sign-in is initiated here.</p></section>')
+    body += '<p>Account inventory read ' + e(projection['fetched_at']) + ' · session last reported ' + e(projection['connection']) + '. These are coordinator reports, not independent remote health.</p>'
     if projection['partial']:
         body += '<p>Partial inventory. Missing providers have unknown coverage.</p>'
     body += ('<div class="scroll" tabindex="0" role="region" aria-label="Provider management coverage">'
@@ -69,9 +71,9 @@ def management_html(projection, aliases):
     for row in projection['rows']:
         label = aliases.get(row['provider_id'], row['source_name'])
         identity = ('<a href="gargoyl-view://fleet-node-' + row['key'] + '/">' + e(label)
-                    + '</a><span class="fleet-id">' + e(row['provider_id']) + '</span>')
+                    + '</a><br><span class="mono">' + e(row['provider_id']) + '</span>')
         if row['provider_id'] in aliases:
-            identity += '<span class="fleet-src">Local alias · source: ' + e(row['source_name']) + '</span>'
+            identity += '<br><span class="muted">Local alias · source: ' + e(row['source_name']) + '</span>'
         if row['collection'] == 'local_associated':
             coverage = ('This Mac · identity matched<br>Native process evidence: ' + e(row['process_state'])
                         + '<br>Account report: ' + e(row['account_state']))

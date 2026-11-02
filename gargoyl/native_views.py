@@ -112,7 +112,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
                  'model and traffic are unknown. Use Start monitoring if needed, then Refresh. '
                  'This does not start Darkbloom or resolve an uncertain operation.</p></div>')
     else:
-        body += '<p class="muted">Viewed at ' + e(display_time(now)) + ' · report ' + e(display_time(evidence['evaluated_at'])) + '</p>'
+        body += '<p class="muted">Viewed at ' + e(display_time(now)) + (' · local report ' if view == 'management' else ' · report ') + e(display_time(evidence['evaluated_at'])) + '</p>'
     if view == "management":
         from gargoyl.fleet_management import management_html, management_projection
         body += management_html(management_projection(inventory, local, evidence, now, local_host_id), aliases or {})
