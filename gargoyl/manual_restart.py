@@ -188,7 +188,8 @@ def restart_gate_allows(record):
     """Shared admission only; callers still lock, validate and confirm each attempt.
 
     Reconciled records mean an explicit read-only observation was recorded after
-    the prior command stopped, not that its historical outcome is now known.
+    the prior command is absent or its unidentified-command bound elapsed, not
+    that its historical outcome is now known.
     Nothing here retries an operation or bypasses fresh target/owner checks.
     """
     return record is None or (type(record) is dict and record.get("state") in
@@ -304,14 +305,16 @@ def process_alive(child):
 RECONCILE_UNIDENTIFIED_SECONDS = 900
 
 
-def reconcile_operation(journal, *, inspect_target, alive=process_alive, clock=utc_now):
-    """Read-only: record current observations for an unresolved operation and reopen the gate.
+def reconciliation_snapshot(record, *, inspect_target, alive=process_alive, clock=utc_now):
+    """Read-only candidate: check command liveness/budget and observe the provider.
 
     Never invokes the provider. Refuses while the recorded command is still running.
-    It records what is observable now; it cannot prove what happened during the attempt.
+    Returns a validated candidate without writing or reopening any gate.
+    It cannot prove what happened during the prior attempt.
     """
-    record = journal.read()
+    record = dict(record) if type(record) is dict else record
     _require(record is not None and record["state"] in {"intent", "unknown"})
+    validate_record(record)
     if alive(record.get("child")):
         raise ValueError("restart_still_running")
     if "child" not in record:
@@ -337,6 +340,14 @@ def reconcile_operation(journal, *, inspect_target, alive=process_alive, clock=u
     record.setdefault("finished_at", record["reconciled_at"])
     if current is not None:
         record["current"] = current
+    return validate_record(record)
+
+
+
+def reconcile_operation(journal, *, inspect_target, alive=process_alive, clock=utc_now):
+    """Explicitly record a read-only candidate; never invoke or retry the provider."""
+    record = reconciliation_snapshot(journal.read(), inspect_target=inspect_target,
+                                     alive=alive, clock=clock)
     journal.write(record)
     return record
 

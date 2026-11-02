@@ -42,8 +42,9 @@ explicitly distinguishes the request, waiting on Darkbloom, and verified
 replacement evidence. There is no force or automatic retry. Closing the app
 after acceptance does not cancel the worker or retry the request. Reopen the app
 and choose **Operation status** to inspect the durable shared CLI/app journal.
-An interrupted or unverified outcome blocks further attempts; this app cannot
-clear it. Read-only reconciliation is required. CLI success and replacement
+An interrupted or unverified outcome blocks further attempts. Use **Operation
+status → Record reconciliation…** for an explicit read-only review; it never
+clears a Darkbloom guard, invokes the provider or retries the prior request. CLI success and replacement
 evidence do not independently establish coordinator or protocol health.
 
 Automatic provider repair remains disabled. Existing Gargoyl KeepAlive is
@@ -95,11 +96,18 @@ and Stop affect only Gargoyl's configured monitor. Restart local provider opens 
 existing exact-target/interruption review followed by Mac owner authentication;
 no page link can invoke it. Progress stays in the native status area and outcome
 in the shared journal. Intent and unknown records remain blocked by the shared native/CLI/browser gate.
-After an explicit read-only reconciliation has recorded observations and verified
-that the prior command is no longer running, a new manual attempt is allowed on
-all three surfaces, with fresh preflight and owner confirmation. Reconciliation
-does not prove the previous attempt succeeded. The native operation view cannot
-reconcile or clear records.
+The **Record reconciliation…** native button is available only for intent/unknown
+records outside preview mode and while no manual worker is active. It reviews the
+original operation/target and current observed identity, then requires fresh Mac
+owner confirmation. It refuses while the exact recorded command is alive; if no
+child identity was saved, the existing conservative 15-minute command bound must
+have elapsed. That bound does not prove upstream work ended. The journal and
+observation are checked again after confirmation; changes cancel the request.
+This records current evidence and reopens Gargoyl’s manual gate for a later
+separately confirmed attempt, across app/CLI/browser. It does not prove the prior
+attempt succeeded, guarantee exactly-once behavior, clear a backend guard, or
+invoke a provider command. Expiry, broken pipes, failed writes and owner changes
+never trigger an automatic retry. No terminal interaction is required.
 Actual provider restart is not exercised by UI acceptance tests.
 
 The read-only pages are reconstructed by a fixed same-owner worker from validated
