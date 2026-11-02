@@ -316,7 +316,7 @@ def native_view(mode):
         except (OSError, ValueError):
             journal_available = False
     extra = {}
-    if view.startswith("fleet"):
+    if view.startswith("fleet") or view == "management":
         from gargoyl.fleet_aliases import AliasStore
         from gargoyl.fleet_identity import pilot_identity
         from gargoyl.fleet_state import FleetCache, utc_now

@@ -181,7 +181,7 @@ def render_fleet(
                 facts.append((label, '<span class="ev ev-unknown">unknown</span> <span class="faint">· no report</span>'))
             for row in rows:
                 state = row["state"] if row["state"] in ("observed", "stale", "unknown", "blocked") else "unknown"
-                if row["value"] is None:
+                if row["value"] is None and state != "blocked":
                     state = "unknown"
                 facts.append((label, '<span class="ev ev-' + state + '">'
                               + e(row["value"] if row["value"] is not None else "unknown") + '</span> <span class="faint">'
@@ -270,7 +270,7 @@ def render_fleet(
                         + e(value)
                         + "</dd></div>"
                     )
-                body += "</dl><p>No restart, enrollment or remote command authority is granted by this record.</p>"
+                body += '</dl><p>No restart, enrollment or remote command authority is granted by this record. <a href="gargoyl-view://management/">Inspect management and collector coverage</a>.</p>'
         else:
             states = {r["id"]: evidence_state(inventory, r, now) for r in rows}
             counts = {key: sum(1 for r in rows if FLEET_FILTERS[key] is None or states[r["id"]][1] == FLEET_FILTERS[key])

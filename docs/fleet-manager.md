@@ -117,3 +117,28 @@ Local association requires fresh protected daemon public attestation identity,
 verified native process identity and an exact unique account match. Hostnames
 and aliases never establish association or authorize repair. The public loopback
 dashboard remains local-telemetry-only, and automatic repair stays disabled.
+
+## Management and local history
+
+Open **Fleet management** in the sidebar for a provider-by-provider coverage and
+operator-workflow view. Account reports alone do not connect a collector. A local
+association requires a fresh, connected, complete account inventory and one unique
+public-identity match to this Mac's fresh verified process. Names and aliases never
+supply that association. Partial, stale, disconnected or ambiguous inventory leaves
+association and per-provider history unavailable; no substitute provider is chosen.
+
+For the matched Mac, the view links to local history and explains how to review
+**Restart local provider…** through the native toolbar. It does not pre-authorize
+the restart; fresh preflight and Mac confirmation still apply. Other records show
+why remote collection, history and control are unavailable. No fake enrollment or
+remote restart controls are provided. **Local aliases…**, Refresh, Export local…
+and Gargoyl's own Start/Stop monitoring remain graphical native tools.
+
+**Local traffic** shows the retained sample count/range and newest observations
+first. It derives counter changes only from fresh ordered observations with
+consistent timestamps, no observed collection error and no detected counter
+decrease. An undetected reset between observations can still affect the comparison. Sparse, future,
+stale or reset evidence yields an explicit unknown change. Zero observed traffic
+is not failure, a billing measure or proof about demand/routing. At most64samples
+are held in monitor memory. Restart clears them. No durable history key is created
+or enrollment activated by opening these views.
