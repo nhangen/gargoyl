@@ -105,7 +105,8 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
             raise ValueError("view limit")
         return native_document(html)
     body = '<h1>' + LABELS[VIEWS.index(view)] + '</h1>'
-    body += ('<p>Refresh updates stored evidence and freshness. Views do not update automatically.</p>')
+    body += ('<p>Account inventory refreshes periodically while this view is visible. Refresh also reads the latest stored local evidence; no provider command runs.</p>'
+             if view == 'management' else '<p>Refresh updates stored evidence and freshness. Views do not update automatically.</p>')
     if evidence is None:
         body += ('<div class="callout warn"><p>Monitor evidence unavailable — health, eligibility, '
                  'model and traffic are unknown. Use Start monitoring if needed, then Refresh. '
@@ -134,7 +135,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         body += '<section><h2>Local history window</h2><dl class="facts">'
         body += '<div><dt>Retention</dt><dd>' + str(len(samples)) + ' of at most 64 samples · memory only</dd></div>'
         if samples:
-            body += '<div><dt>Retained range</dt><dd>' + e(display_time(samples[0]['collected_at'])) + ' to ' + e(display_time(samples[-1]['collected_at'])) + '</dd></div>'
+            body += '<div><dt>Retained range</dt><dd>' + e(display_time(min(samples, key=lambda item: timestamp(item['collected_at']))['collected_at'])) + ' to ' + e(display_time(max(samples, key=lambda item: timestamp(item['collected_at']))['collected_at'])) + '</dd></div>'
         window = (traffic_window(samples, now) if all(
             {"requests_total", "tokens_total", "error_code"} <= set(item["fields"])
             and timestamp(item["collected_at"]) <= timestamp(now) for item in samples) else None)
