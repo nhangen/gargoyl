@@ -220,6 +220,11 @@ struct ViewSelection {
     }
     func accepts(_ generation: Int) -> Bool { return generation == self.generation }
 }
+func manualCompletionMessage(status: Int32, verified: Bool, failure: String?) -> String? {
+    if let failure = failure { return failure }
+    if status != 0 || !verified { return "Manual operation completion is unverified or was not authorized. No automatic retry. Refresh Operation status before another attempt." }
+    return nil
+}
 func reconciliationEnabled(state: String, preview: Bool, busy: Bool) -> Bool {
     !preview && !busy && ["intent","unknown"].contains(state)
 }
@@ -347,6 +352,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var restartWorker: Worker?
     var manualVerified = false
     var acceptedOperationID: String?
+    var manualFailure: String?
     var webReady = false
     var viewSelection = ViewSelection()
     var viewWorker: Worker?
@@ -877,11 +883,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         guard ["restart","reconcile"].contains(mode), !previewOnly, restartWorker == nil, ownerActive() else { show("Manual operation unavailable: active owner or an existing operation could not be verified."); return }
         displayView("operation")
         restartButton.isEnabled = false; reconcileButton.isEnabled = false
-        manualVerified = false; acceptedOperationID = nil
+        manualVerified = false; acceptedOperationID = nil; manualFailure = nil
         do {
             restartWorker = try Worker(mode:mode,event:{ [weak self] value in self?.restartEvent(value) },finished:{ [weak self] completed in
                 guard let self = self, self.restartWorker === completed else { return }
-                if completed.process.terminationStatus != 0 || !self.manualVerified { self.show("Manual operation completion is unverified or was not authorized. No automatic retry. Refresh Operation status before another attempt.") }
+                if let message = manualCompletionMessage(status:completed.process.terminationStatus,verified:self.manualVerified,failure:self.manualFailure) { self.show(message) }
                 self.context?.invalidate(); self.context = nil; self.approvalTimer?.invalidate(); self.pending = nil; self.approvalGate = nil; self.acceptedOperationID = nil
                 self.restartWorker = nil; self.restartButton.isEnabled = !self.previewOnly; self.updateReconciliationControl(); self.refresh()
             })
@@ -902,7 +908,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                 show("Read-only reconciliation recorded. Prior outcome remains unproven. No provider command ran. A later restart needs fresh preflight and Mac confirmation."); refresh()
             } else { show("Reconciliation completion is unverified. Refresh Operation status; no automatic retry.") }
         }
-        else if let text = value["text"] as? String { show(text) }
+        else if let text = value["text"] as? String { if kind == "unavailable" { manualFailure = text }; show(text) }
     }
     func review(_ request: [String: Any]) {
         guard ownerActive(), pending == nil, let worker = restartWorker,
@@ -1128,6 +1134,14 @@ if CommandLine.arguments.contains("--self-test") {
         precondition(fragmentScript(URL(string:invalid),mainFrame:true) == nil)
         precondition(!allowedNavigation(URL(string:invalid),mainFrame:true))
     }
+    for reason in ["Reconciliation unavailable: the prior command is still running. Nothing was recorded.","Reconciliation unavailable: an unidentified prior command may still be running.","Reconciliation cancelled or confirmation expired. Nothing was recorded."] {
+        let event:[String:Any] = ["kind":"unavailable","text":reason]
+        let fixture=App(); fixture.restartEvent(event)
+        precondition(manualCompletionMessage(status:1,verified:fixture.manualVerified,failure:fixture.manualFailure) == reason)
+    }
+    precondition(manualCompletionMessage(status:1,verified:false,failure:nil) != nil)
+    precondition(manualCompletionMessage(status:0,verified:false,failure:nil) != nil)
+    precondition(manualCompletionMessage(status:0,verified:true,failure:nil) == nil)
     precondition(reconciliationEnabled(state:"unknown",preview:false,busy:false))
     precondition(reconciliationEnabled(state:"intent",preview:false,busy:false))
     for state in ["none","completed","reconciled","unavailable","forged"] { precondition(!reconciliationEnabled(state:state,preview:false,busy:false)) }
