@@ -1279,6 +1279,8 @@ if CommandLine.arguments.contains("--self-test") {
     let previewApp = App(); previewApp.previewOverride = true; previewApp.connectFleetButton = NSButton(); previewApp.disconnectFleetButton = NSButton()
     precondition(previewApp.previewOnly)
     precondition(endedFleetStatus("status", disconnected: false, preview: previewApp.previewOnly).contains("Read-only preview"))
+    let windowCloseApp = App()
+    precondition(!windowCloseApp.applicationShouldTerminateAfterLastWindowClosed(NSApp))
     let replacement=SavedFleetCredential(token:fixtureToken,created:101,expires:201)
     var raceDeletes=0
     let replacementStore=LoginFleetCredentialStore(open:{ (errSecSuccess,loginFixture) },copy:{ query in

@@ -73,11 +73,13 @@ local integrity packaging, not developer notarization, a new permission grant,
 or an override of execution approval. Its default is a read-only preview with lifecycle and restart buttons disabled.
 In preview mode (`GARGOYL_PREVIEW=1`), the UI truthfully reports that account fleet reading
 and saved-session restore are disabled in preview, rather than demanding reconnect.
-In normal GUI mode, unexpired saved sessions are recovered automatically with bounded
-exponential backoff (up to 5 attempts) without repeating consent prompts. Closing or
-quitting the app cleanly stops the reader child process; reopening restores the saved session.
-Detached background collection when the GUI is closed requires an explicit opt-in user
-LaunchAgent and Keychain ACL boundary.
+In normal GUI mode, closing the window leaves `Gargoyl.app` and the reader child process
+running (`applicationShouldTerminateAfterLastWindowClosed` returns `false`). Actual process
+exit or quitting the app (**Gargoyl → Quit** / Command-Q) delivers EOF on the private pipe
+and cleanly stops the reader. Reopening or launching the app restores the saved session
+automatically with bounded exponential backoff (up to 5 attempts) without repeating consent
+prompts. Detached background collection when the application process is not running requires
+an explicit opt-in user LaunchAgent and Keychain ACL boundary.
 Release preparation can enable native controls with the build option `--enable-native-actions`;
 this does not grant permissions, authenticate or invoke a restart. It must not be mistaken
 for live repair activation. The current pilot recognizes only UID 501 on MBP-26, the existing

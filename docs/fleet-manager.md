@@ -114,11 +114,15 @@ diagnostics or false inferences of credential revocation:
 3. **Authentication required (`auth_required`)**: Darkbloom API explicitly rejected
    the token (`401 Unauthorized` or invalid grant). A fresh device-flow connection
    is required. Disconnected cache or missing processes never infer this state.
-4. **Intentional stop (`stopped`)**: User clicked **Disconnect fleet** or quit the
-   app. The session was closed cleanly with explicit intent.
-5. **Loss of supervising GUI (`loss_of_supervising_gui`)**: Supervising `Gargoyl.app`
-   exited (pipe EOF). The reader shut down cleanly. When reopening the normal GUI,
-   any valid saved session is restored automatically without re-prompting.
+4. **Intentional stop (`stopped`)**: User clicked **Disconnect fleet** or explicitly
+   quit the application process (**Gargoyl → Quit** / Command-Q). The session was
+   closed cleanly with explicit intent. Note that closing the Mac window does not stop
+   collection: `applicationShouldTerminateAfterLastWindowClosed` returns `false`,
+   keeping `Gargoyl.app` and its reader child process actively running in the background.
+5. **Loss of supervising GUI (`loss_of_supervising_gui` / `pipe_eof`)**: Supervising
+   `Gargoyl.app` process terminated or was killed, delivering EOF on the reader's
+   standard input pipe. The reader shut down cleanly. When reopening or launching the
+   normal GUI, any valid saved session is restored automatically without re-prompting.
 6. **Read-only preview (`preview`)**: App is running in read-only preview mode
    (`GARGOYL_PREVIEW=1`). The interface truthfully reports that saved-session
    restore and background collection are disabled in preview, rather than demanding
@@ -143,13 +147,18 @@ private pipe:
 
 ### Background durability gap and detached supervision boundary
 
-The reader process lifetime is currently coupled to the running native GUI: closing or
-quitting `Gargoyl.app` delivers EOF on the reader's standard input pipe, prompting clean
-reader shutdown. The existing local monitor LaunchAgent (`gargoyl monitor`) does not
-supervise the account reader: the monitor runs in an isolated local sandbox with no
-login Keychain access and no network egress to Darkbloom API endpoints.
+The reader process lifetime is coupled to the running native GUI application process.
+Closing the Mac window keeps collection running: `applicationShouldTerminateAfterLastWindowClosed`
+returns `false`, matching the connection sheet confirmation ("Closing the window keeps collection
+running"). However, quitting `Gargoyl.app` (**Gargoyl → Quit** / Command-Q) or terminating
+the app process closes its file descriptors and delivers EOF on the reader's standard
+input pipe, prompting clean reader shutdown (`exit_reason="pipe_eof"`). The existing local
+monitor LaunchAgent (`gargoyl monitor`) does not supervise the account reader: the monitor
+runs in an isolated local sandbox with no login Keychain access and no network egress to
+Darkbloom API endpoints.
 
-Genuinely durable detached background supervision when the GUI is closed requires an
+Genuinely durable detached background supervision when the application process is not
+running (outside GUI process lifetime) requires an explicit new security boundary:
 explicit new security boundary:
 - A dedicated user LaunchAgent (`dev.gargoyl.account-reader.plist`) running within the
   user's GUI login session.

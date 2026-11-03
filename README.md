@@ -46,10 +46,11 @@ heartbeat-format evidence and opt-in remembered sign-in improve normal graphical
 operation. Actual macOS acceptance on November 1 verified saved read-only sign-in
 resuming after quit/reopen without another authorization; this is separate from
 fake-adapter tests and preserves the original grant expiry. Durable reader lifecycle
-diagnostics distinguish preview mode limits, GUI closure, and transient retry from
-true authentication revocation. Saved-session recovery in normal GUI mode is bounded
-and prompt-free; detached background supervision when the app is closed remains an
-explicit opt-in boundary. Independent remote observation and durable normalized history
+diagnostics distinguish preview mode limits, application process termination/quit, and
+transient retry from true authentication revocation. Saved-session recovery in normal GUI
+mode is bounded and prompt-free, with collection persisting across window close; detached
+background supervision when the app process is not running remains an explicit opt-in
+boundary. Independent remote observation and durable normalized history
 remain later work; no synthetic entries substitute for missing coverage.
 
 The GitHub epics define the implementation sequence: privacy and identity foundation, collector, evidence dashboard, controlled repair runbooks, then pilot hardening.

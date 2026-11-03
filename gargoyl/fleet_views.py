@@ -257,6 +257,12 @@ def render_fleet(
                         "These are cached records; reconnect or resume saved sign-in for current reports. "
                         "Heartbeat timestamps are historical evidence."
                     )
+                elif reason == "intentional_quit":
+                    warn_text = (
+                        "Application was quit by user intent; account reader stopped cleanly. "
+                        "These are cached records; reopening Gargoyl will resume collection if a saved sign-in exists. "
+                        "Heartbeat timestamps are historical evidence."
+                    )
                 else:
                     warn_text = (
                         f"Account reader has stopped ({reason}). "

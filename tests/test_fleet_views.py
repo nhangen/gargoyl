@@ -127,6 +127,22 @@ class FleetViewTests(unittest.TestCase):
         self.assertIn("Account reader has stopped (unknown)", unknown_page)
         self.assertIn("no credential rejection is inferred", unknown_page)
 
+        # 5. Application quit by user intent: reader stopped cleanly with GUI
+        quit_lifecycle = {"status": "stopped", "exit_reason": "intentional_quit"}
+        quit_page = render_view(
+            "fleet", None, None, inventory=value, now=NOW, lifecycle=quit_lifecycle
+        )
+        self.assertIn("Application was quit by user intent", quit_page)
+        self.assertNotIn("auth_required", quit_page)
+
+        # 6. Intentional disconnect: user disconnected collection
+        disconnect_lifecycle = {"status": "stopped", "exit_reason": "intentional_disconnect"}
+        disc_page = render_view(
+            "fleet", None, None, inventory=value, now=NOW, lifecycle=disconnect_lifecycle
+        )
+        self.assertIn("Account collection was disconnected by user intent", disc_page)
+        self.assertNotIn("auth_required", disc_page)
+
     def test_management_projection_and_html_distinguish_preview_mode(self):
         from gargoyl.fleet_management import management_html, management_projection
 
