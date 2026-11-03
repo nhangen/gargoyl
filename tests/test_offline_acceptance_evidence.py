@@ -111,7 +111,11 @@ class OfflineAcceptanceEvidenceRunnerTests(unittest.TestCase):
 
     def test_deviation_from_hand_computed_labels_exits_nonzero(self):
         source = RUNNER.read_text(encoding="utf-8")
-        mutated = source.replace('"stale"', '"observed"')
+        # Preserve checkout import precedence in the scratch mutant copy.
+        mutated = source.replace(
+            "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))",
+            f"sys.path.insert(0, {repr(str(ROOT))})"
+        ).replace('"stale"', '"observed"')
         self.assertNotEqual(mutated, source)
         self.assertNotIn('"stale"', mutated)
         with tempfile.TemporaryDirectory(prefix="gargoyl-offline-evidence-mutant-") as tmp:
@@ -133,9 +137,18 @@ class OfflineAcceptanceEvidenceRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
 
-    def test_runner_imports_this_checkout_within_test_environment(self):
-        import gargoyl
-        self.assertEqual(str(Path(gargoyl.__file__).resolve().parents[1]), str(ROOT))
+    def test_runner_imports_this_checkout_even_with_decoy_on_pythonpath_and_external_cwd(self):
+        with tempfile.TemporaryDirectory(prefix="gargoyl-decoy-") as decoy_tmp:
+            decoy_gargoyl = Path(decoy_tmp) / "gargoyl"
+            decoy_gargoyl.mkdir()
+            (decoy_gargoyl / "__init__.py").write_text('raise RuntimeError("decoy gargoyl imported")\n', encoding="utf-8")
+            out = Path(decoy_tmp) / "out"
+            env = {**os.environ, "PYTHONPATH": decoy_tmp, "PYTHONWARNINGS": "ignore"}
+            result = subprocess.run([sys.executable, str(RUNNER), "--out", str(out)],
+                                    cwd=decoy_tmp, capture_output=True, text=True, timeout=60, env=env)
+            self.assertEqual(result.returncode, 0, f"stdout: {result.stdout}\nstderr: {result.stderr}")
+            self.assertNotIn("decoy gargoyl imported", result.stderr)
+            self.assertTrue((out / "offline_acceptance_evidence.json").is_file())
 
 
 if __name__ == "__main__":

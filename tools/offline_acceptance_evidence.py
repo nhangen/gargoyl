@@ -14,15 +14,12 @@ import json
 import sys
 from pathlib import Path
 
-try:
-    from gargoyl.collector import collect
-    from gargoyl.dashboard import build_dashboard, render_dashboard
-    from gargoyl.telemetry import decode_snapshot, encode_snapshot
-except ModuleNotFoundError:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from gargoyl.collector import collect
-    from gargoyl.dashboard import build_dashboard, render_dashboard
-    from gargoyl.telemetry import decode_snapshot, encode_snapshot
+# A script starts with tools/ on sys.path; prioritize this checkout, never a stale
+# editable installation elsewhere in the shared development environment.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from gargoyl.collector import collect
+from gargoyl.dashboard import build_dashboard, render_dashboard
+from gargoyl.telemetry import decode_snapshot, encode_snapshot
 
 MARKER = "OFFLINE FIXTURE SOFTWARE EVIDENCE"
 NOTE = (
