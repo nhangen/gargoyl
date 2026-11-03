@@ -61,7 +61,10 @@ def missing_offline_host():
 
 
 def stale_snapshot():
-    snapshots = [collect(STALE_HOST, REFERENCE_TIME, {})]
+    snapshots = [collect(STALE_HOST, REFERENCE_TIME, {
+        "daemon_state": {"value": "running", "source": "daemon", "timestamp": REFERENCE_TIME,
+                         "freshness_seconds": 60, "state": "observed", "sensitivity": "safe"},
+    })]
     host, evaluated = STALE_HOST, LATER_EVALUATION
     dashboard = build_dashboard(snapshots, [host], evaluated)
     page = render_dashboard(snapshots, [host], evaluated)
@@ -70,9 +73,13 @@ def stale_snapshot():
     check(records, "collector_heartbeat_incident_after_ttl",
           ["collector_heartbeat_not_current"], dashboard["hosts"][0]["incidents"])
     check(records, "heartbeat_effective_state", "stale", latest["heartbeat_age_seconds"][0]["state"])
-    check(records, "unknown_report_becomes_stale_after_ttl", "stale", latest["daemon_state"][0]["state"])
-    check(records, "reported_state_is_preserved", "unknown", latest["daemon_state"][0]["reported_state"])
-    check(records, "render_shows_stale_glyph", True, "ev ev-stale" in page)
+    check(records, "observed_reading_becomes_stale_after_ttl", "stale", latest["daemon_state"][0]["state"])
+    check(records, "observed_reported_state_preserved", "observed", latest["daemon_state"][0]["reported_state"])
+    check(records, "observed_value_preserved_when_stale", "running", latest["daemon_state"][0]["value"])
+    check(records, "render_shows_stale_daemon_state", True,
+          "<th>daemon_state</th><td>stale (reported: observed)</td><td>running</td>" in page)
+    check(records, "render_needs_attention_stale_report", True,
+          "daemon_state: stale daemon report" in page)
     return snapshots, host, evaluated, dashboard, page, records
 
 

@@ -76,12 +76,14 @@ class OfflineAcceptanceEvidenceRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gargoyl-offline-evidence-") as tmp:
             run_runner(tmp)
             scenario = self.load(tmp)["scenarios"]["stale_snapshot"]
-            self.assertEqual(self.check(scenario, "unknown_report_becomes_stale_after_ttl")["expected"], "stale")
-            self.assertEqual(self.check(scenario, "reported_state_is_preserved")["actual"], "unknown")
+            self.assertEqual(self.check(scenario, "observed_reading_becomes_stale_after_ttl")["expected"], "stale")
+            self.assertEqual(self.check(scenario, "observed_reported_state_preserved")["actual"], "observed")
+            self.assertEqual(self.check(scenario, "observed_value_preserved_when_stale")["actual"], "running")
             self.assertEqual(self.check(scenario, "collector_heartbeat_incident_after_ttl")["actual"],
                              ["collector_heartbeat_not_current"])
             page = (Path(tmp) / "stale_snapshot.html").read_text(encoding="utf-8")
-            self.assertIn("ev ev-stale", page)
+            self.assertIn("<th>daemon_state</th><td>stale (reported: observed)</td><td>running</td>", page)
+            self.assertIn("daemon_state: stale daemon report", page)
 
     def test_clock_skew_scenario_pins_supplied_reference_and_future_unknown(self):
         with tempfile.TemporaryDirectory(prefix="gargoyl-offline-evidence-") as tmp:
@@ -127,7 +129,7 @@ class OfflineAcceptanceEvidenceRunnerTests(unittest.TestCase):
             out = Path(tmp) / "out"
             result = run_runner(out, script=copy)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("mismatch [stale_snapshot] unknown_report_becomes_stale_after_ttl", result.stderr)
+            self.assertIn("mismatch [stale_snapshot] observed_reading_becomes_stale_after_ttl", result.stderr)
             self.assertIn("expected 'observed', got 'stale'", result.stderr)
             evidence = json.loads((out / "offline_acceptance_evidence.json").read_text(encoding="utf-8"))
             self.assertFalse(evidence["all_matched"])
