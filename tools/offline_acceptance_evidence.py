@@ -2,8 +2,8 @@
 
 Builds synthetic host scenarios (missing/offline host, stale snapshot, clock skew
 against a supplied reference time, coordinator disagreement), runs them through the
-production collector, ingestion and dashboard projection/rendering entry paths at a
-fixed reference time, and asserts hand-computed effective labels. Artifacts are
+production collector, v1 telemetry encode/decode and dashboard projection/rendering
+entry paths at a fixed reference time, and asserts hand-computed effective labels. Artifacts are
 statically marked OFFLINE FIXTURE SOFTWARE EVIDENCE; no health inference, provider
 action, network use or real fleet status is produced or implied. Exit nonzero if any
 effective label deviates from the hand-computed expectation.
