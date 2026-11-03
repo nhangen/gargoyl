@@ -165,7 +165,10 @@ func aliasRows(_ value:[String:Any]) -> [[String:String]]? {
     }
     return rows
 }
-func endedFleetStatus(_ previous:String, disconnected:Bool) -> String {
+func endedFleetStatus(_ previous:String, disconnected:Bool, preview:Bool=false) -> String {
+    if preview {
+        return "Read-only preview: account connection, saved-session recovery and provider controls are disabled; cached reports are retained."
+    }
     return disconnected ? "Account memory collection disconnected. Saved sign-in is separate; use Forget to remove it." : previous + " Account session ended; cached reports are not live. Reconnect to resume."
 }
 func viewDestination(_ url: URL?, mainFrame: Bool) -> String? {
@@ -269,7 +272,7 @@ final class Worker {
     var completion = CompletionGate()
     let event: ([String: Any]) -> Void
     let finished: (Worker) -> Void
-    init(mode: String, event: @escaping ([String: Any]) -> Void, finished: @escaping (Worker) -> Void) throws {
+    init(mode: String, preview: Bool = false, event: @escaping ([String: Any]) -> Void, finished: @escaping (Worker) -> Void = { _ in }) throws {
         self.mode = mode; self.event = event; self.finished = finished
         var pythonPath = Bundle.main.object(forInfoDictionaryKey: "GargoylPython") as? String
         #if GARGOYL_NATIVE_TESTS
@@ -286,7 +289,9 @@ final class Worker {
         else { throw NSError(domain: "Gargoyl", code: 2) }
         process.executableURL = executable
         process.arguments = ["-I", "-B", "-m", "gargoyl.gui_runtime", mode]
-        process.environment = ["HOME":NSHomeDirectory(), "PATH":"/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE":"1"]
+        var env = ["HOME":NSHomeDirectory(), "PATH":"/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE":"1"]
+        if preview { env["GARGOYL_PREVIEW"] = "1" }
+        process.environment = env
         process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
         process.standardInput = input; process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -391,6 +396,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var fleetUserCode: String?
     var fleetAuthPresented = false
     var fleetAuthTimer: Timer?
+    var fleetRecoveryTimer: Timer?
     var fleetRefreshTimer: Timer?
     var connectFleetButton: NSButton!
     var accountMenu: NSMenu?
@@ -434,7 +440,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         connectFleetButton = NSButton(title:"Connect fleet…",target:self,action:#selector(connectFleet))
         disconnectFleetButton = NSButton(title:"Disconnect fleet",target:self,action:#selector(disconnectFleet)); disconnectFleetButton.isEnabled = false
         forgetFleetButton = NSButton(title:"Forget saved sign-in…",target:self,action:#selector(forgetSavedFleet)); forgetFleetButton.isEnabled = !previewOnly && self.readRemember()
-        if previewOnly { connectFleetButton.isEnabled = false }
+        if previewOnly {
+            connectFleetButton.isEnabled = false
+            fleetStatus.stringValue = "Read-only preview: account connection, saved sign-in, and provider control are disabled."
+        }
         let account = NSMenu(title:"Account")
         let header = NSMenuItem(title:"Darkbloom account · read-only",action:nil,keyEquivalent:""); header.isEnabled = false
         account.addItem(header)
@@ -566,7 +575,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         let generation = viewSelection.generation
         var delivered = false
         do {
-            viewWorker = try Worker(mode:"view-" + view,event:{ [weak self] value in
+            viewWorker = try Worker(mode:"view-" + view,preview:previewOnly,event:{ [weak self] value in
                 guard let self = self, self.viewSelection.accepts(generation),
                       value["kind"] as? String == "view", value["view"] as? String == view,
                       let html = value["html"] as? String, html.utf8.count <= 500000,
@@ -627,6 +636,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     @objc func disconnectFleet() {
         fleetGeneration += 1
+        fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
         dismissFleetAuthorization()
         fleetWorker?.disconnectFleet()
         fleetStatus.stringValue = "Disconnecting account collection. Local monitoring and Darkbloom remain unchanged."
@@ -700,6 +710,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     func beginFleet(remember:Bool, restored:SavedFleetCredential?, retryCount:Int=0) {
         guard !previewOnly, fleetWorker == nil, ownerActive() else { return }
         if remember && keychainBusy { show("Remember is unavailable while another Keychain operation is pending. Try again when it finishes."); return }
+        fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
         fleetRetryCount=retryCount; lastFleetReason=""
         savedFleetState=FleetSavedSessionState(); savedFleetState.credential=restored; savedFleetState.stored=restored != nil
         fleetGeneration += 1; let generation = fleetGeneration; fleetAuthPresented = false
@@ -719,17 +730,24 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                 guard let self = self, self.fleetWorker === completed else { return }
                 self.dismissFleetAuthorization(); self.fleetWorker = nil
                 self.connectFleetButton.isEnabled = !self.previewOnly; self.disconnectFleetButton.isEnabled = false
-                self.fleetStatus.stringValue = endedFleetStatus(self.fleetStatus.stringValue,disconnected:generation != self.fleetGeneration)
+                self.fleetStatus.stringValue = endedFleetStatus(self.fleetStatus.stringValue,disconnected:generation != self.fleetGeneration,preview:self.previewOnly)
                 self.refresh()
-                if generation == self.fleetGeneration, self.lastFleetReason == "session_busy", completed.mode == "fleet-restore", self.fleetRetryCount < 6, let saved=self.savedFleetState.credential {
-                    let attempt=self.fleetRetryCount+1
-                    self.connectFleetButton.isEnabled=false; self.disconnectFleetButton.isEnabled=true
-                    self.fleetStatus.stringValue="Waiting for the previous account reader to close… No new grant or provider action."
-                    Timer.scheduledTimer(withTimeInterval:3,repeats:false) { [weak self] _ in
-                        guard let self=self, generation == self.fleetGeneration, self.fleetWorker == nil else { return }
-                        self.resetRestoreControls(generation:generation)
-                        guard ownerActive(), saved.expires > Date().timeIntervalSince1970 else { return }
-                        self.beginFleet(remember:false,restored:saved,retryCount:attempt)
+                if generation == self.fleetGeneration, !self.previewOnly, self.lastFleetReason != "auth_required", self.lastFleetReason != "scope_refused", self.lastFleetReason != "expired", let saved=self.savedFleetState.credential, saved.expires > Date().timeIntervalSince1970 {
+                    if self.fleetRetryCount < 5 {
+                        let attempt = self.fleetRetryCount + 1
+                        let delay: Double = self.lastFleetReason == "session_busy" ? 3.0 : min(60.0, 3.0 * pow(2.0, Double(self.fleetRetryCount)))
+                        self.connectFleetButton.isEnabled = false; self.disconnectFleetButton.isEnabled = true
+                        let reasonDesc = self.lastFleetReason == "session_busy" ? "Waiting for the previous account reader to close…" : "Recovering account reader with saved sign-in…"
+                        self.fleetStatus.stringValue = "\(reasonDesc) Retrying in \(Int(delay))s (attempt \(attempt)/5). No new grant or provider action."
+                        self.fleetRecoveryTimer?.invalidate()
+                        self.fleetRecoveryTimer = Timer.scheduledTimer(withTimeInterval:delay,repeats:false) { [weak self] _ in
+                            guard let self=self, generation == self.fleetGeneration, self.fleetWorker == nil else { return }
+                            self.resetRestoreControls(generation:generation)
+                            guard self.fleetOwner(), saved.expires > Date().timeIntervalSince1970 else { return }
+                            self.beginFleet(remember:false,restored:saved,retryCount:attempt)
+                        }
+                    } else {
+                        self.fleetStatus.stringValue = "Account reader recovery stopped after reaching retry budget. Saved sign-in is preserved; resume manually when available."
                     }
                 }
             })
@@ -1258,6 +1276,9 @@ if CommandLine.arguments.contains("--self-test") {
     deniedRestore.credentialStore=LoginFleetCredentialStore(open:{ (errSecUserCanceled,nil) })
     deniedRestore.restoreSavedFleetIfEnabled(); waitFakeKeychain(deniedRestore)
     precondition(deniedFlag && deniedRestore.connectFleetButton.isEnabled && !deniedRestore.disconnectFleetButton.isEnabled)
+    let previewApp = App(); previewApp.previewOverride = true; previewApp.connectFleetButton = NSButton(); previewApp.disconnectFleetButton = NSButton()
+    precondition(previewApp.previewOnly)
+    precondition(endedFleetStatus("status", disconnected: false, preview: previewApp.previewOnly).contains("Read-only preview"))
     let replacement=SavedFleetCredential(token:fixtureToken,created:101,expires:201)
     var raceDeletes=0
     let replacementStore=LoginFleetCredentialStore(open:{ (errSecSuccess,loginFixture) },copy:{ query in
@@ -1287,6 +1308,8 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(URLComponents(url:fleetSignInURL,resolvingAgainstBaseURL:false)!.queryItems == [URLQueryItem(name:"purpose",value:"desktop_account")])
     precondition(endedFleetStatus("Account API returned 4 records.",disconnected:false).contains("session ended; cached reports are not live"))
     precondition(endedFleetStatus("scope confirmed",disconnected:true).contains("disconnected"))
+    precondition(endedFleetStatus("Account API returned 4 records.",disconnected:false,preview:true).contains("Read-only preview"))
+    precondition(!endedFleetStatus("Account API returned 4 records.",disconnected:false,preview:true).contains("Reconnect to resume"))
     for change in [["expires_in":true],["purpose":"provider"],["token":"must-not-cross-native-pipe"],["expires_in":901],["user_code":"bad\ncode"]] as [[String:Any]] {
         var bad = accountPreview; bad.merge(change) { _,new in new }; precondition(!validFleetAuthorization(bad))
     }
