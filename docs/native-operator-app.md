@@ -1,10 +1,12 @@
 # Gargoyl Mac application
 
 Normal operation is graphical. Open **Gargoyl.app** to see the existing live
-console in a standard resizable Mac window with close, minimize, zoom and full-screen controls. Closing the window leaves the background monitor and provider running; reopening the app shows the window again. The native toolbar is one row: an **Account** menu (Connect fleet…, Resume saved
-sign-in, Disconnect fleet, Forget saved sign-in…), **Local aliases…**, **Refresh**,
-**Start local monitor**, **Stop local monitor**, **Export local report…**, then
-**Operation status** and **Restart local provider…** set apart at the end. Start/Stop affects only the
+console in a standard resizable Mac window with close, minimize, zoom and full-screen controls. Closing the window leaves the background monitor and provider running; reopening the app shows the window again. The window's native title-bar toolbar has an **Account** menu (Connect fleet…, Resume saved
+sign-in, Disconnect fleet, Forget saved sign-in…), **Aliases…**, **Refresh**,
+**Start monitor**, **Stop monitor**, **Export local…**, then
+**Operation status**, **Reconcile…** and, set apart, **Restart local…** at
+the end. Hover any item for its full description. Narrow windows move extra items into the toolbar's overflow menu. Status messages
+appear in the small status area at the bottom of the window. Start/Stop affects only the
 existing Gargoyl monitoring job, never Darkbloom. Export opens a Mac save dialog
 for bounded normalized evidence; raw provider logs and credentials are excluded.
 The public browser dashboard remains read-only, and the app needs no pairing
@@ -30,7 +32,7 @@ AppKit hide/unhide events and the application's hidden state.
 
 ## Manual restart
 
-Choose **Restart provider…**. Gargoyl verifies the current MBP-26 installation
+Choose **Restart local…**. Gargoyl verifies the current MBP-26 installation
 and shared operation journal before showing the target process/version and
 interruption/recovery effects. Continue to the Mac authentication dialog; macOS
 handles Touch ID or the existing Mac password. Cancelling, expiry, unavailable
@@ -43,7 +45,7 @@ replacement evidence. There is no force or automatic retry. Closing the app
 after acceptance does not cancel the worker or retry the request. Reopen the app
 and choose **Operation status** to inspect the durable shared CLI/app journal.
 An interrupted or unverified outcome blocks further attempts. Use **Operation
-status → Record reconciliation…** for an explicit read-only review; it never
+status → Reconcile…** for an explicit read-only review; it never
 clears a Darkbloom guard, invokes the provider or retries the prior request. CLI success and replacement
 evidence do not independently establish coordinator or protocol health.
 
@@ -93,13 +95,13 @@ freshness at viewing time. It does not force a source poll. Pages explicitly say
 that they do not refresh automatically. History retains at most 64 samples in
 monitor memory and is lost when the monitor restarts.
 
-Use the native toolbar for Start/Stop local monitor, Refresh, Export local report…,
-Operation status, and Restart local provider…. Export opens the standard Mac Save dialog. Start
-and Stop affect only Gargoyl's configured monitor. Restart local provider opens the
+Use the native toolbar for Start monitor/Stop monitor, Refresh, Export local…,
+Operation status, and Restart local…. Export opens the standard Mac Save dialog. Start
+and Stop affect only Gargoyl's configured monitor. Restart local… opens the
 existing exact-target/interruption review followed by Mac owner authentication;
 no page link can invoke it. Progress stays in the native status area and outcome
 in the shared journal. Intent and unknown records remain blocked by the shared native/CLI/browser gate.
-The **Record reconciliation…** native button is available only for intent/unknown
+The **Reconcile…** native button is available only for intent/unknown
 records outside preview mode and while no manual worker is active. It reviews the
 original operation/target and current observed identity, then requires fresh Mac
 owner confirmation. It refuses while the exact recorded command is alive; if no
