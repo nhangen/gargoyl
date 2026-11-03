@@ -138,6 +138,13 @@ class OfflineAcceptanceEvidenceRunnerTests(unittest.TestCase):
             self.assertIn("expected 'observed', got 'stale'", result.stderr)
             evidence = json.loads((out / "offline_acceptance_evidence.json").read_text(encoding="utf-8"))
             self.assertFalse(evidence["all_matched"])
+            stale_page = (out / "stale_snapshot.html").read_text(encoding="utf-8")
+            self.assertIn(f"{RUNNER_MODULE.MARKER} (FAIL)", stale_page)
+            self.assertNotIn(f"{RUNNER_MODULE.MARKER} (PASS)", stale_page)
+            for name in ("missing_offline_host", "clock_skew_reference", "coordinator_disagreement"):
+                unaffected_page = (out / f"{name}.html").read_text(encoding="utf-8")
+                self.assertIn(f"{RUNNER_MODULE.MARKER} (PASS)", unaffected_page)
+                self.assertNotIn(f"{RUNNER_MODULE.MARKER} (FAIL)", unaffected_page)
 
     def test_output_requirement_is_enforced(self):
         result = subprocess.run([sys.executable, str(RUNNER)], cwd=ROOT,
