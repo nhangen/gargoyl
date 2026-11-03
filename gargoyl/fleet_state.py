@@ -413,7 +413,6 @@ class FleetCache:
         if now is not None:
             age = (timestamp(now) - timestamp(value["observed_at"])).total_seconds()
             if age < 0 or age > RETENTION:
-                self.clear_lifecycle()
                 return None
         return value
 
@@ -552,6 +551,22 @@ def validate_reader_lifecycle(value):
     return value
 
 
+def reader_process_alive(incarnation):
+    """Verify reader process identity against kernel process reality.
+
+    Unlike manual_restart's conservative restart behavior, unread start time
+    (born_us is None) is never assumed to be the same process.
+    """
+    if type(incarnation) is not dict:
+        return False
+    born_us = incarnation.get("born_us")
+    if born_us is None:
+        return False
+    from gargoyl.manual_restart import process_start
+
+    return process_start(incarnation.get("pid")) == born_us
+
+
 def effective_lifecycle(cache, now, alive=None):
     """Resolve reader lifecycle against kernel process reality.
 
@@ -560,16 +575,25 @@ def effective_lifecycle(cache, now, alive=None):
     speculating or assuming credential rejection.
     """
     timestamp(now)
-    if alive is None:
-        from gargoyl.manual_restart import process_alive
-
-        alive = process_alive
     record = cache.read_lifecycle(now)
     if record is None:
         return None
+    if record.get("owner_uid") != cache.uid:
+        return dict(
+            record,
+            status="exited",
+            exit_reason="owner_inactive",
+            observed_at=now,
+        )
     if record["status"] in {"running", "transient_failure", "starting"}:
         incarnation = record.get("incarnation")
-        if incarnation is None or not alive(incarnation):
+        is_alive = False
+        if incarnation is not None and incarnation.get("born_us") is not None:
+            if alive is not None:
+                is_alive = alive(incarnation)
+            else:
+                is_alive = reader_process_alive(incarnation)
+        if not is_alive:
             reason = record.get("exit_reason")
             if reason in {None, "none"}:
                 reason = "unknown"

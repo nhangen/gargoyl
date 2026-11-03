@@ -325,31 +325,6 @@ def run_session(cache, **kwargs):
         reason = (
             error.reason if isinstance(error, FleetError) else "unavailable"
         )
-        if reason == "session_busy":
-            try:
-                now_fn = kwargs.get("now", utc_now)
-                cur_now = now_fn()
-                active = cache.read_lifecycle(cur_now)
-                if active is None or active.get("status") not in {
-                    "running",
-                    "transient_failure",
-                }:
-                    busy_record = {
-                        "schema": 1,
-                        "status": "session_busy",
-                        "observed_at": cur_now,
-                        "owner_uid": cache.uid,
-                        "incarnation": current_incarnation(),
-                        "started_at": cur_now,
-                        "last_read_at": None,
-                        "exit_reason": "unknown",
-                        "exit_status": None,
-                        "retry_count": kwargs.get("retry_count", 0),
-                        "retry_budget": 5,
-                    }
-                    cache.write_lifecycle(busy_record)
-            except (OSError, ValueError):
-                pass
         try:
             kwargs["send"](
                 dict(
