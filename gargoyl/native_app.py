@@ -463,6 +463,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if previewOnly { restartButton.isEnabled = false }
         bar.addView(restartButton,in:.trailing)
         bar.setHuggingPriority(.defaultLow,for:.horizontal)
+        // Controls keep their natural width; spare row width goes between the leading and trailing groups.
+        bar.distribution = .gravityAreas
+        for view in bar.views { view.setContentHuggingPriority(.required,for:.horizontal) }
         let config = WKWebViewConfiguration(); config.defaultWebpagePreferences.allowsContentJavaScript = false
         config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self; web.uiDelegate = self
