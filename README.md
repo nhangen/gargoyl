@@ -68,6 +68,15 @@ owner-local daemon-state file, keeps bounded memory history, displays recent fre
 counter changes, and offers foreground start/stop/status. Counter changes do not
 establish earnings or reliably detect every reset. Repairs remain disabled. No host
 enrollment or persistent service is enabled by installation.
+For reproducible offline acceptance-fixture evidence, run
+`python tools/offline_acceptance_evidence.py --out DIR`: it applies production
+collector, v1 telemetry encode/decode and dashboard projection semantics to synthetic
+hosts at a fixed reference time (missing/offline host, stale snapshot, clock skew
+against a supplied reference time, and coordinator disagreement), writes marked JSON
+and static rendered HTML artifacts, and exits nonzero if any effective label deviates
+from its hand-computed expectation. Artifacts are labeled OFFLINE FIXTURE SOFTWARE
+EVIDENCE; missing host evidence stays unknown. This is not live acceptance,
+not a screenshot, and not real fleet status.
 Opt-in operator tools (`gargoyl monitor --operator-tools [--enable-restart]`) add
 private read-only checks and a confirmed manual Darkbloom restart in the browser,
 sharing one journal and gate with `gargoyl tools restart`; see
