@@ -32,7 +32,7 @@ AppKit hide/unhide events and the application's hidden state.
 
 ## Manual restart
 
-Choose **Restart provider…**. Gargoyl verifies the current MBP-26 installation
+Choose **Restart local…**. Gargoyl verifies the current MBP-26 installation
 and shared operation journal before showing the target process/version and
 interruption/recovery effects. Continue to the Mac authentication dialog; macOS
 handles Touch ID or the existing Mac password. Cancelling, expiry, unavailable
@@ -97,7 +97,7 @@ monitor memory and is lost when the monitor restarts.
 
 Use the native toolbar for Start monitor/Stop monitor, Refresh, Export local…,
 Operation status, and Restart local…. Export opens the standard Mac Save dialog. Start
-and Stop affect only Gargoyl's configured monitor. Restart local provider opens the
+and Stop affect only Gargoyl's configured monitor. Restart local… opens the
 existing exact-target/interruption review followed by Mac owner authentication;
 no page link can invoke it. Progress stays in the native status area and outcome
 in the shared journal. Intent and unknown records remain blocked by the shared native/CLI/browser gate.
