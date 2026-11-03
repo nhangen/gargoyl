@@ -123,7 +123,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         body += card("Traffic history", "Up to 64 retained samples. Counter observations do not prove routing, demand or earnings.", view="history")
         body += card("Refresh evidence", "Use Refresh in the native toolbar. Reads the latest monitor report; does not force a poll or run provider diagnostics.")
         body += card("Export diagnostics", "Use Export… in the native toolbar to choose a file. Normalized evidence only; no raw logs, model names or credentials.")
-        body += card("Manual provider restart", "Use Restart provider… in the native toolbar to review the exact installation and interruption, then confirm with your Mac. No action begins from these links. Preconditions are checked when you review; availability is not assumed.", view="operation", state="Changes service state · Mac confirmation required")
+        body += card("Manual provider restart", "Use Restart local… in the native toolbar to review the exact installation and interruption, then confirm with your Mac. No action begins from these links. Preconditions are checked when you review; availability is not assumed.", view="operation", state="Changes service state · Mac confirmation required")
         body += card("Local details", "Inspect collection boundaries and which capabilities are unavailable.", view="details")
         body += '</ul></section><section><h2>Not available in this app</h2><ul class="tool-list">'
         body += card("Provider status / doctor commands", "Not run here: upstream commands may load configuration or use network/helpers. Existing normalized evidence is available instead.", state="Unavailable")
@@ -178,10 +178,10 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
             if 'replacement' in record:
                 facts.append(("Replacement PID", record['replacement']['process']['pid']))
             body += ''.join('<div><dt>' + e(k) + '</dt><dd class="mono">' + e(v) + '</dd></div>' for k, v in facts) + '</dl>'
-        body += ('<p>Review the exact target and interruption with Restart provider… in the native toolbar. '
+        body += ('<p>Review the exact target and interruption with Restart local… in the native toolbar. '
                  'One shared durable journal prevents concurrent submissions. Intent and unknown records remain '
                  'blocked. Explicit read-only reconciliation permits a new attempt with fresh target and '
-                 'owner confirmation; it does not prove the previous outcome. This view never clears the gate. For an unresolved record, use Record reconciliation… in the native toolbar to review the exact operation and current observation, then confirm with your Mac. No provider command or backend-guard clearing runs; a running or unidentifiable command may keep recording blocked.</p>'
+                 'owner confirmation; it does not prove the previous outcome. This view never clears the gate. For an unresolved record, use Reconcile… in the native toolbar to review the exact operation and current observation, then confirm with your Mac. No provider command or backend-guard clearing runs; a running or unidentifiable command may keep recording blocked.</p>'
                  '<p>Accepted work may drain for 10 minutes; startup may take 3 minutes. No force or automatic '
                  'retry. An interrupted or uncertain command may leave the provider draining or unavailable. '
                  'Darkbloom has no durable request ledger; exactly-once execution is not claimed.</p>'
