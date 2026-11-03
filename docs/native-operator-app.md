@@ -77,9 +77,11 @@ In normal GUI mode, closing the window leaves `Gargoyl.app` and the reader child
 running (`applicationShouldTerminateAfterLastWindowClosed` returns `false`). Actual process
 exit or quitting the app (**Gargoyl → Quit** / Command-Q) delivers EOF on the private pipe
 and cleanly stops the reader. Reopening or launching the app restores the saved session
-automatically with bounded exponential backoff (up to 5 attempts) without repeating consent
-prompts. Detached background collection when the application process is not running requires
-an explicit opt-in user LaunchAgent and Keychain ACL boundary.
+automatically (subject to standard macOS Keychain access controls after app updates).
+In-process reader recovery reuses the active session grant with bounded exponential backoff
+(up to 5 attempts across a recovery sequence). Detached background collection when the
+application process is not running is blocked, requiring a dedicated LaunchAgent, explicit
+user consent for unattended background network egress, and resolved Keychain access architecture.
 Release preparation can enable native controls with the build option `--enable-native-actions`;
 this does not grant permissions, authenticate or invoke a restart. It must not be mistaken
 for live repair activation. The current pilot recognizes only UID 501 on MBP-26, the existing
