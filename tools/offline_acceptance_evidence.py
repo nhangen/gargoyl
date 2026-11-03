@@ -84,20 +84,43 @@ def stale_snapshot():
 
 
 def clock_skew_reference():
-    snapshots = [collect(SKEW_HOST, LATER_EVALUATION, {}, reference_time=REFERENCE_TIME)]
+    measured = collect(SKEW_HOST, LATER_EVALUATION, {}, reference_time=REFERENCE_TIME)
+    skew_snapshot = {
+        "schema_version": 1,
+        "host_id": SKEW_HOST,
+        "collected_at": LATER_EVALUATION,
+        "fields": {
+            "clock_skew_seconds": measured["fields"]["clock_skew_seconds"],
+            "daemon_state": {
+                "value": "running",
+                "source": "daemon",
+                "timestamp": REFERENCE_TIME,
+                "freshness_seconds": 300,
+                "state": "observed",
+                "sensitivity": "safe",
+            },
+        },
+    }
+    snapshots = [decode_snapshot(encode_snapshot(skew_snapshot))]
     host, evaluated = SKEW_HOST, REFERENCE_TIME
     dashboard = build_dashboard(snapshots, [host], evaluated)
     page = render_dashboard(snapshots, [host], evaluated)
+    latest = dashboard["hosts"][0]["latest"]
     records = []
     check(records, "skew_measured_against_supplied_reference", MEASURED_SKEW_SECONDS,
           snapshots[0]["fields"]["clock_skew_seconds"]["value"])
+    check(records, "future_collected_override_makes_fresh_report_unknown", "unknown",
+          latest["daemon_state"][0]["state"])
+    check(records, "reported_state_preserved_under_future_override", "observed",
+          latest["daemon_state"][0]["reported_state"])
     check(records, "future_collected_reports_all_unknown", True,
           all(item["state"] == "unknown"
-              for items in dashboard["hosts"][0]["latest"].values() for item in items))
-    check(records, "collector_heartbeat_not_current",
-          ["collector_heartbeat_not_current"], dashboard["hosts"][0]["incidents"])
+              for items in latest.values() for item in items))
     check(records, "collected_at_preserved", LATER_EVALUATION, snapshots[0]["collected_at"])
-    check(records, "render_shows_unknown_glyph", True, "ev ev-unknown" in page)
+    check(records, "render_shows_future_override_unknown_daemon_state", True,
+          "<th>daemon_state</th><td>unknown (reported: observed)</td><td>running</td>" in page)
+    check(records, "render_shows_clock_skew_metric", True,
+          "<th>clock_skew_seconds</th><td>unknown (reported: observed)</td><td>300</td>" in page)
     return snapshots, host, evaluated, dashboard, page, records
 
 

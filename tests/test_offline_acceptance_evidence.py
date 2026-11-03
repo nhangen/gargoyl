@@ -92,11 +92,16 @@ class OfflineAcceptanceEvidenceRunnerTests(unittest.TestCase):
             skew = self.check(scenario, "skew_measured_against_supplied_reference")
             self.assertEqual(skew["expected"], 300)
             self.assertEqual(skew["actual"], skew["expected"])
+            self.assertEqual(self.check(scenario, "future_collected_override_makes_fresh_report_unknown")["actual"], "unknown")
+            self.assertEqual(self.check(scenario, "reported_state_preserved_under_future_override")["actual"], "observed")
             self.assertEqual(self.check(scenario, "future_collected_reports_all_unknown")["actual"], True)
             self.assertEqual(scenario["evaluated_at"], RUNNER_MODULE.REFERENCE_TIME)
             snapshot = decode_snapshot(scenario["snapshots"][0].encode("utf-8"))
             self.assertEqual(snapshot["fields"]["clock_skew_seconds"]["value"], 300)
             self.assertEqual(snapshot["collected_at"], RUNNER_MODULE.LATER_EVALUATION)
+            page = (Path(tmp) / "clock_skew_reference.html").read_text(encoding="utf-8")
+            self.assertIn("<th>daemon_state</th><td>unknown (reported: observed)</td><td>running</td>", page)
+            self.assertIn("<th>clock_skew_seconds</th><td>unknown (reported: observed)</td><td>300</td>", page)
 
     def test_disagreement_scenario_pins_conflict_preservation_and_rendering(self):
         with tempfile.TemporaryDirectory(prefix="gargoyl-offline-evidence-") as tmp:
