@@ -56,7 +56,32 @@ class RestorePipeTests(unittest.TestCase):
         self.assertFalse(run.call_args.kwargs["remember"])
         self.assertLessEqual(run.call_args.kwargs["session_seconds"], 100)
         self.assertGreater(run.call_args.kwargs["session_seconds"], 95)
+        self.assertEqual(run.call_args.kwargs["retry_count"], 0)
         self.assertNotIn(b"private-fixture-token", emitted)
+
+    def test_restore_passes_valid_retry_count_and_rejects_invalid(self):
+        expiry = time.time() + 100
+        request = dict(
+            purpose="desktop_account",
+            token="darkbloom-at-private-fixture-token",
+            valid_until=expiry,
+            retry_count=3,
+        )
+        result, run, emitted = self.execute(json.dumps(request).encode() + b"\n")
+        self.assertEqual(result, 0)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.kwargs["retry_count"], 3)
+
+        # Invalid retry count (negative or above 5 or wrong type) fails closed
+        for bad_rc in (-1, 6, "3", True, 2.5):
+            bad_request = dict(
+                purpose="desktop_account",
+                token="darkbloom-at-private-fixture-token",
+                valid_until=expiry,
+                retry_count=bad_rc,
+            )
+            result, run, _ = self.execute(json.dumps(bad_request).encode() + b"\n")
+            self.assertEqual(result, 1)
 
     def test_broad_duplicate_expired_and_extra_frames_never_start_session(self):
         valid = dict(

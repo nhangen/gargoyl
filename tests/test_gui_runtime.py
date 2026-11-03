@@ -339,3 +339,25 @@ class MonitorControlTests(unittest.TestCase):
                 validate=lambda: Path("/synthetic/monitor.plist"),
             )
         self.assertEqual(runner.call_count, 1)
+
+    def test_native_view_plumbs_preview_environment(self):
+        from gargoyl.gui_runtime import native_view
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp).resolve()
+            with (
+                patch("gargoyl.gui_runtime.owner_home", return_value=tmp_path),
+                patch.dict(os.environ, {"GARGOYL_PREVIEW": "1"}),
+            ):
+                view_result = native_view("fleet")
+                self.assertEqual(view_result["kind"], "view")
+                self.assertEqual(view_result["view"], "fleet")
+                self.assertIn("Read-only preview mode", view_result["html"])
+                self.assertNotIn("Normal operator application is not running", view_result["html"])
+
+            with (
+                patch("gargoyl.gui_runtime.owner_home", return_value=tmp_path),
+                patch.dict(os.environ, {}, clear=True),
+            ):
+                normal_result = native_view("fleet")
+                self.assertNotIn("Read-only preview mode", normal_result["html"])

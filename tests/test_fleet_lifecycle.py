@@ -38,6 +38,7 @@ class FleetLifecycleTests(unittest.TestCase):
             "observed_at": NOW,
             "owner_uid": os.getuid(),
             "incarnation": {"pid": 1234, "born_us": 5678},
+            "gui_owner": {"pid": 4321, "born_us": 8765},
             "started_at": NOW,
             "last_read_at": NOW,
             "exit_reason": "none",
@@ -50,6 +51,12 @@ class FleetLifecycleTests(unittest.TestCase):
         loaded = self.cache.read_lifecycle(NOW)
         self.assertEqual(loaded, valid)
 
+        # Accepts None gui_owner or omitted gui_owner
+        valid_none_gui = dict(valid, gui_owner=None)
+        self.assertEqual(validate_reader_lifecycle(valid_none_gui), valid_none_gui)
+        valid_no_gui = {k: v for k, v in valid.items() if k != "gui_owner"}
+        self.assertEqual(validate_reader_lifecycle(valid_no_gui), valid_no_gui)
+
         # Rejects unknown keys, bad schema, bad statuses, or negative retry counts
         for bad in (
             dict(valid, schema=2),
@@ -58,6 +65,9 @@ class FleetLifecycleTests(unittest.TestCase):
             dict(valid, retry_count=-1),
             dict(valid, token="darkbloom-at-must-never-persist"),
             dict(valid, incarnation={"pid": -1, "born_us": 1}),
+            dict(valid, gui_owner={"pid": -1, "born_us": 1}),
+            dict(valid, gui_owner={"pid": 1, "born_us": -1}),
+            dict(valid, gui_owner="not-a-dict"),
         ):
             with self.assertRaises(FleetError):
                 validate_reader_lifecycle(bad)
@@ -90,6 +100,7 @@ class FleetLifecycleTests(unittest.TestCase):
         self.assertEqual(lifecycle["last_read_at"], NOW)
         self.assertEqual(lifecycle["status"], "exited")
         self.assertEqual(lifecycle["exit_reason"], "pipe_eof")
+        self.assertEqual(lifecycle["exit_status"], 1)
 
         raw_file = Path(self.cache.directory, "reader_lifecycle.json").read_text()
         self.assertNotIn("fixture-token", raw_file)

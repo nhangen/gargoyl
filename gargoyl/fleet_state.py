@@ -495,22 +495,24 @@ class FleetCache:
 
 
 def validate_reader_lifecycle(value):
+    keys = {
+        "schema",
+        "status",
+        "observed_at",
+        "owner_uid",
+        "incarnation",
+        "started_at",
+        "last_read_at",
+        "exit_reason",
+        "exit_status",
+        "retry_count",
+        "retry_budget",
+    }
+    if type(value) is dict and "gui_owner" in value:
+        keys.add("gui_owner")
     if (
         type(value) is not dict
-        or set(value)
-        != {
-            "schema",
-            "status",
-            "observed_at",
-            "owner_uid",
-            "incarnation",
-            "started_at",
-            "last_read_at",
-            "exit_reason",
-            "exit_status",
-            "retry_count",
-            "retry_budget",
-        }
+        or set(value) != keys
         or value["schema"] != LIFECYCLE_SCHEMA
         or value["status"] not in READER_STATUSES
         or instant(value["observed_at"]) is None
@@ -544,6 +546,22 @@ def validate_reader_lifecycle(value):
                 and (
                     type(incarnation["born_us"]) is not int
                     or incarnation["born_us"] < 0
+                )
+            )
+        ):
+            raise FleetError("invalid_data")
+    if "gui_owner" in value and value["gui_owner"] is not None:
+        gui_owner = value["gui_owner"]
+        if (
+            type(gui_owner) is not dict
+            or set(gui_owner) != {"pid", "born_us"}
+            or type(gui_owner["pid"]) is not int
+            or gui_owner["pid"] <= 0
+            or (
+                gui_owner["born_us"] is not None
+                and (
+                    type(gui_owner["born_us"]) is not int
+                    or gui_owner["born_us"] < 0
                 )
             )
         ):

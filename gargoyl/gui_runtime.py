@@ -481,24 +481,56 @@ def main():
                 raise ValueError("private pipes required")
             restored = None
             duration = PERSISTENT_SESSION_SECONDS if mode == "fleet-session-remember" else SESSION_SECONDS
+            retry_count = 0
             if mode == "fleet-restore":
                 from gargoyl.fleet_account import decode_json, token_valid
-                request = read_confirmation(sys.stdin.buffer, timeout=15, decoder=decode_json)
-                if type(request) is not dict or set(request) != {"purpose", "token", "valid_until"} or request["purpose"] != "desktop_account" or not token_valid(request["token"]):
+
+                request = read_confirmation(
+                    sys.stdin.buffer, timeout=15, decoder=decode_json
+                )
+                keys = set(request) if type(request) is dict else set()
+                if (
+                    type(request) is not dict
+                    or keys
+                    not in (
+                        {"purpose", "token", "valid_until"},
+                        {"purpose", "token", "valid_until", "retry_count"},
+                    )
+                    or request["purpose"] != "desktop_account"
+                    or not token_valid(request["token"])
+                ):
                     raise ValueError("saved account scope unavailable")
+                if "retry_count" in request:
+                    rc = request["retry_count"]
+                    if type(rc) is not int or not 0 <= rc <= 5:
+                        raise ValueError("invalid retry count")
+                    retry_count = rc
                 import math
                 import time
-                until=request["valid_until"]
-                if type(until) not in {int,float} or not math.isfinite(until):
+
+                until = request["valid_until"]
+                if type(until) not in {int, float} or not math.isfinite(until):
                     raise ValueError("saved account expiry unavailable")
-                duration=until-time.time()
+                duration = until - time.time()
                 if not 0 < duration <= PERSISTENT_SESSION_SECONDS:
                     raise ValueError("saved account expired")
                 restored = request["token"]
             os.set_blocking(sys.stdout.fileno(), False)
-            run_session(FleetCache(owner_home() / "Library/Application Support/Gargoyl", os.getuid()),
-                        owner=console_owner, wait=lambda seconds: pipe_wait(sys.stdin.buffer, seconds, console_owner),
-                        send=private_send, initial_token=restored, remember=mode == "fleet-session-remember", session_seconds=duration)
+            run_session(
+                FleetCache(
+                    owner_home() / "Library/Application Support/Gargoyl",
+                    os.getuid(),
+                ),
+                owner=console_owner,
+                wait=lambda seconds: pipe_wait(
+                    sys.stdin.buffer, seconds, console_owner
+                ),
+                send=private_send,
+                initial_token=restored,
+                remember=mode == "fleet-session-remember",
+                session_seconds=duration,
+                retry_count=retry_count,
+            )
         elif mode == "reconcile":
             if not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode) or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode):
                 raise ValueError("private_pipes_required")

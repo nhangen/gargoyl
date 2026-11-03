@@ -277,10 +277,13 @@ final class Worker {
         var pythonPath = Bundle.main.object(forInfoDictionaryKey: "GargoylPython") as? String
         #if GARGOYL_NATIVE_TESTS
         pythonPath = ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] ?? pythonPath
+        let pathAllowed = (pythonPath != nil) && (pythonPath!.hasPrefix(NSHomeDirectory() + "/") || ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] != nil)
+        #else
+        let pathAllowed = (pythonPath != nil) && pythonPath!.hasPrefix(NSHomeDirectory() + "/")
         #endif
         guard ownerActive(), (["restart", "reconcile", "status", "export", "start-monitor", "stop-monitor", "fleet-session", "fleet-alias-list", "fleet-alias-set", "fleet-session-remember", "fleet-restore"].contains(mode) || (mode.hasPrefix("view-") && readOnlyView(String(mode.dropFirst(5))))),
               let path = pythonPath,
-              path.hasPrefix(NSHomeDirectory() + "/"), path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
+              pathAllowed, path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
         else { throw NSError(domain: "Gargoyl", code: 1) }
         let executable = URL(fileURLWithPath: path)
         let attributes = try FileManager.default.attributesOfItem(atPath: executable.resolvingSymlinksInPath().path)
@@ -323,10 +326,12 @@ final class Worker {
         }
         try? input.fileHandleForWriting.close()
     }
-    func restoreCredential(_ credential:SavedFleetCredential) {
+    func restoreCredential(_ credential:SavedFleetCredential, retryCount:Int=0) {
         guard mode == "fleet-restore", !replied, SavedFleetCredential.tokenValid(credential.token) else { return }
         replied = true
-        if let data=try? JSONSerialization.data(withJSONObject:["purpose":"desktop_account","token":credential.token,"valid_until":credential.expires]) {
+        var payload: [String: Any] = ["purpose":"desktop_account","token":credential.token,"valid_until":credential.expires]
+        if retryCount > 0 { payload["retry_count"] = retryCount }
+        if let data=try? JSONSerialization.data(withJSONObject:payload) {
             try? input.fileHandleForWriting.write(contentsOf:data+Data([10]))
         }
     }
@@ -353,6 +358,37 @@ final class Worker {
         try? input.fileHandleForWriting.close()
     }
     // No terminate/interrupt method: closing the app never cancels accepted work.
+}
+
+enum FleetRecoveryDecision: Equatable {
+    case retry(delay: Double, attempt: Int)
+    case terminal
+    case none
+}
+
+func decideFleetRecovery(
+    reason: String,
+    retryCount: Int,
+    preview: Bool,
+    generationMatch: Bool,
+    savedExpires: Double?,
+    now: Double,
+    ownerActive: Bool
+) -> FleetRecoveryDecision {
+    guard generationMatch, !preview, ownerActive else { return .none }
+    if ["auth_required", "scope_refused", "expired"].contains(reason) {
+        return .none
+    }
+    guard let expires = savedExpires, expires > now else {
+        return .none
+    }
+    if retryCount < 5 {
+        let attempt = retryCount + 1
+        let delay: Double = reason == "session_busy" ? 3.0 : min(60.0, 3.0 * pow(2.0, Double(retryCount)))
+        return .retry(delay: delay, attempt: attempt)
+    } else {
+        return .terminal
+    }
 }
 
 final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, NSMenuItemValidation, NSToolbarDelegate, NSToolbarItemValidation {
@@ -722,7 +758,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if remember && keychainBusy { show("Remember is unavailable while another Keychain operation is pending. Try again when it finishes."); return }
         fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
         fleetRetryCount=retryCount; lastFleetReason=""
-        savedFleetState=FleetSavedSessionState(); savedFleetState.credential=restored; savedFleetState.stored=restored != nil
+        savedFleetState=FleetSavedSessionState(); savedFleetState.credential=restored; savedFleetState.stored = (restored != nil) ? self.readRemember() : false
         fleetGeneration += 1; let generation = fleetGeneration; fleetAuthPresented = false
         rememberCurrentFleet=remember; fleetCredentialGate=FleetCredentialGate()
         fleetGrantStartedAt=Date().timeIntervalSince1970
@@ -742,26 +778,34 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                 self.connectFleetButton.isEnabled = !self.previewOnly; self.disconnectFleetButton.isEnabled = false
                 self.fleetStatus.stringValue = endedFleetStatus(self.fleetStatus.stringValue,disconnected:generation != self.fleetGeneration,preview:self.previewOnly)
                 self.refresh()
-                if generation == self.fleetGeneration, !self.previewOnly, self.lastFleetReason != "auth_required", self.lastFleetReason != "scope_refused", self.lastFleetReason != "expired", let saved=self.savedFleetState.credential, saved.expires > Date().timeIntervalSince1970 {
-                    if self.fleetRetryCount < 5 {
-                        let attempt = self.fleetRetryCount + 1
-                        let delay: Double = self.lastFleetReason == "session_busy" ? 3.0 : min(60.0, 3.0 * pow(2.0, Double(self.fleetRetryCount)))
-                        self.connectFleetButton.isEnabled = false; self.disconnectFleetButton.isEnabled = true
-                        let reasonDesc = self.lastFleetReason == "session_busy" ? "Waiting for the previous account reader to close…" : "Recovering account reader with saved sign-in…"
-                        self.fleetStatus.stringValue = "\(reasonDesc) Retrying in \(Int(delay))s (attempt \(attempt)/5). No new grant or provider action."
-                        self.fleetRecoveryTimer?.invalidate()
-                        self.fleetRecoveryTimer = Timer.scheduledTimer(withTimeInterval:delay,repeats:false) { [weak self] _ in
-                            guard let self=self, generation == self.fleetGeneration, self.fleetWorker == nil else { return }
-                            self.resetRestoreControls(generation:generation)
-                            guard self.fleetOwner(), saved.expires > Date().timeIntervalSince1970 else { return }
-                            self.beginFleet(remember:false,restored:saved,retryCount:attempt)
-                        }
-                    } else {
-                        self.fleetStatus.stringValue = "Account reader recovery stopped after reaching retry budget. Saved sign-in is preserved; resume manually when available."
+                let decision = decideFleetRecovery(
+                    reason: self.lastFleetReason,
+                    retryCount: self.fleetRetryCount,
+                    preview: self.previewOnly,
+                    generationMatch: generation == self.fleetGeneration,
+                    savedExpires: self.savedFleetState.credential?.expires,
+                    now: Date().timeIntervalSince1970,
+                    ownerActive: self.fleetOwner()
+                )
+                switch decision {
+                case .retry(let delay, let attempt):
+                    self.connectFleetButton.isEnabled = false; self.disconnectFleetButton.isEnabled = true
+                    let reasonDesc = self.lastFleetReason == "session_busy" ? "Waiting for the previous account reader to close…" : "Recovering account reader with saved sign-in…"
+                    self.fleetStatus.stringValue = "\(reasonDesc) Retrying in \(Int(delay))s (attempt \(attempt)/5). No new grant or provider action."
+                    self.fleetRecoveryTimer?.invalidate()
+                    self.fleetRecoveryTimer = Timer.scheduledTimer(withTimeInterval:delay,repeats:false) { [weak self] _ in
+                        guard let self=self, generation == self.fleetGeneration, self.fleetWorker == nil else { return }
+                        self.resetRestoreControls(generation:generation)
+                        guard self.fleetOwner(), let saved = self.savedFleetState.credential, saved.expires > Date().timeIntervalSince1970 else { return }
+                        self.beginFleet(remember:false,restored:saved,retryCount:attempt)
                     }
+                case .terminal:
+                    self.fleetStatus.stringValue = "Account reader recovery stopped after reaching retry budget. Saved sign-in is preserved; resume manually when available."
+                case .none:
+                    break
                 }
             })
-            if let restored=restored { fleetWorker?.restoreCredential(restored) }
+            if let restored=restored { fleetWorker?.restoreCredential(restored, retryCount: retryCount) }
         } catch {
             fleetStatus.stringValue = "Account connection unavailable. No provider action or credential fallback was attempted."
             connectFleetButton.isEnabled = !previewOnly; disconnectFleetButton.isEnabled = false
@@ -1308,6 +1352,64 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(raceDeletes == 0)
     precondition(replacementStore.forget(matching:replacement,authorize:{true}) == errSecSuccess)
     precondition(raceDeletes == 1)
+
+    // S3: Swift recovery decision and bounds unit tests
+    let nowVal = 1000.0
+    let validExpiry = 2000.0
+    let expiredVal = 500.0
+
+    // 1. Preview mode causes .none
+    precondition(decideFleetRecovery(reason: "", retryCount: 0, preview: true, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .none)
+
+    // 2. Generation mismatch causes .none
+    precondition(decideFleetRecovery(reason: "", retryCount: 0, preview: false, generationMatch: false, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .none)
+
+    // 3. Owner inactive causes .none
+    precondition(decideFleetRecovery(reason: "", retryCount: 0, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: false) == .none)
+
+    // 4. Auth/scope/expired causes .none
+    for r in ["auth_required", "scope_refused", "expired"] {
+        precondition(decideFleetRecovery(reason: r, retryCount: 0, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .none)
+    }
+
+    // 5. Expired or missing credential causes .none
+    precondition(decideFleetRecovery(reason: "unavailable", retryCount: 0, preview: false, generationMatch: true, savedExpires: expiredVal, now: nowVal, ownerActive: true) == .none)
+    precondition(decideFleetRecovery(reason: "unavailable", retryCount: 0, preview: false, generationMatch: true, savedExpires: nil, now: nowVal, ownerActive: true) == .none)
+
+    // 6. Exponential backoff progression for attempts 0..4 (capped at 60s)
+    let expectedDelays: [Double] = [3.0, 6.0, 12.0, 24.0, 48.0]
+    for count in 0..<5 {
+        let dec = decideFleetRecovery(reason: "unavailable", retryCount: count, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true)
+        precondition(dec == .retry(delay: expectedDelays[count], attempt: count + 1))
+    }
+
+    // 7. session_busy uses fixed 3.0s delay regardless of attempt
+    for count in 0..<5 {
+        let dec = decideFleetRecovery(reason: "session_busy", retryCount: count, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true)
+        precondition(dec == .retry(delay: 3.0, attempt: count + 1))
+    }
+
+    // 8. 6th attempt (retryCount == 5) reaches .terminal
+    precondition(decideFleetRecovery(reason: "unavailable", retryCount: 5, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .terminal)
+    precondition(decideFleetRecovery(reason: "session_busy", retryCount: 5, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .terminal)
+
+    // Preview app never starts worker or reads credentialStore
+    var previewStoreReads = 0
+    let testPreviewApp = App(); testPreviewApp.previewOverride = true
+    testPreviewApp.credentialStore = LoginFleetCredentialStore(open: { (errSecSuccess, nil) }, copy: { _ in previewStoreReads += 1; return (errSecSuccess, nil) })
+    testPreviewApp.restoreSavedFleetIfEnabled()
+    precondition(previewStoreReads == 0)
+    precondition(testPreviewApp.fleetWorker == nil)
+
+    // Disconnect invalidates pending recovery timer
+    let timerApp = App(); timerApp.previewOverride = false
+    timerApp.connectFleetButton = NSButton(); timerApp.disconnectFleetButton = NSButton()
+    timerApp.fleetRecoveryTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: false) { _ in }
+    precondition(timerApp.fleetRecoveryTimer != nil)
+    let preGen = timerApp.fleetGeneration
+    timerApp.disconnectFleet()
+    precondition(timerApp.fleetRecoveryTimer == nil)
+    precondition(timerApp.fleetGeneration == preGen + 1)
 
     precondition(viewDestination(URL(string:"gargoyl-view://fleet-restore/"),mainFrame:true) == nil)
 

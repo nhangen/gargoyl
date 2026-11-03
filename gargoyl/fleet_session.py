@@ -112,18 +112,28 @@ def _run_session(
     session_seconds=SESSION_SECONDS,
     retry_count=0,
     retry_budget=5,
+    gui_owner=None,
 ):
     client = client or AccountClient()
     inventory = None
     token = None
     credential_sent = False
     end = 0
+    if gui_owner is None:
+        ppid = os.getppid()
+        if ppid > 0:
+            from gargoyl.manual_restart import process_start
+
+            born = process_start(ppid)
+            if born is not None:
+                gui_owner = {"pid": ppid, "born_us": born}
     lifecycle_record = {
         "schema": 1,
         "status": "starting",
         "observed_at": now(),
         "owner_uid": cache.uid,
         "incarnation": current_incarnation(),
+        "gui_owner": gui_owner,
         "started_at": now(),
         "last_read_at": None,
         "exit_reason": "none",
@@ -300,18 +310,35 @@ def _run_session(
                 lifecycle_record["observed_at"] = now()
                 if lifecycle_record.get("exit_reason") in {"none", None}:
                     lifecycle_record["exit_reason"] = "unknown"
-                lifecycle_record["status"] = (
-                    "stopped"
-                    if lifecycle_record.get("exit_reason")
-                    in {
-                        "intentional_disconnect",
-                        "intentional_quit",
-                        "auth_required",
-                        "scope_refused",
-                        "expired",
-                    }
-                    else "exited"
-                )
+                if (
+                    lifecycle_record.get("retry_count", 0)
+                    >= lifecycle_record.get("retry_budget", 5)
+                    and lifecycle_record.get("exit_reason")
+                    not in {"intentional_disconnect", "intentional_quit"}
+                ):
+                    lifecycle_record["status"] = "terminal_failure"
+                    lifecycle_record["exit_reason"] = "retry_exhausted"
+                    lifecycle_record["exit_status"] = 1
+                else:
+                    lifecycle_record["status"] = (
+                        "stopped"
+                        if lifecycle_record.get("exit_reason")
+                        in {
+                            "intentional_disconnect",
+                            "intentional_quit",
+                            "auth_required",
+                            "scope_refused",
+                            "expired",
+                        }
+                        else "exited"
+                    )
+                    if lifecycle_record.get("exit_status") is None:
+                        lifecycle_record["exit_status"] = (
+                            0
+                            if lifecycle_record.get("exit_reason")
+                            in {"intentional_disconnect", "intentional_quit"}
+                            else 1
+                        )
                 cache.write_lifecycle(lifecycle_record)
             except (OSError, ValueError):
                 pass
