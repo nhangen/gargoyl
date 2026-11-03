@@ -94,7 +94,7 @@ A static inventory of in-tree source and workflow definitions reveals:
 
 The established local runner profile managed by `nhangen/local-ci` (as deployed for Tron, pcri, and llm-tools) enforces:
 - Registration with `--no-default-labels` (strips standard `self-hosted`, `linux`, `x64` tags).
-- A single, repository-unique custom label string: `local-ci-<unique_id>` (e.g. `local-ci-gargoyl` or `local-ci-326cbb95`).
+- A single, repository-unique custom label string: the target label is explicitly `UNRESOLVED_HELD` and unassigned; an opaque generated `local-ci-<hash>` may only be assigned after separately approved enrollment (0 runners currently enrolled; no concrete label deployed).
 - Multi-label selectors such as `[self-hosted, linux, gargoyl]` are invalid under this profile and will fail to match any runner.
 
 ### 2.2 Routing Delta Matrix
