@@ -368,16 +368,22 @@ def native_view(mode):
         except (OSError, ValueError):
             journal_available = False
     extra = {}
+    preview = os.environ.get("GARGOYL_PREVIEW") == "1"
     if view.startswith("fleet") or view == "management":
         from gargoyl.fleet_aliases import AliasStore
         from gargoyl.fleet_identity import pilot_identity
-        from gargoyl.fleet_state import FleetCache, utc_now
+        from gargoyl.fleet_state import FleetCache, effective_lifecycle, utc_now
         home = owner_home()
         at = utc_now()
+        cache = FleetCache(home / "Library/Application Support/Gargoyl", os.getuid())
         try:
-            extra["inventory"] = FleetCache(home / "Library/Application Support/Gargoyl", os.getuid()).read(at)
+            extra["inventory"] = cache.read(at)
         except (OSError, ValueError):
             extra["inventory"] = None
+        try:
+            extra["lifecycle"] = effective_lifecycle(cache, at)
+        except (OSError, ValueError):
+            extra["lifecycle"] = None
         try:
             extra["local"] = pilot_identity(home, at)
         except (OSError, ValueError):
@@ -388,6 +394,7 @@ def native_view(mode):
             extra["aliases_available"] = False
         extra["local_alias"] = socket.gethostname()
     local_host_id = load_pilot_configuration(home=owner_home()).host_id
+    extra["preview"] = preview
     return dict(kind="view", view=view, local_host_id=local_host_id,
                 operation_state=(record["state"] if record is not None else "none") if journal_available else "unavailable",
                 html=render_view(
