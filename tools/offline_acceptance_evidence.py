@@ -143,14 +143,45 @@ def write_text(path, text):
         stream.write("\n")
 
 
-def banner():
-    return '<div class="callout warn"><p><strong>' + MARKER + "</strong><br>" + NOTE + "</p></div>"
+def format_marked_html(page, scenario_name, scenario_matched):
+    """Insert OFFLINE FIXTURE SOFTWARE EVIDENCE banner, status, and title into rendered dashboard HTML.
+
+    Fails closed: ensures both heading and title targets exist exactly once and the
+    resulting page contains the visible marker in title and body.
+    """
+    heading_target = "<h1>Fleet evidence</h1>"
+    title_target = "<title>Gargoyl fleet evidence</title>"
+    if page.count(heading_target) != 1:
+        raise RuntimeError(
+            f"Expected exactly one {heading_target!r} in {scenario_name}.html, "
+            f"found {page.count(heading_target)}"
+        )
+    if page.count(title_target) != 1:
+        raise RuntimeError(
+            f"Expected exactly one {title_target!r} in {scenario_name}.html, "
+            f"found {page.count(title_target)}"
+        )
+
+    status = "PASS" if scenario_matched else "FAIL"
+    banner_html = (
+        f'<div class="callout warn"><p><strong>{MARKER} ({status})</strong><br>'
+        f"{NOTE}</p></div>"
+    )
+    replacement_heading = banner_html + heading_target
+    replacement_title = f"<title>{MARKER} — Gargoyl fleet evidence</title>"
+
+    marked = page.replace(title_target, replacement_title, 1).replace(heading_target, replacement_heading, 1)
+    if MARKER not in marked:
+        raise RuntimeError(f"Marker {MARKER!r} missing after replacement in {scenario_name}.html")
+    return marked
 
 
 def build_artifacts(out):
     scenarios, all_matched = {}, True
     for name, build in SCENARIOS:
         snapshots, host, evaluated, dashboard, page, records = build()
+        scenario_matched = all(record["matched"] for record in records)
+        marked_page = format_marked_html(page, name, scenario_matched)
         scenarios[name] = {
             "scenario": name,
             "evaluated_at": evaluated,
@@ -158,11 +189,10 @@ def build_artifacts(out):
             "snapshots": [encode_snapshot(snapshot).decode("utf-8") for snapshot in snapshots],
             "projected": dashboard,
             "checks": records,
-            "all_matched": all(record["matched"] for record in records),
+            "all_matched": scenario_matched,
         }
-        all_matched = all_matched and scenarios[name]["all_matched"]
-        write_text(out / (name + ".html"),
-                   page.replace("<h1>Fleet evidence</h1>", banner() + "<h1>Fleet evidence</h1>", 1))
+        all_matched = all_matched and scenario_matched
+        write_text(out / (name + ".html"), marked_page)
     evidence = {"marker": MARKER, "note": NOTE, "reference_time": REFERENCE_TIME,
                 "scenarios": scenarios, "all_matched": all_matched}
     write_text(out / "offline_acceptance_evidence.json", json.dumps(
@@ -181,7 +211,7 @@ def main(argv=None):
     try:
         out.mkdir(parents=True, exist_ok=True)
         scenarios, all_matched = build_artifacts(out)
-    except OSError as error:
+    except (OSError, RuntimeError) as error:
         print("Offline fixture artifacts unavailable:", error, file=sys.stderr)
         return 2
     directory = out.resolve()

@@ -44,6 +44,8 @@ class OfflineAcceptanceEvidenceRunnerTests(unittest.TestCase):
             for name in SCENARIO_NAMES:
                 page = (Path(tmp) / (name + ".html")).read_text(encoding="utf-8")
                 self.assertIn(RUNNER_MODULE.MARKER, page)
+                self.assertIn(f"<title>{RUNNER_MODULE.MARKER} — Gargoyl fleet evidence</title>", page)
+                self.assertIn(f"{RUNNER_MODULE.MARKER} (PASS)", page)
                 self.assertIn("<strong>", page)
             evidence = self.load(tmp)
             self.assertEqual(evidence["marker"], RUNNER_MODULE.MARKER)
@@ -136,6 +138,27 @@ class OfflineAcceptanceEvidenceRunnerTests(unittest.TestCase):
                                 env={**os.environ, "PYTHONPATH": str(ROOT)})
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
+
+    def test_renderer_heading_change_fails_closed_without_publishing_unmarked_html(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        # Mutate the heading target in the runner to simulate production heading drift.
+        mutated = source.replace(
+            "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))",
+            f"sys.path.insert(0, {repr(str(ROOT))})"
+        ).replace(
+            'heading_target = "<h1>Fleet evidence</h1>"',
+            'heading_target = "<h1>Drifted heading</h1>"'
+        )
+        self.assertNotEqual(mutated, source)
+        with tempfile.TemporaryDirectory(prefix="gargoyl-heading-drift-") as tmp:
+            copy = Path(tmp) / "mutant_runner.py"
+            copy.write_text(mutated, encoding="utf-8")
+            out = Path(tmp) / "out"
+            result = run_runner(out, script=copy)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("Offline fixture artifacts unavailable:", result.stderr)
+            self.assertIn("Expected exactly one '<h1>Drifted heading</h1>'", result.stderr)
+            self.assertFalse((out / "offline_acceptance_evidence.json").exists())
 
     def test_runner_imports_this_checkout_even_with_decoy_on_pythonpath_and_external_cwd(self):
         with tempfile.TemporaryDirectory(prefix="gargoyl-decoy-") as decoy_tmp:
