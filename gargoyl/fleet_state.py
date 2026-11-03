@@ -14,10 +14,35 @@ from gargoyl.fleet_account import FleetError
 from gargoyl.telemetry import timestamp
 
 LIMIT = 524288
+LIFECYCLE_LIMIT = 4096
+LIFECYCLE_SCHEMA = 1
 MAX_PROVIDERS = 256
 RETENTION = 86400
 TTL = 120
 SOURCE = "https://api.darkbloom.dev/v1/me/providers"
+
+READER_STATUSES = {
+    "idle",
+    "starting",
+    "running",
+    "transient_failure",
+    "session_busy",
+    "stopped",
+    "exited",
+    "terminal_failure",
+}
+READER_EXIT_REASONS = {
+    "none",
+    "pipe_eof",
+    "intentional_disconnect",
+    "intentional_quit",
+    "owner_inactive",
+    "auth_required",
+    "scope_refused",
+    "expired",
+    "retry_exhausted",
+    "unknown",
+}
 
 
 def text(value, limit=128):
@@ -370,6 +395,191 @@ class FleetCache:
             except FileNotFoundError:
                 pass
             os.close(directory)
+
+    def read_lifecycle(self, now=None):
+        if now is not None:
+            timestamp(now)
+        try:
+            raw = _read(
+                str(Path(self.directory) / "reader_lifecycle.json"),
+                self.uid,
+                LIFECYCLE_LIMIT,
+            )
+        except FileNotFoundError:
+            return None
+        from gargoyl.fleet_account import decode_json
+
+        value = validate_reader_lifecycle(decode_json(raw))
+        if now is not None:
+            age = (timestamp(now) - timestamp(value["observed_at"])).total_seconds()
+            if age < 0 or age > RETENTION:
+                self.clear_lifecycle()
+                return None
+        return value
+
+    def clear_lifecycle(self):
+        try:
+            directory = _directory(self.directory, self.uid)
+        except FileNotFoundError:
+            return
+        try:
+            try:
+                s = os.stat(
+                    "reader_lifecycle.json", dir_fd=directory, follow_symlinks=False
+                )
+            except FileNotFoundError:
+                return
+            if (
+                not stat.S_ISREG(s.st_mode)
+                or s.st_uid != self.uid
+                or s.st_nlink != 1
+                or s.st_mode & 0o077
+            ):
+                raise FleetError("unavailable")
+            os.unlink("reader_lifecycle.json", dir_fd=directory)
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+    def write_lifecycle(self, value):
+        validate_reader_lifecycle(value)
+        body = json.dumps(
+            value, allow_nan=False, ensure_ascii=False, separators=(",", ":")
+        ).encode()
+        if len(body) > LIFECYCLE_LIMIT:
+            raise FleetError("invalid_data")
+        directory = _directory(self.directory, self.uid, create=True)
+        temporary = ".lifecycle-" + uuid.uuid4().hex
+        try:
+            try:
+                s = os.stat(
+                    "reader_lifecycle.json", dir_fd=directory, follow_symlinks=False
+                )
+                if (
+                    not stat.S_ISREG(s.st_mode)
+                    or s.st_uid != self.uid
+                    or s.st_nlink != 1
+                    or s.st_mode & 0o077
+                ):
+                    raise FleetError("unavailable")
+            except FileNotFoundError:
+                pass
+            fd = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=directory,
+            )
+            try:
+                view = memoryview(body)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        raise FleetError("unavailable")
+                    view = view[written:]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.rename(
+                temporary,
+                "reader_lifecycle.json",
+                src_dir_fd=directory,
+                dst_dir_fd=directory,
+            )
+            os.fsync(directory)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+            os.close(directory)
+
+
+def validate_reader_lifecycle(value):
+    if (
+        type(value) is not dict
+        or set(value)
+        != {
+            "schema",
+            "status",
+            "observed_at",
+            "owner_uid",
+            "incarnation",
+            "started_at",
+            "last_read_at",
+            "exit_reason",
+            "exit_status",
+            "retry_count",
+            "retry_budget",
+        }
+        or value["schema"] != LIFECYCLE_SCHEMA
+        or value["status"] not in READER_STATUSES
+        or instant(value["observed_at"]) is None
+        or type(value["owner_uid"]) is not int
+        or value["owner_uid"] < 0
+        or (value["started_at"] is not None and instant(value["started_at"]) is None)
+        or (
+            value["last_read_at"] is not None
+            and instant(value["last_read_at"]) is None
+        )
+        or value["exit_reason"] not in READER_EXIT_REASONS
+        or (
+            value["exit_status"] is not None
+            and type(value["exit_status"]) is not int
+        )
+        or type(value["retry_count"]) is not int
+        or not 0 <= value["retry_count"] <= 1000
+        or type(value["retry_budget"]) is not int
+        or not 0 <= value["retry_budget"] <= 1000
+    ):
+        raise FleetError("invalid_data")
+    incarnation = value["incarnation"]
+    if incarnation is not None:
+        if (
+            type(incarnation) is not dict
+            or set(incarnation) != {"pid", "born_us"}
+            or type(incarnation["pid"]) is not int
+            or incarnation["pid"] <= 0
+            or (
+                incarnation["born_us"] is not None
+                and (
+                    type(incarnation["born_us"]) is not int
+                    or incarnation["born_us"] < 0
+                )
+            )
+        ):
+            raise FleetError("invalid_data")
+    return value
+
+
+def effective_lifecycle(cache, now, alive=None):
+    """Resolve reader lifecycle against kernel process reality.
+
+    If status is recorded as running/transient_failure but the process is no longer
+    alive (or PID was reused), mark as exited with unknown reason rather than
+    speculating or assuming credential rejection.
+    """
+    timestamp(now)
+    if alive is None:
+        from gargoyl.manual_restart import process_alive
+
+        alive = process_alive
+    record = cache.read_lifecycle(now)
+    if record is None:
+        return None
+    if record["status"] in {"running", "transient_failure", "starting"}:
+        incarnation = record.get("incarnation")
+        if incarnation is None or not alive(incarnation):
+            reason = record.get("exit_reason")
+            if reason in {None, "none"}:
+                reason = "unknown"
+            return dict(
+                record,
+                status="exited",
+                exit_reason=reason,
+                observed_at=now,
+            )
+    return record
 
 
 def utc_now():

@@ -18,6 +18,16 @@ PERSISTENT_SESSION_SECONDS = 30 * 86400
 POLL_SECONDS = 30
 
 
+def current_incarnation():
+    try:
+        from gargoyl.manual_restart import process_start
+
+        born_us = process_start(os.getpid())
+    except Exception:
+        born_us = None
+    return {"pid": os.getpid(), "born_us": born_us}
+
+
 @contextmanager
 def session_lock(cache):
     directory = _directory(cache.directory, cache.uid, create=True)
@@ -91,12 +101,31 @@ def _run_session(
     initial_token=None,
     remember=False,
     session_seconds=SESSION_SECONDS,
+    retry_count=0,
+    retry_budget=5,
 ):
     client = client or AccountClient()
     inventory = None
     token = None
     credential_sent = False
     end = 0
+    lifecycle_record = {
+        "schema": 1,
+        "status": "starting",
+        "observed_at": now(),
+        "owner_uid": cache.uid,
+        "incarnation": current_incarnation(),
+        "started_at": now(),
+        "last_read_at": None,
+        "exit_reason": "none",
+        "exit_status": None,
+        "retry_count": retry_count,
+        "retry_budget": retry_budget,
+    }
+    try:
+        cache.write_lifecycle(lifecycle_record)
+    except (OSError, ValueError):
+        pass
     try:
         wait(0)
         if not owner():
@@ -135,6 +164,12 @@ def _run_session(
         pending = None
         wait(0)
         send(dict(kind="fleet-connected"))
+        lifecycle_record["status"] = "running"
+        lifecycle_record["observed_at"] = now()
+        try:
+            cache.write_lifecycle(lifecycle_record)
+        except (OSError, ValueError):
+            pass
         failures = 0
         while monotonic() < end:
             wait(0)
@@ -145,9 +180,18 @@ def _run_session(
                 wait(0)
                 if monotonic() >= end:
                     send(dict(kind="fleet-unavailable", reason="expired"))
+                    lifecycle_record["exit_reason"] = "expired"
                     raise SessionClosed
                 inventory = normalize_inventory(raw, now())
                 cache.write(inventory)
+                lifecycle_record["last_read_at"] = now()
+                lifecycle_record["observed_at"] = now()
+                lifecycle_record["status"] = "running"
+                lifecycle_record["exit_reason"] = "none"
+                try:
+                    cache.write_lifecycle(lifecycle_record)
+                except (OSError, ValueError):
+                    pass
                 if remember and not credential_sent:
                     wait(0)
                     if not owner():
@@ -177,6 +221,21 @@ def _run_session(
                         else "unavailable",
                     )
                     cache.write(inventory)
+                if e.reason == "unavailable":
+                    lifecycle_record["status"] = "transient_failure"
+                    lifecycle_record["observed_at"] = now()
+                elif e.reason == "auth_required":
+                    lifecycle_record["status"] = "stopped"
+                    lifecycle_record["exit_reason"] = "auth_required"
+                    lifecycle_record["observed_at"] = now()
+                elif e.reason in {"scope_refused", "expired"}:
+                    lifecycle_record["status"] = "stopped"
+                    lifecycle_record["exit_reason"] = e.reason
+                    lifecycle_record["observed_at"] = now()
+                try:
+                    cache.write_lifecycle(lifecycle_record)
+                except (OSError, ValueError):
+                    pass
                 send(dict(kind="fleet-unavailable", reason=e.reason))
                 if e.reason != "unavailable":
                     return
@@ -187,9 +246,17 @@ def _run_session(
                 )
             )
         send(dict(kind="fleet-unavailable", reason="expired"))
+        lifecycle_record["exit_reason"] = "expired"
     except SessionClosed:
-        pass
+        if not owner():
+            lifecycle_record["exit_reason"] = "owner_inactive"
+        elif lifecycle_record.get("exit_reason") == "none":
+            lifecycle_record["exit_reason"] = "pipe_eof"
     except (FleetError, OSError, ValueError) as error:
+        if lifecycle_record.get("exit_reason") == "none":
+            lifecycle_record["exit_reason"] = (
+                error.reason if isinstance(error, FleetError) else "unknown"
+            )
         try:
             send(
                 dict(
@@ -216,6 +283,25 @@ def _run_session(
                 )
             except (OSError, ValueError):
                 pass
+        if lifecycle_record is not None:
+            try:
+                lifecycle_record["observed_at"] = now()
+                if lifecycle_record.get("exit_reason") in {"none", None}:
+                    lifecycle_record["exit_reason"] = "unknown"
+                lifecycle_record["status"] = (
+                    "stopped"
+                    if lifecycle_record.get("exit_reason")
+                    in {
+                        "intentional_disconnect",
+                        "auth_required",
+                        "scope_refused",
+                        "expired",
+                    }
+                    else "exited"
+                )
+                cache.write_lifecycle(lifecycle_record)
+            except (OSError, ValueError):
+                pass
 
 
 def run_session(cache, **kwargs):
@@ -223,13 +309,39 @@ def run_session(cache, **kwargs):
         with session_lock(cache):
             return _run_session(cache, **kwargs)
     except (FleetError, OSError, ValueError) as error:
+        reason = (
+            error.reason if isinstance(error, FleetError) else "unavailable"
+        )
+        if reason == "session_busy":
+            try:
+                now_fn = kwargs.get("now", utc_now)
+                cur_now = now_fn()
+                active = cache.read_lifecycle(cur_now)
+                if active is None or active.get("status") not in {
+                    "running",
+                    "transient_failure",
+                }:
+                    busy_record = {
+                        "schema": 1,
+                        "status": "session_busy",
+                        "observed_at": cur_now,
+                        "owner_uid": cache.uid,
+                        "incarnation": current_incarnation(),
+                        "started_at": cur_now,
+                        "last_read_at": None,
+                        "exit_reason": "unknown",
+                        "exit_status": None,
+                        "retry_count": kwargs.get("retry_count", 0),
+                        "retry_budget": 5,
+                    }
+                    cache.write_lifecycle(busy_record)
+            except (OSError, ValueError):
+                pass
         try:
             kwargs["send"](
                 dict(
                     kind="fleet-unavailable",
-                    reason=error.reason
-                    if isinstance(error, FleetError)
-                    else "unavailable",
+                    reason=reason,
                 )
             )
         except SessionClosed:
