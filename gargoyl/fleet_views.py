@@ -325,7 +325,7 @@ def render_fleet(
                     '<tr><th scope="row"><a href="gargoyl-view://fleet-node-' + provider_key(row["id"]) + '/">'
                     + e(label) + '</a><span class="fleet-id">' + e(row["id"]) + '</span><span class="fleet-src">'
                     + e(source) + "</span>"
-                    + ('<span class="fleet-dup">Same label as another record · use Local aliases…</span>'
+                    + ('<span class="fleet-dup">Same label as another record · use Aliases…</span>'
                        if label in duplicated else "")
                     + ('<span class="fleet-here">This Mac</span><span class="fleet-sub">' + e(alias)
                        + " · unique identity match</span>" if matched == row["id"] else "")

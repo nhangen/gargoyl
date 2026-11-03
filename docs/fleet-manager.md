@@ -22,7 +22,7 @@ bounded backoff for transport errors. Refresh updates the visible view. Missing,
 future, disconnected, stale or partial evidence never establishes healthy or zero
 providers. Low traffic and coordinator warnings never trigger repair.
 
-**Local aliases…** lets you choose an actual provider ID and save a friendly
+**Aliases…** lets you choose an actual provider ID and save a friendly
 name on this Mac. Source labels and IDs remain visible. A hardware model is
 explicitly a hardware label; a missing name falls back to the actual ID. Aliases
 never alter public identity matching, action targets, provider settings or source
@@ -128,10 +128,10 @@ supply that association. Partial, stale, disconnected or ambiguous inventory lea
 association and per-provider history unavailable; no substitute provider is chosen.
 
 For the matched Mac, the view links to local history and explains how to review
-**Restart local provider…** through the native toolbar. It does not pre-authorize
+**Restart local…** through the native toolbar. It does not pre-authorize
 the restart; fresh preflight and Mac confirmation still apply. Other records show
 why remote collection, history and control are unavailable. No fake enrollment or
-remote restart controls are provided. **Local aliases…**, Refresh, Export local…
+remote restart controls are provided. **Aliases…**, Refresh, Export local…
 and Gargoyl's own Start/Stop monitoring remain graphical native tools.
 
 **Local traffic** shows the retained sample count/range and newest observations

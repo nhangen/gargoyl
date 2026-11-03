@@ -491,7 +491,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         case #selector(disconnectFleet): return disconnectFleetButton?.isEnabled ?? false
         case #selector(forgetSavedFleet): return forgetFleetButton.isEnabled
         case #selector(resumeSavedFleet): return !previewOnly && !keychainBusy && readRemember() && (connectFleetButton?.isEnabled ?? false)
-        default: return true
+        default: return toolbarActionEnabled(item.action)
         }
     }
     // The Account title says whether an account session is open, so the state never hides in the menu.
@@ -500,23 +500,23 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         let tip = open ? "Account · connecting or connected (read-only)" : "Account · not connected"
         guard let item = accountToolbarItem, item.toolTip != tip else { return }
         item.toolTip = tip
-        item.image = NSImage(systemSymbolName:open ? "person.crop.circle.badge.checkmark" : "person.crop.circle",accessibilityDescription:tip)
+        item.image = NSImage(systemSymbolName:open ? "person.crop.circle.fill" : "person.crop.circle",accessibilityDescription:tip)
     }
     // Toolbar: read-only actions first, then a flexible gap, then manual operation set apart.
     let toolbarSpecs: [(NSToolbarItem.Identifier, String, String, String, Selector)] = [
-        (NSToolbarItem.Identifier("gargoyl.aliases"),"Local aliases…","Edit friendly names kept only on this Mac","tag",#selector(editFleetAliases)),
+        (NSToolbarItem.Identifier("gargoyl.aliases"),"Aliases…","Edit friendly names kept only on this Mac","tag",#selector(editFleetAliases)),
         (NSToolbarItem.Identifier("gargoyl.refresh"),"Refresh","Reload the current view","arrow.clockwise",#selector(refresh)),
-        (NSToolbarItem.Identifier("gargoyl.start"),"Start local monitor","Start this Mac's Gargoyl monitoring job (never Darkbloom)","play.circle",#selector(startMonitor)),
-        (NSToolbarItem.Identifier("gargoyl.stop"),"Stop local monitor","Stop this Mac's Gargoyl monitoring job (never Darkbloom)","stop.circle",#selector(stopMonitor)),
-        (NSToolbarItem.Identifier("gargoyl.export"),"Export local report…","Save bounded normalized evidence from this Mac","square.and.arrow.up",#selector(exportReport)),
+        (NSToolbarItem.Identifier("gargoyl.start"),"Start monitor","Start this Mac's Gargoyl monitoring job (never Darkbloom)","play.circle",#selector(startMonitor)),
+        (NSToolbarItem.Identifier("gargoyl.stop"),"Stop monitor","Stop this Mac's Gargoyl monitoring job (never Darkbloom)","stop.circle",#selector(stopMonitor)),
+        (NSToolbarItem.Identifier("gargoyl.export"),"Export local…","Save bounded normalized evidence from this Mac","square.and.arrow.up",#selector(exportReport)),
         (NSToolbarItem.Identifier("gargoyl.operation"),"Operation status","Show the last manual operation on this Mac","list.bullet.rectangle",#selector(operationStatus)),
-        (NSToolbarItem.Identifier("gargoyl.reconcile"),"Record reconciliation…","Available on Operation status for an unresolved operation","checkmark.seal",#selector(reconcileOperation)),
-        (NSToolbarItem.Identifier("gargoyl.restart"),"Restart local provider…","Review and confirm one graceful Darkbloom restart on this Mac","arrow.counterclockwise.circle",#selector(restartProvider))
+        (NSToolbarItem.Identifier("gargoyl.reconcile"),"Reconcile…","Available on Operation status for an unresolved operation","checkmark.seal",#selector(reconcileOperation)),
+        (NSToolbarItem.Identifier("gargoyl.restart"),"Restart local…","Review and confirm one graceful Darkbloom restart on this Mac","arrow.counterclockwise.circle",#selector(restartProvider))
     ]
     let accountIdentifier = NSToolbarItem.Identifier("gargoyl.account")
     func toolbarOrder() -> [NSToolbarItem.Identifier] {
         let ids = toolbarSpecs.map { $0.0 }
-        return [accountIdentifier] + Array(ids[0..<5]) + [.flexibleSpace] + Array(ids[5...])
+        return [accountIdentifier] + Array(ids[0..<5]) + [.flexibleSpace] + Array(ids[5..<7]) + [.space, ids[7]]
     }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarOrder() }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarOrder() }
@@ -538,13 +538,21 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         return item
     }
     // Toolbar items mirror the same enablement the old buttons had.
-    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
-        switch item.action {
+    // One rule for toolbar items and their overflow-menu copies (which validate as menu items).
+    func toolbarActionEnabled(_ action: Selector?) -> Bool {
+        switch action {
         case #selector(startMonitor), #selector(stopMonitor), #selector(editFleetAliases): return !previewOnly
         case #selector(restartProvider): return restartButton?.isEnabled ?? false
         case #selector(reconcileOperation): return (reconcileButton?.isEnabled ?? false) && !(reconcileButton?.isHidden ?? true)
         default: return true
         }
+    }
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        if item.action == #selector(reconcileOperation) {
+            // Pass through the specific reason Operation status computes (none recorded, preview, busy).
+            item.toolTip = (reconcileButton?.isHidden ?? true) ? "Open Operation status to review an unresolved operation" : reconcileButton?.toolTip
+        }
+        return toolbarActionEnabled(item.action)
     }
     @objc func refresh() { displayView(viewSelection.selected) }
     func displayView(_ view: String) {

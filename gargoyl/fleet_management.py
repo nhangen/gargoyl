@@ -80,7 +80,7 @@ def management_html(projection, aliases):
             history = ('<a href="gargoyl-view://history/">Open local history</a><br>'
                        + (e(row['history_samples']) + ' retained samples' if row['history_samples'] is not None
                           else 'Monitor history unavailable'))
-            workflow = ('Use <strong>Restart local provider…</strong> in the native toolbar to review '
+            workflow = ('Use <strong>Restart local…</strong> in the native toolbar to review '
                         'the exact target and interruption, then confirm with your Mac. Fresh preflight '
                         'may refuse; this view grants nothing. <a href="gargoyl-view://operation/">Operation status</a>')
         else:
@@ -93,9 +93,9 @@ def management_html(projection, aliases):
     body += '</tbody></table></div>'
     if not projection['rows']:
         body += '<p>No usable returned provider records; check account connection and partial coverage.</p>'
-    return body + ('</section><section><h2>Available graphical tools</h2><p>Use <strong>Local aliases…</strong> '
+    return body + ('</section><section><h2>Available graphical tools</h2><p>Use <strong>Aliases…</strong> '
                    'to name known IDs without guessing machine mappings. Refresh reads the latest '
-                   'normalized report. Export local… saves redacted local evidence. Start/Stop local monitor '
+                   'normalized report. Export local… saves redacted local evidence. Start monitor/Stop monitor '
                    'affects Gargoyl only. These tools do not enroll or control other machines.</p>'
                    '<h2>History and collector limits</h2><p>Local history retains at most 64 samples in memory; '
                    'monitor restart clears it. Durable encrypted history is not activated: its separate '
