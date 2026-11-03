@@ -91,6 +91,77 @@ then perform one fresh graphical sign-in after the reviewed update and approved
 Keychain setup. Real storage/read/delete acceptance must be recorded separately
 from fake-adapter tests; building the code does not activate persistence.
 
+## Reader lifecycle, supervision and background durability
+
+The account reader runs as an unprivileged child worker under the native macOS app
+(`Gargoyl.app`). It records nonsecret lifecycle metadata to `reader_lifecycle.json`
+(schema 1) with atomic file replacement and strict field validation. The record
+tracks process incarnation (`pid`, `born_us` via kernel `proc_pidinfo`), observation
+timestamp (`observed_at`), execution status, error classification, and retry state.
+Actual credentials, authorization codes, tokens, and process arguments are strictly
+excluded.
+
+### Truthful state distinction
+
+Gargoyl distinguishes six explicit operational states, preventing misleading
+diagnostics or false inferences of credential revocation:
+
+1. **Connected (`connected`)**: Active reader process matches its recorded incarnation
+   and is actively polling inventory every 30 seconds.
+2. **Transient failure (`transient_failure`)**: Temporary transport error (timeout,
+   DNS resolution, HTTP 5xx). The reader maintains its session and backs off
+   automatically.
+3. **Authentication required (`auth_required`)**: Darkbloom API explicitly rejected
+   the token (`401 Unauthorized` or invalid grant). A fresh device-flow connection
+   is required. Disconnected cache or missing processes never infer this state.
+4. **Intentional stop (`stopped`)**: User clicked **Disconnect fleet** or quit the
+   app. The session was closed cleanly with explicit intent.
+5. **Loss of supervising GUI (`loss_of_supervising_gui`)**: Supervising `Gargoyl.app`
+   exited (pipe EOF). The reader shut down cleanly. When reopening the normal GUI,
+   any valid saved session is restored automatically without re-prompting.
+6. **Read-only preview (`preview`)**: App is running in read-only preview mode
+   (`GARGOYL_PREVIEW=1`). The interface truthfully reports that saved-session
+   restore and background collection are disabled in preview, rather than demanding
+   reconnection.
+
+A stale PID whose process start time (`born_us`) does not match the kernel's process
+table is rejected as an exited incarnation, reporting `exit_reason="unknown"` rather
+than assuming an authentication failure.
+
+### Normal GUI supervision and bounded recovery
+
+In normal GUI mode, the native application supervises the reader process through a
+private pipe:
+- If the reader terminates unexpectedly while a valid saved session exists, the native
+  app initiates automatic recovery with exponential backoff (`delay = min(60.0, 3.0 * 2^retryCount)`).
+- Recovery is capped at 5 attempts before halting with a terminal failure message.
+- Recovery reuses the unexpired saved session from the login Keychain; no user consent
+  or device authorization prompt is repeated.
+- Intentional disconnection or quitting cancels active recovery timers and increments
+  the session generation, preventing unwanted restarts.
+- Single-owner concurrency: the app confirms only one reader incarnation runs at any time.
+
+### Background durability gap and detached supervision boundary
+
+The reader process lifetime is currently coupled to the running native GUI: closing or
+quitting `Gargoyl.app` delivers EOF on the reader's standard input pipe, prompting clean
+reader shutdown. The existing local monitor LaunchAgent (`gargoyl monitor`) does not
+supervise the account reader: the monitor runs in an isolated local sandbox with no
+login Keychain access and no network egress to Darkbloom API endpoints.
+
+Genuinely durable detached background supervision when the GUI is closed requires an
+explicit new security boundary:
+- A dedicated user LaunchAgent (`dev.gargoyl.account-reader.plist`) running within the
+  user's GUI login session.
+- An explicit Keychain Access Control List (ACL) granting the headless binary access
+  to the Darkbloom session secret without interactive UI prompts.
+- Explicit user opt-in and consent for headless background network egress.
+
+Silently installing a background service or expanding daemon permissions would violate
+macOS application sandbox boundaries and security policy. The implementation provides
+fully durable, prompt-free recovery within normal application lifetime, while keeping
+detached background supervision as an explicit, reviewable architectural choice.
+
 ## Privacy and protocol boundaries
 
 Fixed HTTPS authority and exact device-flow/owned-provider endpoints use verified

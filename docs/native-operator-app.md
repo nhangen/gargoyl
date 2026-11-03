@@ -70,14 +70,20 @@ the Apple SDK with an owner-local isolated Python containing the matching
 reviewed package. The builder ad-hoc signs the completed local bundle after writing
 its metadata and verifies its resource seal before reporting success. This is
 local integrity packaging, not developer notarization, a new permission grant,
-or an override of execution approval. Its default is a read-only preview with lifecycle and restart
-buttons disabled. Release preparation can enable native controls with the build
-option `--enable-native-actions`; this does not grant permissions, authenticate
-or invoke a restart. It must not be mistaken for live repair activation.
-The current pilot recognizes only UID 501 on MBP-26, the existing fixed monitor
-LaunchAgent/configuration, loopback port 8766 and supported pinned Darkbloom
-versions. It does not install a privileged helper, enroll a machine, create
-credentials or modify the LaunchAgent.
+or an override of execution approval. Its default is a read-only preview with lifecycle and restart buttons disabled.
+In preview mode (`GARGOYL_PREVIEW=1`), the UI truthfully reports that account fleet reading
+and saved-session restore are disabled in preview, rather than demanding reconnect.
+In normal GUI mode, unexpired saved sessions are recovered automatically with bounded
+exponential backoff (up to 5 attempts) without repeating consent prompts. Closing or
+quitting the app cleanly stops the reader child process; reopening restores the saved session.
+Detached background collection when the GUI is closed requires an explicit opt-in user
+LaunchAgent and Keychain ACL boundary.
+Release preparation can enable native controls with the build option `--enable-native-actions`;
+this does not grant permissions, authenticate or invoke a restart. It must not be mistaken
+for live repair activation. The current pilot recognizes only UID 501 on MBP-26, the existing
+fixed monitor LaunchAgent/configuration, loopback port 8766 and supported pinned Darkbloom
+versions. It does not install a privileged helper, enroll a machine, create credentials or
+modify the LaunchAgent.
 
 Compiled fixture tests do not exercise real Touch ID/password prompts or a live
 provider restart. Native visual/OS permission acceptance must be recorded
