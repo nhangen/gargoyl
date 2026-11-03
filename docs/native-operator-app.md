@@ -1,10 +1,12 @@
 # Gargoyl Mac application
 
 Normal operation is graphical. Open **Gargoyl.app** to see the existing live
-console in a standard resizable Mac window with close, minimize, zoom and full-screen controls. Closing the window leaves the background monitor and provider running; reopening the app shows the window again. The native toolbar is one row: an **Account** menu (Connect fleet…, Resume saved
+console in a standard resizable Mac window with close, minimize, zoom and full-screen controls. Closing the window leaves the background monitor and provider running; reopening the app shows the window again. The window's native title-bar toolbar has an **Account** menu (Connect fleet…, Resume saved
 sign-in, Disconnect fleet, Forget saved sign-in…), **Local aliases…**, **Refresh**,
 **Start local monitor**, **Stop local monitor**, **Export local report…**, then
-**Operation status** and **Restart local provider…** set apart at the end. Start/Stop affects only the
+**Operation status**, **Record reconciliation…** and **Restart local provider…** set apart at
+the end. Narrow windows move extra items into the toolbar's overflow menu. Status messages
+appear in the small status area at the bottom of the window. Start/Stop affects only the
 existing Gargoyl monitoring job, never Darkbloom. Export opens a Mac save dialog
 for bounded normalized evidence; raw provider logs and credentials are excluded.
 The public browser dashboard remains read-only, and the app needs no pairing

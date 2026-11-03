@@ -340,7 +340,7 @@ final class Worker {
     // No terminate/interrupt method: closing the app never cancels accepted work.
 }
 
-final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, NSMenuItemValidation {
+final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, NSMenuItemValidation, NSToolbarDelegate, NSToolbarItemValidation {
     var window: NSWindow!
     var windowHistory = WindowHistory()
     var web: WKWebView!
@@ -393,7 +393,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var fleetAuthTimer: Timer?
     var fleetRefreshTimer: Timer?
     var connectFleetButton: NSButton!
-    var accountMenu: NSPopUpButton?
+    var accountMenu: NSMenu?
+    var accountToolbarItem: NSMenuToolbarItem?
     var accountTitleTimer: Timer?
     var disconnectFleetButton: NSButton!
     var viewPhase = "not started"
@@ -427,66 +428,50 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.minSize = NSSize(width:390,height:600); window.delegate = self
         let content = NSView(); window.contentView = content
-        // One toolbar row. Account actions live in one pull-down menu whose items mirror the
-        // enabled state of hidden state-holder buttons (validateMenuItem), so the existing
-        // connection logic that toggles those buttons is unchanged. Local actions keep "local".
-        let bar = NSStackView(); bar.orientation = .horizontal; bar.alignment = .centerY; bar.spacing = 8
+        // Native title-bar toolbar. Account actions live in one menu whose items mirror the enabled
+        // state of hidden state-holder buttons (validateMenuItem); toolbar items mirror the restart and
+        // reconciliation holders (validateToolbarItem), so the existing control logic is unchanged.
         connectFleetButton = NSButton(title:"Connect fleet…",target:self,action:#selector(connectFleet))
         disconnectFleetButton = NSButton(title:"Disconnect fleet",target:self,action:#selector(disconnectFleet)); disconnectFleetButton.isEnabled = false
         forgetFleetButton = NSButton(title:"Forget saved sign-in…",target:self,action:#selector(forgetSavedFleet)); forgetFleetButton.isEnabled = !previewOnly && self.readRemember()
         if previewOnly { connectFleetButton.isEnabled = false }
-        let account = NSPopUpButton(frame:.zero,pullsDown:true); account.bezelStyle = .rounded
-        account.addItem(withTitle:"Account · not connected"); accountMenu = account
+        let account = NSMenu(title:"Account")
         let header = NSMenuItem(title:"Darkbloom account · read-only",action:nil,keyEquivalent:""); header.isEnabled = false
-        account.menu?.addItem(header)
+        account.addItem(header)
         let accountItems: [(String, Selector)?] = [("Connect fleet…",#selector(connectFleet)),("Resume saved sign-in",#selector(resumeSavedFleet)),("Disconnect fleet",#selector(disconnectFleet)),nil,("Forget saved sign-in…",#selector(forgetSavedFleet))]
         for entry in accountItems {
-            guard let entry = entry else { account.menu?.addItem(NSMenuItem.separator()); continue }
+            guard let entry = entry else { account.addItem(NSMenuItem.separator()); continue }
             let (title, selector) = entry
-            let item = NSMenuItem(title:title,action:selector,keyEquivalent:""); item.target = self; account.menu?.addItem(item)
+            let item = NSMenuItem(title:title,action:selector,keyEquivalent:""); item.target = self; account.addItem(item)
         }
-        account.menu?.autoenablesItems = true
-        bar.addView(account,in:.leading)
-        let actions: [(String, Selector)] = [("Local aliases…",#selector(editFleetAliases)),("Refresh",#selector(refresh)),("Start local monitor",#selector(startMonitor)),("Stop local monitor",#selector(stopMonitor)),("Export local report…",#selector(exportReport))]
-        for (title, selector) in actions {
-            let button = NSButton(title:title,target:self,action:selector); button.bezelStyle = .rounded
-            if previewOnly && [#selector(startMonitor),#selector(stopMonitor),#selector(editFleetAliases)].contains(selector) { button.isEnabled = false }
-            bar.addView(button,in:.leading)
-        }
-        // Manual operation sits apart at the trailing edge; its confirmation sheet does the safety work.
-        let statusButton = NSButton(title:"Operation status",target:self,action:#selector(operationStatus)); statusButton.bezelStyle = .rounded
-        bar.addView(statusButton,in:.trailing)
-        reconcileButton = NSButton(title:"Record reconciliation…",target:self,action:#selector(reconcileOperation)); reconcileButton.bezelStyle = .rounded
+        account.autoenablesItems = true; accountMenu = account
+        reconcileButton = NSButton(title:"Record reconciliation…",target:self,action:#selector(reconcileOperation))
         reconcileButton.isEnabled = false; reconcileButton.isHidden = true
-        bar.addView(reconcileButton,in:.trailing)
-        restartButton = NSButton(title:"Restart local provider…",target:self,action:#selector(restartProvider)); restartButton.bezelStyle = .rounded
+        restartButton = NSButton(title:"Restart local provider…",target:self,action:#selector(restartProvider))
         if previewOnly { restartButton.isEnabled = false }
-        bar.addView(restartButton,in:.trailing)
-        bar.setHuggingPriority(.defaultLow,for:.horizontal)
-        // Controls keep their natural width; spare row width goes between the leading and trailing groups.
-        bar.distribution = .gravityAreas
-        for view in bar.views { view.setContentHuggingPriority(.required,for:.horizontal) }
+        let toolbar = NSToolbar(identifier:"GargoylMainToolbar")
+        toolbar.delegate = self; toolbar.displayMode = .iconAndLabel; toolbar.allowsUserCustomization = false
+        window.toolbar = toolbar; window.toolbarStyle = .unified
         let config = WKWebViewConfiguration(); config.defaultWebpagePreferences.allowsContentJavaScript = false
         config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self; web.uiDelegate = self
-        // Narrow windows scroll the row sideways; a visible (legacy) scroller shows that more exists.
-        let scroll = NSScrollView(); scroll.hasHorizontalScroller = true; scroll.autohidesScrollers = true
-        scroll.scrollerStyle = .legacy; scroll.drawsBackground = false
-        bar.translatesAutoresizingMaskIntoConstraints = false; scroll.documentView = bar
+        // Native messages sit in a quiet status area under the page instead of above it.
+        for field in [fleetStatus,status] {
+            field.font = NSFont.systemFont(ofSize:NSFont.smallSystemFontSize); field.textColor = .secondaryLabelColor
+            field.translatesAutoresizingMaskIntoConstraints = false
+        }
+        let statusArea = NSStackView(views:[fleetStatus,status]); statusArea.orientation = .vertical; statusArea.alignment = .leading; statusArea.spacing = 2
+        statusArea.translatesAutoresizingMaskIntoConstraints = false; web.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(web); content.addSubview(statusArea)
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo:scroll.contentView.leadingAnchor),bar.topAnchor.constraint(equalTo:scroll.contentView.topAnchor),
-            bar.heightAnchor.constraint(equalToConstant:34),bar.widthAnchor.constraint(greaterThanOrEqualTo:scroll.contentView.widthAnchor)
-        ])
-        let stack = NSStackView(views:[scroll,fleetStatus,status,web]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(stack)
-        scroll.translatesAutoresizingMaskIntoConstraints = false; status.translatesAutoresizingMaskIntoConstraints = false; fleetStatus.translatesAutoresizingMaskIntoConstraints = false; web.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo:content.leadingAnchor,constant:10),stack.trailingAnchor.constraint(equalTo:content.trailingAnchor,constant:-10),stack.topAnchor.constraint(equalTo:content.topAnchor,constant:10),stack.bottomAnchor.constraint(equalTo:content.bottomAnchor,constant:-10),
-            scroll.widthAnchor.constraint(equalTo:stack.widthAnchor),scroll.heightAnchor.constraint(equalToConstant:50),
-            fleetStatus.widthAnchor.constraint(equalTo:stack.widthAnchor),status.widthAnchor.constraint(equalTo:stack.widthAnchor),web.widthAnchor.constraint(equalTo:stack.widthAnchor),web.heightAnchor.constraint(greaterThanOrEqualToConstant:300)
+            web.leadingAnchor.constraint(equalTo:content.leadingAnchor),web.trailingAnchor.constraint(equalTo:content.trailingAnchor),web.topAnchor.constraint(equalTo:content.topAnchor),
+            web.heightAnchor.constraint(greaterThanOrEqualToConstant:300),
+            statusArea.topAnchor.constraint(equalTo:web.bottomAnchor,constant:6),statusArea.leadingAnchor.constraint(equalTo:content.leadingAnchor,constant:12),
+            statusArea.trailingAnchor.constraint(equalTo:content.trailingAnchor,constant:-12),statusArea.bottomAnchor.constraint(equalTo:content.bottomAnchor,constant:-8),
+            fleetStatus.widthAnchor.constraint(equalTo:statusArea.widthAnchor),status.widthAnchor.constraint(equalTo:statusArea.widthAnchor)
         ])
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
-        accountTitleTimer = Timer.scheduledTimer(withTimeInterval:1,repeats:true) { [weak self] _ in self?.syncAccountTitle() }
+        accountTitleTimer = Timer.scheduledTimer(withTimeInterval:1,repeats:true) { [weak self] _ in self?.syncAccountTitle(); self?.window.toolbar?.validateVisibleItems() }
         fleetRefreshTimer = Timer.scheduledTimer(withTimeInterval:30,repeats:true) { [weak self] _ in
             guard let self = self, accountView(self.viewSelection.selected), self.window.isVisible, !NSApp.isHidden else { return }
             self.refresh()
@@ -511,9 +496,55 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     // The Account title says whether an account session is open, so the state never hides in the menu.
     func syncAccountTitle() {
-        // Disconnect is also enabled while sign-in is pending, so this never claims a confirmed session.
-        let title = (disconnectFleetButton?.isEnabled ?? false) ? "Account · connecting or connected" : "Account · not connected"
-        if let item = accountMenu?.item(at:0), item.title != title { item.title = title }
+        let open = disconnectFleetButton?.isEnabled ?? false
+        let tip = open ? "Account · connecting or connected (read-only)" : "Account · not connected"
+        guard let item = accountToolbarItem, item.toolTip != tip else { return }
+        item.toolTip = tip
+        item.image = NSImage(systemSymbolName:open ? "person.crop.circle.badge.checkmark" : "person.crop.circle",accessibilityDescription:tip)
+    }
+    // Toolbar: read-only actions first, then a flexible gap, then manual operation set apart.
+    let toolbarSpecs: [(NSToolbarItem.Identifier, String, String, String, Selector)] = [
+        (NSToolbarItem.Identifier("gargoyl.aliases"),"Local aliases…","Edit friendly names kept only on this Mac","tag",#selector(editFleetAliases)),
+        (NSToolbarItem.Identifier("gargoyl.refresh"),"Refresh","Reload the current view","arrow.clockwise",#selector(refresh)),
+        (NSToolbarItem.Identifier("gargoyl.start"),"Start local monitor","Start this Mac's Gargoyl monitoring job (never Darkbloom)","play.circle",#selector(startMonitor)),
+        (NSToolbarItem.Identifier("gargoyl.stop"),"Stop local monitor","Stop this Mac's Gargoyl monitoring job (never Darkbloom)","stop.circle",#selector(stopMonitor)),
+        (NSToolbarItem.Identifier("gargoyl.export"),"Export local report…","Save bounded normalized evidence from this Mac","square.and.arrow.up",#selector(exportReport)),
+        (NSToolbarItem.Identifier("gargoyl.operation"),"Operation status","Show the last manual operation on this Mac","list.bullet.rectangle",#selector(operationStatus)),
+        (NSToolbarItem.Identifier("gargoyl.reconcile"),"Record reconciliation…","Available on Operation status for an unresolved operation","checkmark.seal",#selector(reconcileOperation)),
+        (NSToolbarItem.Identifier("gargoyl.restart"),"Restart local provider…","Review and confirm one graceful Darkbloom restart on this Mac","arrow.counterclockwise.circle",#selector(restartProvider))
+    ]
+    let accountIdentifier = NSToolbarItem.Identifier("gargoyl.account")
+    func toolbarOrder() -> [NSToolbarItem.Identifier] {
+        let ids = toolbarSpecs.map { $0.0 }
+        return [accountIdentifier] + Array(ids[0..<5]) + [.flexibleSpace] + Array(ids[5...])
+    }
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarOrder() }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarOrder() }
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if itemIdentifier == accountIdentifier {
+            let item = NSMenuToolbarItem(itemIdentifier:itemIdentifier)
+            item.label = "Account"; item.paletteLabel = "Account"; item.showsIndicator = true
+            if let menu = accountMenu { item.menu = menu }
+            item.image = NSImage(systemSymbolName:"person.crop.circle",accessibilityDescription:"Account · not connected")
+            item.toolTip = "Account · not connected"
+            accountToolbarItem = item
+            return item
+        }
+        guard let spec = toolbarSpecs.first(where:{ $0.0 == itemIdentifier }) else { return nil }
+        let item = NSToolbarItem(itemIdentifier:itemIdentifier)
+        item.label = spec.1; item.paletteLabel = spec.1; item.toolTip = spec.2
+        item.image = NSImage(systemSymbolName:spec.3,accessibilityDescription:spec.1)
+        item.target = self; item.action = spec.4; item.isBordered = true
+        return item
+    }
+    // Toolbar items mirror the same enablement the old buttons had.
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        switch item.action {
+        case #selector(startMonitor), #selector(stopMonitor), #selector(editFleetAliases): return !previewOnly
+        case #selector(restartProvider): return restartButton?.isEnabled ?? false
+        case #selector(reconcileOperation): return (reconcileButton?.isEnabled ?? false) && !(reconcileButton?.isHidden ?? true)
+        default: return true
+        }
     }
     @objc func refresh() { displayView(viewSelection.selected) }
     func displayView(_ view: String) {
