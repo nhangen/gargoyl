@@ -47,7 +47,7 @@ Every job in `.github/workflows/ci.yml` was traced for dependencies, dynamic inp
 - **`lint-and-test` (Linux Matrix: Python 3.11, 3.12, 3.13, 3.14)**:
   - *Dynamic Inputs*: Matrix variable `${{ matrix.python-version }}`.
   - *Execution Sequence*: `actions/checkout` -> `actions/setup-python` -> `pip install -e '.[dev]'` -> `ruff check .` -> `python tools/run_tests.py discover -s tests -v`.
-  - *Workload Capacity*: 4 sequential matrix legs executing 611 unit tests. Exercises in-memory and temporary SQLite stores, cryptographic Ed25519 signatures, thread synchronization, and `unraisablehook` resource warning traps. Container sizing requirement: 4 CPUs, 4 GiB memory, non-root user, no Docker daemon required.
+  - *Workload Capacity*: Up to 4 concurrent matrix legs (the unchanged workflow at `.github/workflows/ci.yml:14-16` defines 4 matrix versions and no `max-parallel: 1`; legs execute concurrently, not serialized). 612 unit tests passed with 0 skips in verified local macOS Darwin Python 3.14.7 testing; Linux collected/executed/skipped counts remain UNVERIFIED. Exercises in-memory and temporary SQLite stores, cryptographic Ed25519 signatures, thread synchronization, and `unraisablehook` resource warning traps. Sizing candidate is an explicitly UNMEASURED estimate of 4 CPUs / 4 GiB memory per matrix leg (non-root user, no Docker daemon required). Aggregate peak matrix demand can reach up to 16 CPUs / 16 GiB memory if all 4 legs execute concurrently, plus independent `dependency-audit` load; `release-artifact` dependency timing is distinct and executes only after all 3 prior gates succeed. There is NO measured capacity or safe allocation claim.
 - **`macos-native` (Native macOS: macOS 15, Python 3.14)**:
   - *Dynamic Inputs*: Canonical temp directory path via `python -c 'import os,tempfile; print(os.path.realpath(tempfile.gettempdir()))'`.
   - *Execution Sequence*: `actions/checkout` -> `actions/setup-python` -> `pip install -e '.[dev]'` -> canonical `TMPDIR` export -> `python tools/run_tests.py discover -s tests -v`.
@@ -101,10 +101,10 @@ The established local runner profile managed by `nhangen/local-ci` (as deployed 
 
 | Job Name | Current Production Routing | Potential Target Routing | Status | Notes |
 |---|---|---|---|---|
-| `lint-and-test` | `runs-on: ubuntu-latest` | `runs-on: local-ci-gargoyl` | **HELD** | Preserved on `ubuntu-latest` pending approved capacity & enrollment |
+| `lint-and-test` | `runs-on: ubuntu-latest` | `runs-on: UNRESOLVED_HELD` (opaque custom label under `--no-default-labels`; unassigned) | **HELD** | Preserved on `ubuntu-latest` pending approved capacity & enrollment |
 | `macos-native` | `runs-on: macos-15` | `runs-on: macos-15` (Unchanged) | **PRESERVED** | Real macOS runner required for Swift/AppKit/WebKit; canonical `TMPDIR` |
-| `dependency-audit` | `runs-on: ubuntu-latest` | `runs-on: local-ci-gargoyl` | **HELD** | Preserved on `ubuntu-latest`; strict audit with zero waivers |
-| `release-artifact` | `runs-on: ubuntu-latest` | `runs-on: local-ci-gargoyl` | **HELD** | Preserved on `ubuntu-latest`; `if: ${{ always() }}` fail-closed tri-gate |
+| `dependency-audit` | `runs-on: ubuntu-latest` | `runs-on: UNRESOLVED_HELD` (opaque custom label under `--no-default-labels`; unassigned) | **HELD** | Preserved on `ubuntu-latest`; strict audit with zero waivers |
+| `release-artifact` | `runs-on: ubuntu-latest` | `runs-on: UNRESOLVED_HELD` (opaque custom label under `--no-default-labels`; unassigned) | **HELD** | Preserved on `ubuntu-latest`; `if: ${{ always() }}` fail-closed tri-gate |
 
 **Policy Invariant**: Actual routing is **HELD** on `ubuntu-latest`. Production `.github/workflows/ci.yml` is kept intact (`runs-on: ubuntu-latest`) to avoid routing jobs to nonexistent local runner labels while Gargoyl enrollment (0 runners) and capacity (28/28 allocated) remain unapproved.
 
@@ -119,7 +119,7 @@ The established local runner profile managed by `nhangen/local-ci` (as deployed 
 | `--check-source` | Verifies static repository source contracts and graph digests only | `0` = PASS, `1` = Contract Violation | Explicitly notes: static source check only; does not imply rollout readiness |
 | `--check-readiness` | Evaluates deployment rollout readiness against infrastructure gates | `0` = Ready (unreachable currently), `2` = BLOCKED (Held gates) | Explicitly details: capacity saturated, 0 repo runners, branch protection denied |
 | `--check` (default) | Executes both source contract validation and readiness evaluation | `0` = Fully Ready, `1` = Contract Violation, `2` = Source PASS but Rollout HELD | Prevents false passing readiness by returning non-zero exit code while gates are held |
-| `--manifest-only` | Extracts declared dependencies for audit | `0` = Success | Prints 5 resolved packages |
+| `--manifest-only` | Extracts declared dependencies for audit | `0` = Success | Prints 5 declared requirements |
 
 ---
 
@@ -128,11 +128,11 @@ The established local runner profile managed by `nhangen/local-ci` (as deployed 
 1. **Local Fleet Capacity Allocation**:
    - Local-CI fleet allocation is fully saturated at 28/28 CPUs and 46/48 GiB memory.
    - Proposed Tron resize is unapproved.
-   - Gargoyl cannot schedule jobs locally until explicit capacity headroom is authorized.
+   - Default matrix runs up to 4 concurrent legs; container sizing candidate is an explicitly unmeasured estimate of 4 CPUs / 4 GiB memory per leg (up to 16 CPUs / 16 GiB peak matrix demand plus independent audit load); Gargoyl cannot schedule jobs locally until explicit capacity headroom is authorized.
 
 2. **Repository Runner Enrollment**:
    - GitHub reports 0 repository runners configured for `nhangen/gargoyl`.
-   - Registration with the `nhangen/local-ci` fleet controller requires action-time enrollment approval and credential provisioning.
+   - Registration with the `nhangen/local-ci` fleet controller requires action-time enrollment approval and credential provisioning; target label remains `UNRESOLVED_HELD` under `--no-default-labels`.
 
 3. **Branch Protection Constraints**:
    - Access to GitHub branch protection API was denied (`HTTP 403`).
@@ -143,4 +143,4 @@ The established local runner profile managed by `nhangen/local-ci` (as deployed 
    - All Linux jobs must remain compatible with this unprivileged container profile.
 
 5. **Capture Receipt Status**:
-   - `UNVERIFIED / UNAVAILABLE`: No local capture receipt or readback was produced or observed; post-commit hook discovery was declined per coordinator guidance. Coordinator handles canonical nonsecret delivery.
+   - `UNVERIFIED / UNAVAILABLE`: No local capture receipt or readback was produced or observed; coordinator handles canonical nonsecret delivery.
