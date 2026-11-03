@@ -59,19 +59,21 @@ def session_lock(cache):
 
 
 class SessionClosed(Exception):
-    pass
+    def __init__(self, reason="pipe_eof"):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def private_send(value):
     """Bounded private native IPC; opted-in credentials never enter status or HTML."""
     payload = json.dumps(value, allow_nan=False, ensure_ascii=False).encode() + b"\n"
     if len(payload) > 4096:
-        raise SessionClosed
+        raise SessionClosed("pipe_eof")
     try:
         if os.write(sys.stdout.fileno(), payload) != len(payload):
-            raise SessionClosed
+            raise SessionClosed("pipe_eof")
     except (OSError, ValueError):
-        raise SessionClosed from None
+        raise SessionClosed("pipe_eof") from None
 
 
 def pipe_wait(stream, seconds, owner):
@@ -80,11 +82,18 @@ def pipe_wait(stream, seconds, owner):
         selector.register(stream, selectors.EVENT_READ)
         while True:
             if not owner():
-                raise SessionClosed
+                raise SessionClosed("owner_inactive")
             if selector.select(max(0, min(1, deadline - time.monotonic()))):
-                # EOF or any input requests termination. No arbitrary commands/actions.
-                os.read(stream.fileno(), 128)
-                raise SessionClosed
+                try:
+                    payload = os.read(stream.fileno(), 128)
+                except OSError:
+                    payload = b""
+                token = payload.strip().decode("utf-8", errors="replace")
+                if token == "disconnect":
+                    raise SessionClosed("intentional_disconnect")
+                if token == "quit":
+                    raise SessionClosed("intentional_quit")
+                raise SessionClosed("pipe_eof")
             if time.monotonic() >= deadline:
                 return
 
@@ -247,16 +256,21 @@ def _run_session(
             )
         send(dict(kind="fleet-unavailable", reason="expired"))
         lifecycle_record["exit_reason"] = "expired"
-    except SessionClosed:
+    except SessionClosed as closed:
         if not owner():
             lifecycle_record["exit_reason"] = "owner_inactive"
+        elif closed.reason in {"intentional_disconnect", "intentional_quit"}:
+            lifecycle_record["exit_reason"] = closed.reason
         elif lifecycle_record.get("exit_reason") == "none":
             lifecycle_record["exit_reason"] = "pipe_eof"
     except (FleetError, OSError, ValueError) as error:
         if lifecycle_record.get("exit_reason") == "none":
-            lifecycle_record["exit_reason"] = (
-                error.reason if isinstance(error, FleetError) else "unknown"
-            )
+            if isinstance(error, FleetError):
+                lifecycle_record["exit_reason"] = (
+                    error.reason if error.reason in {"auth_required", "scope_refused", "expired"} else "unknown"
+                )
+            else:
+                lifecycle_record["exit_reason"] = "unknown"
         try:
             send(
                 dict(
@@ -273,14 +287,12 @@ def _run_session(
         # Read-only cached inventory can remain at most24h, never as a live session.
         if inventory is not None:
             try:
-                cache.write(
-                    dict(
-                        inventory,
-                        connection="disconnected"
-                        if inventory["connection"] == "connected"
-                        else inventory["connection"],
-                    )
+                new_conn = (
+                    "disconnected"
+                    if inventory.get("connection") in {"connected", "unavailable"}
+                    else inventory.get("connection", "disconnected")
                 )
+                cache.write(dict(inventory, connection=new_conn))
             except (OSError, ValueError):
                 pass
         if lifecycle_record is not None:
@@ -293,6 +305,7 @@ def _run_session(
                     if lifecycle_record.get("exit_reason")
                     in {
                         "intentional_disconnect",
+                        "intentional_quit",
                         "auth_required",
                         "scope_refused",
                         "expired",

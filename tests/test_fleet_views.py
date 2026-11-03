@@ -96,7 +96,7 @@ class FleetViewTests(unittest.TestCase):
         # 1. Genuinely established auth failure
         value["connection"] = "auth_required"
         auth_page = render_view("fleet", None, None, inventory=value, now=NOW)
-        self.assertIn("Account authorization was rejected or revoked", auth_page)
+        self.assertIn("Account authorization was rejected (HTTP 401/403)", auth_page)
         self.assertIn("auth_required", auth_page)
 
         # 2. Transient failure: communication error, collection retrying
@@ -115,7 +115,7 @@ class FleetViewTests(unittest.TestCase):
         eof_page = render_view(
             "fleet", None, None, inventory=value, now=NOW, lifecycle=eof_lifecycle
         )
-        self.assertIn("Normal operator application is not running", eof_page)
+        self.assertIn("Supervising pipe closed (cause unknown)", eof_page)
         self.assertIn("reopening Gargoyl will resume collection", eof_page)
         self.assertNotIn("auth_required", eof_page)
 

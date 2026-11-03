@@ -230,26 +230,11 @@ def render_fleet(
                     "Read-only preview mode: account connection, saved-session recovery and provider controls are disabled. "
                     "These are cached records. Heartbeat timestamps are historical evidence."
                 )
-            elif inventory["connection"] == "auth_required":
-                warn_text = (
-                    "Account authorization was rejected or revoked (auth_required). Connect fleet to approve a new read-only session. "
-                    "These are cached records. Heartbeat timestamps are historical evidence."
-                )
-            elif (
-                inventory["connection"] == "unavailable"
-                or (lifecycle is not None and lifecycle.get("status") == "transient_failure")
-            ):
-                warn_text = (
-                    "Temporary account communication failure; collection is retrying with backoff. "
-                    "These are cached records. Heartbeat timestamps are historical evidence."
-                )
-            elif lifecycle is not None and lifecycle.get("exit_reason") == "pipe_eof":
-                warn_text = (
-                    "Normal operator application is not running; account reader lifetime is tied to normal app sessions. "
-                    "These are cached records; reopening Gargoyl will resume collection if a saved sign-in exists. "
-                    "Heartbeat timestamps are historical evidence."
-                )
-            elif lifecycle is not None and lifecycle.get("status") in {"exited", "stopped"}:
+            elif lifecycle is not None and lifecycle.get("status") in {
+                "exited",
+                "stopped",
+                "terminal_failure",
+            }:
                 reason = lifecycle.get("exit_reason", "unknown")
                 if reason == "intentional_disconnect":
                     warn_text = (
@@ -263,15 +248,57 @@ def render_fleet(
                         "These are cached records; reopening Gargoyl will resume collection if a saved sign-in exists. "
                         "Heartbeat timestamps are historical evidence."
                     )
+                elif reason == "pipe_eof":
+                    warn_text = (
+                        "Supervising pipe closed (cause unknown). "
+                        "These are cached records; reopening Gargoyl will resume collection if a saved sign-in exists. "
+                        "Heartbeat timestamps are historical evidence."
+                    )
+                elif reason == "auth_required" or inventory["connection"] == "auth_required":
+                    warn_text = (
+                        "Account authorization was rejected (HTTP 401/403). Connect fleet to approve a new read-only session. "
+                        "These are cached records. Heartbeat timestamps are historical evidence."
+                    )
+                elif reason == "retry_exhausted" or lifecycle.get("status") == "terminal_failure":
+                    warn_text = (
+                        "Account reader recovery stopped after reaching retry budget. "
+                        "Saved sign-in is preserved; resume manually when available. "
+                        "These are cached records; no credential rejection is inferred. "
+                        "Heartbeat timestamps are historical evidence."
+                    )
                 else:
                     warn_text = (
                         f"Account reader has stopped ({reason}). "
                         "These are cached records; no credential rejection is inferred. "
                         "Heartbeat timestamps are historical evidence."
                     )
+            elif (
+                lifecycle is not None
+                and lifecycle.get("status") == "transient_failure"
+            ):
+                warn_text = (
+                    "Temporary account communication failure; collection is retrying with backoff. "
+                    "These are cached records. Heartbeat timestamps are historical evidence."
+                )
+            elif inventory["connection"] == "auth_required":
+                warn_text = (
+                    "Account authorization was rejected (HTTP 401/403). Connect fleet to approve a new read-only session. "
+                    "These are cached records. Heartbeat timestamps are historical evidence."
+                )
+            elif lifecycle is not None and lifecycle.get("status") == "starting":
+                warn_text = (
+                    "Account reader is starting. "
+                    "These are cached records. Heartbeat timestamps are historical evidence."
+                )
+            elif lifecycle is not None and lifecycle.get("status") == "session_busy":
+                warn_text = (
+                    "Another account reader session is active. "
+                    "These are cached records. Heartbeat timestamps are historical evidence."
+                )
             else:
                 warn_text = (
-                    "Account collection is disconnected or unavailable. These are cached records; reconnect for current reports. "
+                    "Account collection is not active (cause unknown). "
+                    "These are cached records; resume saved sign-in or connect fleet for current reports. "
                     "Heartbeat timestamps are historical evidence."
                 )
             body += '<div class="callout warn"><p>' + e(warn_text) + '</p></div>'

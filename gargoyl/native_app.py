@@ -340,6 +340,16 @@ final class Worker {
     }
     func disconnectFleet() {
         guard ["fleet-session", "fleet-session-remember", "fleet-restore"].contains(mode) else { return }
+        if let data = "disconnect\n".data(using: .utf8) {
+            try? input.fileHandleForWriting.write(contentsOf: data)
+        }
+        try? input.fileHandleForWriting.close()
+    }
+    func quitFleet() {
+        guard ["fleet-session", "fleet-session-remember", "fleet-restore"].contains(mode) else { return }
+        if let data = "quit\n".data(using: .utf8) {
+            try? input.fileHandleForWriting.write(contentsOf: data)
+        }
         try? input.fileHandleForWriting.close()
     }
     // No terminate/interrupt method: closing the app never cancels accepted work.
@@ -1043,6 +1053,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             alert.addButton(withTitle:"Keep open");alert.addButton(withTitle:"Close app")
             return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
         }
+        fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
+        fleetWorker?.quitFleet()
         return .terminateNow
     }
     func recordWindow(_ event: String, reopeningVisibleWindows: Bool? = nil) {
