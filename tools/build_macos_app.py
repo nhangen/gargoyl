@@ -76,6 +76,11 @@ def build(output, python, *, preview=True):
         },
     )
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+    # swiftc seals the executable before Info.plist exists. Seal the completed
+    # bundle too, so its resource envelope includes the final application metadata.
+    app = output / "Gargoyl.app"
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True)
+    subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)], check=True)
     print(output / "Gargoyl.app")
     return output / "Gargoyl.app"
 

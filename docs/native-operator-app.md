@@ -65,7 +65,10 @@ code already running as the same OS user is outside this boundary.
 
 For maintainers, `tools/build_macos_app.py` builds a local **Gargoyl.app** against
 the Apple SDK with an owner-local isolated Python containing the matching
-reviewed package. Its default is a read-only preview with lifecycle and restart
+reviewed package. The builder ad-hoc signs the completed local bundle after writing
+its metadata and verifies its resource seal before reporting success. This is
+local integrity packaging, not developer notarization, a new permission grant,
+or an override of execution approval. Its default is a read-only preview with lifecycle and restart
 buttons disabled. Release preparation can enable native controls with the build
 option `--enable-native-actions`; this does not grant permissions, authenticate
 or invoke a restart. It must not be mistaken for live repair activation.
