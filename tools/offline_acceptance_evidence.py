@@ -127,7 +127,10 @@ def clock_skew_reference():
 def coordinator_disagreement():
     local = collect(DISAGREE_HOST, REFERENCE_TIME, {
         "daemon_state": {"value": "running", "source": "daemon", "timestamp": REFERENCE_TIME,
-                         "freshness_seconds": 300, "state": "observed", "sensitivity": "safe"}})
+                         "freshness_seconds": 300, "state": "observed", "sensitivity": "safe"},
+        "routing_eligible": {"value": "eligible", "source": "daemon", "timestamp": REFERENCE_TIME,
+                             "freshness_seconds": 300, "state": "observed", "sensitivity": "safe"},
+    })
     first = {"schema_version": 1, "host_id": DISAGREE_HOST, "collected_at": REFERENCE_TIME,
              "fields": {
                  "daemon_state": {"value": "stopped", "source": "coordinator", "timestamp": REFERENCE_TIME,
@@ -149,7 +152,8 @@ def coordinator_disagreement():
     check(records, "conflicting_value_not_resolved", None, conflict["value"])
     check(records, "conflicting_originals_preserved", ["eligible", "ineligible"],
           sorted(item["value"] for item in conflict["conflicting_observations"]))
-    check(records, "coordinator_report_unresolved", "unknown", comparisons["routing_eligible"])
+    check(records, "conflict_drives_cross_source_comparison_unknown", "unknown",
+          comparisons["routing_eligible"])
     check(records, "local_coordinator_report_mismatch", "mismatch", comparisons["daemon_state"])
     check(records, "mismatch_incident_recorded", ["daemon_state_mismatch"], dashboard["hosts"][0]["incidents"])
     check(records, "render_preserves_conflict_evidence", True,

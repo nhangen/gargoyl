@@ -110,7 +110,7 @@ class OfflineAcceptanceEvidenceRunnerTests(unittest.TestCase):
             self.assertEqual(self.check(scenario, "conflicting_originals_preserved")["actual"],
                              ["eligible", "ineligible"])
             self.assertEqual(self.check(scenario, "same_source_conflict_stays_unknown")["actual"], "unknown")
-            self.assertEqual(self.check(scenario, "coordinator_report_unresolved")["actual"], "unknown")
+            self.assertEqual(self.check(scenario, "conflict_drives_cross_source_comparison_unknown")["actual"], "unknown")
             self.assertEqual(self.check(scenario, "local_coordinator_report_mismatch")["actual"], "mismatch")
             self.assertEqual(self.check(scenario, "mismatch_incident_recorded")["actual"],
                              ["daemon_state_mismatch"])
