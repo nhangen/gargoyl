@@ -1,7 +1,15 @@
 """Preflight verification tool for Gargoyl CI workflow, graph integrity, and runner compatibility.
 
-Usage:
-    python tools/ci_preflight.py [--check] [--json] [--manifest-only]
+CLI Modes and Exit Codes:
+  --check-source    Verify static repository source contracts and graph digests.
+                    Exit 0 on success; Exit 1 on contract violation.
+  --check-readiness Evaluate deployment rollout readiness against infrastructure gates.
+                    Exit 0 if fully ready; Exit 2 if held/blocked.
+  --check           Run both source verification and readiness evaluation.
+                    Exit 0 only if fully ready; Exit 2 if contracts pass but rollout held;
+                    Exit 1 on contract violation.
+  --manifest-only   Print declared dependencies extracted from pyproject.toml manifest.
+  --json            Output machine-readable JSON report.
 """
 
 import argparse
@@ -22,14 +30,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CI_YML_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 
+EXIT_READY = 0
+EXIT_CONTRACT_FAILED = 1
+EXIT_HELD_BLOCKED = 2
+
 EXPECTED_DIGESTS = {
     ".github/workflows/ci.yml": {
         "sha256": "1e7c8eda685a3765f2eb1fc47e5ab34a17416913459cc47d72a5e99dd3a78d0b",
         "git": "545f03c2df66a9f9feb72aaa7cf425dca8f40bb2",
     },
     "pyproject.toml": {
-        "sha256": "7f5ada8949aaa2cdcffbdb61ab8409380d3d4f054c39a262d138d0002429a786",
-        "git": "f6180f06d3422c57cc0f70c221078d07b279e257",
+        "sha256": "10f1a10cc95e3b8e2ec5b0931b91f580fe3061f7a00eeac2f4d4215555db3b69",
+        "git": "643f86a81242779294bd52355060ab4be8efe214",
     },
     "README.md": {
         "sha256": "c1ba02440f8c5cfa07c5457f57b03110f5148e33a6e8aeec8c9aa6c6d197469b",
@@ -57,27 +69,37 @@ HELD_GATES = [
     {
         "gate": "local_fleet_capacity",
         "status": "HELD",
-        "reason": "Current allocation 28/28 CPUs and 46/48 GiB memory; unapproved Tron resize.",
+        "reason": "Current fleet allocation saturated at 28/28 CPUs and 46/48 GiB memory; proposed Tron resize is unapproved.",
     },
     {
         "gate": "repository_enrollment",
         "status": "HELD",
-        "reason": "GitHub reports 0 repository runners; Gargoyl not enrolled in local CI fleet.",
+        "reason": "GitHub reports 0 repository runners; Gargoyl is not enrolled in the nhangen/local-ci fleet.",
     },
     {
         "gate": "branch_protection_read",
         "status": "HELD",
-        "reason": "Access denied to branch-protection API; concrete required check names unconfirmed.",
+        "reason": "Branch-protection API returned HTTP 403; concrete required check constraints remain unconfirmed.",
     },
     {
-        "gate": "macos_native_isolation",
+        "gate": "macos_native_retained",
         "status": "PRESERVED_ON_HOSTED",
-        "reason": "macos-native requires real macOS hardware with Swift/AppKit; retained on macos-15.",
+        "reason": "macos-native requires real macOS Darwin host with Swift/AppKit/WebKit; retained on hosted macos-15.",
     },
 ]
 
+PROPOSED_LOCAL_ROUTING = {
+    "profile": "nhangen/local-ci",
+    "flags": "--no-default-labels",
+    "target_label": "UNRESOLVED_HELD (opaque unique custom label local-ci-<hash> assigned upon enrollment; 0 runners currently enrolled)",
+    "target_label_state": "UNRESOLVED_HELD",
+    "linux_jobs": ["lint-and-test", "dependency-audit", "release-artifact"],
+    "macos_jobs_excluded": ["macos-native"],
+}
 
-def resolve_declared_dependencies():
+
+def extract_declared_dependencies():
+    """Extract declared dependencies from pyproject.toml manifest without resolution."""
     with open(PYPROJECT_PATH, "rb") as f:
         p = tomllib.load(f)
     d = p["project"]
@@ -90,6 +112,7 @@ def resolve_declared_dependencies():
 
 
 def verify_graph_digests():
+    """Verify cryptographic SHA-256 and Git object hashes of action graph files."""
     results = {}
     all_ok = True
     for rel_path, expected in EXPECTED_DIGESTS.items():
@@ -117,6 +140,7 @@ def verify_graph_digests():
 
 
 def inspect_environment():
+    """Inspect local runtime environment and available tools."""
     pythons = {}
     for ver in ("3.11", "3.12", "3.13", "3.14"):
         exe = shutil.which(f"python{ver}")
@@ -138,6 +162,7 @@ def inspect_environment():
         "machine": platform.machine(),
         "python_executable": sys.executable,
         "python_version": sys.version.split()[0],
+        "pyyaml_version": getattr(yaml, "__version__", "unknown"),
         "matrix_pythons": pythons,
         "canonical_tmpdir": canonical_tmpdir,
         "tmpdir_is_canonical": tmpdir_is_canonical,
@@ -148,6 +173,7 @@ def inspect_environment():
 
 
 def verify_workflow_contracts():
+    """Verify production workflow contract invariants."""
     raw = yaml.safe_load(CI_YML_PATH.read_text(encoding="utf-8"))
     if True in raw and "on" not in raw:
         raw["on"] = raw[True]
@@ -175,40 +201,67 @@ def verify_workflow_contracts():
     return all_passed, checks
 
 
+def evaluate_deployment_readiness():
+    """Evaluate rollout readiness against infrastructure gates."""
+    # Saturated fleet capacity, 0 enrolled runners, and denied branch protection mean rollout is blocked.
+    readiness = {
+        "fleet_capacity_approved": False,
+        "repository_enrolled": False,
+        "branch_protection_confirmed": False,
+        "macos_native_isolation_approved": True,  # retained on macos-15 hosted
+    }
+    is_ready = all(readiness.values())
+    return is_ready, readiness
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Gargoyl CI preflight & verification")
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--check",
         action="store_true",
-        help="Run full preflight checks and report status",
+        help="Run both source contract and readiness checks (exits 2 while gates held)",
+    )
+    mode_group.add_argument(
+        "--check-source",
+        action="store_true",
+        help="Verify static repository source contracts and graph digests only (exits 0 on success)",
+    )
+    mode_group.add_argument(
+        "--check-readiness",
+        action="store_true",
+        help="Evaluate deployment readiness against infrastructure gates (exits 2 while held)",
+    )
+    mode_group.add_argument(
+        "--manifest-only",
+        action="store_true",
+        help="Print declared dependencies extracted from pyproject.toml",
     )
     parser.add_argument(
         "--json", action="store_true", help="Output machine-readable JSON"
     )
-    parser.add_argument(
-        "--manifest-only",
-        action="store_true",
-        help="Print declared dependencies for audit",
-    )
     args = parser.parse_args(argv)
 
     if args.manifest_only:
-        deps = resolve_declared_dependencies()
+        deps = extract_declared_dependencies()
         print("\n".join(deps))
-        return 0
+        return EXIT_READY
 
     env = inspect_environment()
     graph_ok, graph_results = verify_graph_digests()
     contracts_ok, contract_results = verify_workflow_contracts()
-    deps = resolve_declared_dependencies()
+    ready_ok, readiness_results = evaluate_deployment_readiness()
+    deps = extract_declared_dependencies()
 
     report = {
-        "workflow_contract_passed": contracts_ok,
-        "graph_integrity_passed": graph_ok,
+        "source_contracts_passed": contracts_ok and graph_ok,
+        "deployment_ready": ready_ok,
         "contracts": contract_results,
         "digests": graph_results,
+        "readiness": readiness_results,
         "environment": env,
         "declared_dependencies": deps,
+        "proposed_routing": PROPOSED_LOCAL_ROUTING,
         "held_gates": HELD_GATES,
     }
 
@@ -216,19 +269,41 @@ def main(argv=None):
         print(json.dumps(report, indent=2))
     else:
         print("=== Gargoyl CI Preflight & Verification Report (Issue #82) ===")
-        print(f"Workflow Contracts: {'PASS' if contracts_ok else 'FAIL'}")
-        print(f"Graph Integrity:    {'PASS' if graph_ok else 'FAIL'}")
         print(
-            f"Current Python:     {env['python_version']} ({env['python_executable']})"
+            f"Source Contracts:     {'PASS' if (contracts_ok and graph_ok) else 'FAIL'}"
         )
-        print(f"Matrix Pythons:     {env['matrix_pythons']}")
         print(
-            f"macOS SDK Tools:    xcrun={env['has_xcrun']}, swiftc={env['has_swiftc']}"
+            "                      (Static source verification; does NOT imply rollout readiness)"
         )
-        print("Routing Status:     HELD on ubuntu-latest (0 repo runners enrolled)")
-        print(f"Held Gates Count:   {len(HELD_GATES)}")
+        print(
+            f"Deployment Readiness: {'READY' if ready_ok else 'BLOCKED (4 held gates)'}"
+        )
+        print(
+            f"Current Python:       {env['python_version']} ({env['python_executable']})"
+        )
+        print(f"PyYAML Version:       {env['pyyaml_version']}")
+        print(f"Matrix Pythons:       {env['matrix_pythons']}")
+        print(
+            f"macOS SDK Tools:      xcrun={env['has_xcrun']}, swiftc={env['has_swiftc']}"
+        )
+        print("Routing Status:       HELD on ubuntu-latest (0 repo runners enrolled)")
+        print(
+            f"Target Custom Label:  {PROPOSED_LOCAL_ROUTING['target_label_state']} (opaque custom label under {PROPOSED_LOCAL_ROUTING['flags']}; unassigned)"
+        )
+        print(f"Held Gates Count:     {len(HELD_GATES)}")
 
-    return 0 if (graph_ok and contracts_ok) else 1
+    if args.check_source:
+        return EXIT_READY if (graph_ok and contracts_ok) else EXIT_CONTRACT_FAILED
+
+    if args.check_readiness:
+        return EXIT_READY if ready_ok else EXIT_HELD_BLOCKED
+
+    # Default --check mode: Requires both source contracts AND deployment readiness
+    if not (graph_ok and contracts_ok):
+        return EXIT_CONTRACT_FAILED
+    if not ready_ok:
+        return EXIT_HELD_BLOCKED
+    return EXIT_READY
 
 
 if __name__ == "__main__":

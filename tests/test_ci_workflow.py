@@ -6,6 +6,7 @@ Environment: mock data / static analysis (does not claim live Linux CI or hosted
 import hashlib
 import os
 import subprocess
+import sys
 import tomllib
 import unittest
 from pathlib import Path
@@ -252,7 +253,7 @@ class CIWorkflowTests(unittest.TestCase):
 
     def test_action_and_script_graph_digests(self):
         digests = {
-            "pyproject.toml": "7f5ada8949aaa2cdcffbdb61ab8409380d3d4f054c39a262d138d0002429a786",
+            "pyproject.toml": "10f1a10cc95e3b8e2ec5b0931b91f580fe3061f7a00eeac2f4d4215555db3b69",
             "README.md": "c1ba02440f8c5cfa07c5457f57b03110f5148e33a6e8aeec8c9aa6c6d197469b",
             "tools/run_tests.py": "522456210ef5c77d9109388e12088ab4695ed203af8f2f491327b8c9a3f9977f",
             "tools/verify_release_artifact.py": (
@@ -275,8 +276,8 @@ class CIWorkflowTests(unittest.TestCase):
                 f"File {rel_path} digest mismatch: {actual_sha} != {expected_sha}",
             )
 
-    def test_declared_dependencies_graph_resolution(self):
-        """Verify the exact dependency resolution logic used by the dependency-audit job."""
+    def test_declared_dependencies_manifest_extraction(self):
+        """Verify static extraction of declared dependencies from pyproject.toml manifest."""
         with open(REPO_ROOT / "pyproject.toml", "rb") as f:
             p = tomllib.load(f)
         d = p["project"]
@@ -285,17 +286,18 @@ class CIWorkflowTests(unittest.TestCase):
             + d["dependencies"]
             + sum(d["optional-dependencies"].values(), [])
         )
-        resolved = list(dict.fromkeys(req))
+        extracted = list(dict.fromkeys(req))
         expected = [
             "setuptools==84.1.0",
             "wheel==0.46.2",
             "cryptography>=46,<51",
             "ruff==0.14.3",
+            "PyYAML==6.0.2",
         ]
-        self.assertEqual(resolved, expected)
+        self.assertEqual(extracted, expected)
 
     def test_routing_delta_proposal_validator(self):
-        """Validate the potential Linux runner routing delta while verifying current routing is held."""
+        """Validate the local-ci unique custom label profile while verifying current routing is held."""
         # 1. Verify current production routing is held on ubuntu-latest
         doc = load_workflow()
         self.assertEqual(doc["jobs"]["lint-and-test"]["runs-on"], "ubuntu-latest")
@@ -303,24 +305,102 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertEqual(doc["jobs"]["dependency-audit"]["runs-on"], "ubuntu-latest")
         self.assertEqual(doc["jobs"]["release-artifact"]["runs-on"], "ubuntu-latest")
 
-        # 2. Define proposed routing delta (for when approved enrollment and capacity exist)
-        proposed_linux_label = ["self-hosted", "linux", "gargoyl"]
+        # 2. Local-CI unique custom label profile: single custom label, no-default-labels
+        # Gargoyl has 0 runners enrolled, so target label remains explicitly unresolved/held.
+        unresolved_state = "UNRESOLVED_HELD"
         proposed_routing = {
-            "lint-and-test": proposed_linux_label,
+            "lint-and-test": unresolved_state,
             "macos-native": "macos-15",  # Strictly preserved on real macOS runner
-            "dependency-audit": proposed_linux_label,
-            "release-artifact": proposed_linux_label,
+            "dependency-audit": unresolved_state,
+            "release-artifact": unresolved_state,
         }
 
-        # Rule: macos-native must never be routed to self-hosted Linux
+        # Rule: macos-native must never be routed to local-ci
         self.assertEqual(proposed_routing["macos-native"], "macos-15")
-        self.assertNotIn("linux", repr(proposed_routing["macos-native"]))
+        self.assertNotIn("local-ci", proposed_routing["macos-native"])
 
-        # Rule: Proposed Linux routing must be repository-specific
-        for job_name in ("lint-and-test", "dependency-audit", "release-artifact"):
-            labels = proposed_routing[job_name]
-            self.assertIn("gargoyl", labels)
-            self.assertIn("linux", labels)
+        # Rule: Target label is explicitly unresolved and not a generic multi-label list
+        for job_name in (
+            "lint-and-test",
+            "dependency-audit",
+            "release-artifact",
+        ):
+            target = proposed_routing[job_name]
+            self.assertEqual(target, "UNRESOLVED_HELD")
+            self.assertNotIsInstance(
+                target,
+                list,
+                "Generic multi-label lists are rejected by local-ci profile",
+            )
+
+    def test_preflight_cli_modes_and_exit_semantics(self):
+        """Causally test that preflight CLI modes enforce correct exit semantics and avoid false readiness."""
+        preflight_script = str(REPO_ROOT / "tools" / "ci_preflight.py")
+
+        # 1. --check-source verifies static contracts and exits 0 on valid source
+        proc_source = subprocess.run(
+            [sys.executable, preflight_script, "--check-source"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            proc_source.returncode,
+            0,
+            proc_source.stdout + proc_source.stderr,
+        )
+        self.assertIn("Source Contracts:     PASS", proc_source.stdout)
+
+        # 2. --check-readiness evaluates held infrastructure gates and exits 2 (BLOCKED)
+        proc_ready = subprocess.run(
+            [sys.executable, preflight_script, "--check-readiness"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            proc_ready.returncode, 2, "Readiness must exit 2 while gates held"
+        )
+        self.assertIn("Deployment Readiness: BLOCKED", proc_ready.stdout)
+
+        # 3. Default --check MUST exit 2 (BLOCKED), not 0, while infrastructure gates are held
+        proc_check = subprocess.run(
+            [sys.executable, preflight_script, "--check"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            proc_check.returncode,
+            2,
+            "Default --check must not return 0 while gates held (no false passing readiness)",
+        )
+
+        # 4. --manifest-only outputs the 5 extracted requirements and exits 0
+        proc_manifest = subprocess.run(
+            [sys.executable, preflight_script, "--manifest-only"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc_manifest.returncode, 0)
+        lines = proc_manifest.stdout.strip().splitlines()
+        self.assertEqual(len(lines), 5)
+        self.assertIn("PyYAML==6.0.2", lines)
+
+        # 5. Conflicting check modes must be rejected by mutually exclusive group with exit code 2
+        proc_conflict = subprocess.run(
+            [sys.executable, preflight_script, "--check", "--check-source"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            proc_conflict.returncode,
+            2,
+            "Conflicting CLI check modes must be rejected with non-zero exit code",
+        )
+        self.assertIn("not allowed with argument", proc_conflict.stderr)
 
 
 if __name__ == "__main__":
