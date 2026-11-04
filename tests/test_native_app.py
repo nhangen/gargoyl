@@ -64,9 +64,20 @@ class NativeGateTests(unittest.TestCase):
                 json.dumps(dict(kind="view", view="tools", html="x" * 23000)) + "\n"
             )
             fake.write_text(
-                "#!/usr/bin/python3\nimport sys\nsys.stdout.write("
-                + repr(payload)
-                + ")\n"
+                "#!/usr/bin/python3\n"
+                "import os, sys\n"
+                "mode = sys.argv[-1] if len(sys.argv) > 1 else ''\n"
+                "if mode == 'view-tools':\n"
+                "    sys.stdout.write(" + repr(payload) + ")\n"
+                "    sys.stdout.flush()\n"
+                "else:\n"
+                "    env_val = os.environ.get('GARGOYL_PREVIEW', '')\n"
+                "    with open('/tmp/gargoyl_child_env.log', 'w') as f:\n"
+                "        f.write(env_val)\n"
+                "    with open('/tmp/gargoyl_child_stdin.log', 'a') as f:\n"
+                "        for line in sys.stdin:\n"
+                "            f.write(line)\n"
+                "            f.flush()\n"
             )
             fake.chmod(0o700)
             from test_fleet_state import NOW, response

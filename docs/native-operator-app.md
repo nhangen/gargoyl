@@ -71,17 +71,17 @@ reviewed package. The builder ad-hoc signs the completed local bundle after writ
 its metadata and verifies its resource seal before reporting success. This is
 local integrity packaging, not developer notarization, a new permission grant,
 or an override of execution approval. Its default is a read-only preview with lifecycle and restart buttons disabled.
-In preview mode (`GARGOYL_PREVIEW=1`), the UI truthfully reports that account fleet reading
+In preview mode (governed by `previewOnly` in Info.plist or `previewOverride`, not the internal worker flag `GARGOYL_PREVIEW=1`), the UI truthfully reports that account fleet reading
 and saved-session restore are disabled in preview, rather than demanding reconnect.
 In normal GUI mode, closing the window leaves `Gargoyl.app` and the reader child process
-running (`applicationShouldTerminateAfterLastWindowClosed` returns `false`). Actual process
-exit or quitting the app (**Gargoyl → Quit** / Command-Q) delivers EOF on the private pipe
-and cleanly stops the reader. Reopening or launching the app restores the saved session
-automatically (subject to standard macOS Keychain access controls after app updates).
-In-process reader recovery reuses the active session grant with bounded exponential backoff
-(up to 5 attempts across a recovery sequence). Detached background collection when the
-application process is not running is blocked, requiring a dedicated LaunchAgent, explicit
-user consent for unattended background network egress, and resolved Keychain access architecture.
+running (`applicationShouldTerminateAfterLastWindowClosed` returns `false`). Quitting the
+app (**Gargoyl → Quit** / Command-Q) sends a quit intent token (`quit\n` -> `intentional_quit`)
+to cleanly stop the reader. Bare EOF (including process crash, unexpected termination, or send-side
+EPIPE where the child broke before receiving an intent token) is treated as cause-unknown (`pipe_eof`).
+In-process reader recovery covers only sessions begun from a restored credential (`savedFleetState.credential != nil`)
+and reuses the active session grant with bounded exponential backoff (up to 5 attempts across a recovery sequence).
+Detached background collection when the application process is not running is blocked, requiring a dedicated LaunchAgent,
+explicit user consent for unattended background network egress, and resolved Keychain access architecture.
 Release preparation can enable native controls with the build option `--enable-native-actions`;
 this does not grant permissions, authenticate or invoke a restart. It must not be mistaken
 for live repair activation. The current pilot recognizes only UID 501 on MBP-26, the existing

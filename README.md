@@ -46,7 +46,7 @@ heartbeat-format evidence and opt-in remembered sign-in improve normal graphical
 operation. Actual macOS acceptance on November 1 verified saved read-only sign-in
 resuming after quit/reopen without another authorization; this is separate from
 fake-adapter tests and preserves the original grant expiry. Durable reader lifecycle
-diagnostics distinguish preview mode limits, application process termination/quit, and
+diagnostics distinguish preview mode limits, intentional disconnect or application quit, and
 transient retry from true authentication rejection (HTTP 401/403). Saved-session recovery in normal GUI
 mode is bounded and reuses the in-memory session grant, with collection persisting across window close; detached
 background supervision when the app process is not running remains an explicit authority blocker requiring separate approval.

@@ -143,6 +143,44 @@ class FleetViewTests(unittest.TestCase):
         self.assertIn("Account collection was disconnected by user intent", disc_page)
         self.assertNotIn("auth_required", disc_page)
 
+    def test_effective_lifecycle_dead_incarnation_resolves_exited_over_transient_failure_in_view(self):
+        import os
+        import tempfile
+
+        from gargoyl.fleet_state import FleetCache, effective_lifecycle
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache = FleetCache(os.path.realpath(temp_dir), os.getuid())
+            value = normalize_inventory(response(), NOW)
+            value["connection"] = "unavailable"
+            cache.write(value)
+
+            raw_lifecycle = {
+                "schema": 1,
+                "status": "transient_failure",
+                "observed_at": NOW,
+                "owner_uid": os.getuid(),
+                "incarnation": {"pid": 999999, "born_us": 123456789},
+                "gui_owner": None,
+                "started_at": NOW,
+                "last_read_at": NOW,
+                "exit_reason": "pipe_eof",
+                "exit_status": None,
+                "retry_count": 1,
+                "retry_budget": 5,
+            }
+            cache.write_lifecycle(raw_lifecycle)
+
+            resolved_lifecycle = effective_lifecycle(cache, NOW, alive=lambda _: False)
+            self.assertEqual(resolved_lifecycle["status"], "exited")
+            self.assertEqual(resolved_lifecycle["exit_reason"], "pipe_eof")
+
+            page = render_view(
+                "fleet", None, None, inventory=value, now=NOW, lifecycle=resolved_lifecycle
+            )
+            self.assertIn("Supervising pipe closed (cause unknown)", page)
+            self.assertNotIn("retrying with backoff", page)
+
     def test_management_projection_and_html_distinguish_preview_mode(self):
         from gargoyl.fleet_management import management_html, management_projection
 

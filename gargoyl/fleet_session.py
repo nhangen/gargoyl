@@ -310,35 +310,18 @@ def _run_session(
                 lifecycle_record["observed_at"] = now()
                 if lifecycle_record.get("exit_reason") in {"none", None}:
                     lifecycle_record["exit_reason"] = "unknown"
-                if (
-                    lifecycle_record.get("retry_count", 0)
-                    >= lifecycle_record.get("retry_budget", 5)
-                    and lifecycle_record.get("exit_reason")
-                    not in {"intentional_disconnect", "intentional_quit"}
-                ):
-                    lifecycle_record["status"] = "terminal_failure"
-                    lifecycle_record["exit_reason"] = "retry_exhausted"
-                    lifecycle_record["exit_status"] = 1
-                else:
-                    lifecycle_record["status"] = (
-                        "stopped"
-                        if lifecycle_record.get("exit_reason")
-                        in {
-                            "intentional_disconnect",
-                            "intentional_quit",
-                            "auth_required",
-                            "scope_refused",
-                            "expired",
-                        }
-                        else "exited"
-                    )
-                    if lifecycle_record.get("exit_status") is None:
-                        lifecycle_record["exit_status"] = (
-                            0
-                            if lifecycle_record.get("exit_reason")
-                            in {"intentional_disconnect", "intentional_quit"}
-                            else 1
-                        )
+                lifecycle_record["status"] = (
+                    "stopped"
+                    if lifecycle_record.get("exit_reason")
+                    in {
+                        "intentional_disconnect",
+                        "intentional_quit",
+                        "auth_required",
+                        "scope_refused",
+                        "expired",
+                    }
+                    else "exited"
+                )
                 cache.write_lifecycle(lifecycle_record)
             except (OSError, ValueError):
                 pass

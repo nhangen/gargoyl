@@ -98,6 +98,8 @@ The account reader runs as an unprivileged child worker under the native macOS a
 (schema 1) with atomic file replacement and strict field validation. The record
 tracks process incarnation (`pid`, `born_us` via kernel `proc_pidinfo`), observation
 timestamp (`observed_at`), execution status, error classification, and retry state.
+`gui_owner` records unverified parent PID and start time (`pid`, `born_us`), retained for
+informational diagnostics only and dropped with reason if unverified or absent.
 Actual credentials, authorization codes, tokens, and process arguments are strictly
 excluded.
 
@@ -114,36 +116,44 @@ Gargoyl distinguishes operational display states from underlying on-disk lifecyc
    the token (HTTP 401/403). A fresh device-flow connection
    is required. Disconnected cache, pipe EOF, or missing processes never infer this state.
 4. **Intentional stop (`stopped`)**: User clicked **Disconnect fleet** (`intentional_disconnect`)
-   or explicitly quit the application process (**Gargoyl → Quit** / Command-Q, sending
-   `intentional_quit`). The session was closed cleanly with explicit intent and recorded with exit status 0.
+   or explicitly quit the application process (**Gargoyl → Quit** / Command-Q, sending a
+   quit token `quit\n` recorded as `intentional_quit`). The session was closed cleanly with explicit
+   intent. Exit status is left null in the reader's self-record because a process cannot observe its
+   own exit status from within.
    Note that closing the Mac window does not stop collection: `applicationShouldTerminateAfterLastWindowClosed`
    returns `false`, keeping `Gargoyl.app` and its reader child process actively running in the background.
-5. **Supervising pipe closed (`exited` / `pipe_eof`)**: Supervising pipe closed
-   (cause unknown). When reopening or launching the normal GUI, any unexpired saved session
+5. **Supervising pipe closed (`exited` / `pipe_eof`)**: Bare EOF on the private supervising pipe
+   (including process crash, unexpected termination, or send-side `EPIPE` where the child broke
+   before receiving an intent token) is cause-unknown. When reopening or launching the normal GUI, any unexpired saved session
    is restored via the established path (subject to standard macOS Keychain access controls).
-6. **Read-only preview (`preview`)**: App is running in read-only preview mode
-   (`GARGOYL_PREVIEW=1`). The interface truthfully reports that saved-session
-   restore and background collection are disabled in preview, rather than demanding
-   reconnection.
+6. **Read-only preview (`preview`)**: App is running in read-only preview mode (triggered by
+   `previewOnly` via Info.plist or `previewOverride`, not internal worker flag `GARGOYL_PREVIEW=1`).
+   The interface truthfully reports that saved-session restore and background collection are disabled in preview, rather than demanding reconnection.
 
 A stale PID whose process start time (`born_us`) does not match the kernel's process
 table (or where start time cannot be verified) is treated as an exited incarnation, reporting
-`exit_reason="unknown"` rather than assuming credential rejection.
+`exit_reason="unknown"` rather than assuming credential rejection. Fail-closed behavior on
+`born_us=None` is an intended trade-off to prioritize safety over unverified live claims.
 
 ### Normal GUI supervision and bounded recovery
 
 In normal GUI mode, the native application supervises the reader process through a
 private pipe:
+- In-process automatic recovery covers only sessions begun from a restored credential
+  (`savedFleetState.credential != nil`).
 - If the reader terminates unexpectedly while a valid saved session exists, the native
   app initiates in-process automatic recovery using the in-memory session grant with
   exponential backoff (`delay = min(60.0, 3.0 * 2^retryCount)`).
 - Recovery has a cumulative budget of 5 attempts across a recovery sequence before halting
-  with a terminal failure message (`terminal_failure` / `retry_exhausted`).
+  with a terminal failure message. Cumulative budget across successful recoveries is intended
+  and conservative: it prevents unbounded auto-reconnect loops if connections repeatedly cycle or flap,
+  halting with terminal status rather than spinning indefinitely. Swift's supervisor owns the `.terminal`
+  exhaustion decision; the reader child process preserves its observed exit reason and leaves `exit_status = None`.
 - In-process recovery reuses the unexpired in-memory session grant; no user consent
   or device authorization prompt is repeated.
 - Intentional disconnection cancels active recovery timers and increments the session
   generation, preventing unwanted restarts. Quitting cancels recovery timers and sends
-  a clean quit intent token.
+  a clean quit intent token (`quit\n`).
 - Single-owner concurrency: the reader process confirms only one reader incarnation runs
   at any time via a POSIX file lock (`session.lock`).
 
@@ -152,12 +162,12 @@ private pipe:
 The reader process lifetime is coupled to the running native GUI application process.
 Closing the Mac window keeps collection running: `applicationShouldTerminateAfterLastWindowClosed`
 returns `false`, matching the connection sheet confirmation ("Closing the window keeps collection
-running"). However, quitting `Gargoyl.app` (**Gargoyl → Quit** / Command-Q) or terminating
-the app process closes its file descriptors and delivers EOF on the reader's standard
-input pipe, prompting reader shutdown (`exit_reason="pipe_eof"`). The existing local
-monitor LaunchAgent (`gargoyl monitor`) does not supervise the account reader: the monitor
-is a local operational helper (not an OS sandbox) running local checks with no login
-Keychain access and no network egress to Darkbloom API endpoints.
+running"). However, quitting `Gargoyl.app` (**Gargoyl → Quit** / Command-Q) sends a quit intent
+token (`quit\n`), while unexpected app termination closes file descriptors and delivers bare EOF
+on the reader's standard input pipe, prompting reader shutdown (`exit_reason="pipe_eof"`). As an
+unverified design input, the existing local monitor LaunchAgent (`gargoyl monitor`) does not supervise
+the account reader: the monitor is a local operational helper (not an OS sandbox) running local checks
+with no login Keychain access and no network egress to Darkbloom API endpoints.
 
 Genuinely durable detached background supervision when the application process is not
 running (outside GUI process lifetime) represents an authority blocker requiring explicit
@@ -166,10 +176,10 @@ approval:
   user's GUI login session.
 - Explicit user opt-in and product consent for unattended background network egress to
   Darkbloom endpoints while no window or application is open.
-- Resolution of Keychain access architecture for unattended background processes (open
-  design input: whether the same signed app binary run via LaunchAgent requires Keychain
-  Access Control List (ACL) changes is unverified, but ad-hoc builds and headless helpers
-  cannot display interactive authorization prompts).
+- Resolution of Keychain access architecture for unattended background processes (unverified design
+  inputs: whether the same signed app binary run via LaunchAgent requires Keychain Access Control
+  List (ACL) changes is unverified, and ad-hoc builds and headless helpers cannot display interactive
+  authorization prompts).
 
 Gargoyl does not install background services or expand daemon permissions without approval.
 The implementation provides bounded, in-process recovery within normal application lifetime,

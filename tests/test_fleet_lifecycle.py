@@ -100,7 +100,7 @@ class FleetLifecycleTests(unittest.TestCase):
         self.assertEqual(lifecycle["last_read_at"], NOW)
         self.assertEqual(lifecycle["status"], "exited")
         self.assertEqual(lifecycle["exit_reason"], "pipe_eof")
-        self.assertEqual(lifecycle["exit_status"], 1)
+        self.assertIsNone(lifecycle["exit_status"])
 
         raw_file = Path(self.cache.directory, "reader_lifecycle.json").read_text()
         self.assertNotIn("fixture-token", raw_file)

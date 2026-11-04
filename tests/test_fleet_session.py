@@ -252,7 +252,7 @@ class FleetSessionTests(unittest.TestCase):
             self.assertIsNotNone(lifecycle)
             self.assertEqual(lifecycle["status"], "stopped")
             self.assertEqual(lifecycle["exit_reason"], "intentional_disconnect")
-            self.assertEqual(lifecycle["exit_status"], 0)
+            self.assertIsNone(lifecycle["exit_status"])
         finally:
             if w is not None:
                 os.close(w)
@@ -281,7 +281,7 @@ class FleetSessionTests(unittest.TestCase):
             self.assertIsNotNone(lifecycle)
             self.assertEqual(lifecycle["status"], "stopped")
             self.assertEqual(lifecycle["exit_reason"], "intentional_quit")
-            self.assertEqual(lifecycle["exit_status"], 0)
+            self.assertIsNone(lifecycle["exit_status"])
         finally:
             if w is not None:
                 os.close(w)
@@ -309,7 +309,7 @@ class FleetSessionTests(unittest.TestCase):
             self.assertIsNotNone(lifecycle)
             self.assertEqual(lifecycle["status"], "exited")
             self.assertEqual(lifecycle["exit_reason"], "pipe_eof")
-            self.assertEqual(lifecycle["exit_status"], 1)
+            self.assertIsNone(lifecycle["exit_status"])
         finally:
             if w is not None:
                 os.close(w)
@@ -345,22 +345,20 @@ class FleetSessionTests(unittest.TestCase):
         self.assertIsNotNone(lifecycle)
         self.assertEqual(lifecycle["status"], "exited")
         self.assertEqual(lifecycle["exit_reason"], "pipe_eof")
+        self.assertIsNone(lifecycle["exit_status"])
 
         # Verify render_view gives precedence to exited lifecycle and does NOT claim live retrying
         html = render_view("fleet", None, None, inventory=inv, now=NOW, lifecycle=lifecycle)
         self.assertIn("Supervising pipe closed (cause unknown)", html)
         self.assertNotIn("retrying with backoff", html)
 
-    def test_retry_exhausted_records_terminal_failure_and_exit_status_one(self):
-        self.client.providers.side_effect = FleetError("unavailable")
-
-        def wait_step(seconds):
-            raise SessionClosed
+    def test_retry_count_at_budget_preserves_established_auth_required_reason(self):
+        self.client.providers.side_effect = FleetError("auth_required")
 
         run_session(
             self.cache,
             owner=lambda: True,
-            wait=wait_step,
+            wait=lambda seconds: None,
             send=self.events.append,
             client=self.client,
             initial_token="darkbloom-at-private-restored-token",
@@ -371,7 +369,48 @@ class FleetSessionTests(unittest.TestCase):
         )
         lifecycle = self.cache.read_lifecycle(NOW)
         self.assertIsNotNone(lifecycle)
-        self.assertEqual(lifecycle["status"], "terminal_failure")
-        self.assertEqual(lifecycle["exit_reason"], "retry_exhausted")
-        self.assertEqual(lifecycle["exit_status"], 1)
+        self.assertEqual(lifecycle["status"], "stopped")
+        self.assertEqual(lifecycle["exit_reason"], "auth_required")
+        self.assertIsNone(lifecycle["exit_status"])
         self.assertEqual(lifecycle["retry_count"], 5)
+
+    def test_retry_count_at_budget_preserves_expired_exit_reason(self):
+        self.client.providers.side_effect = FleetError("expired")
+
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=lambda seconds: None,
+            send=self.events.append,
+            client=self.client,
+            initial_token="darkbloom-at-private-restored-token",
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+            retry_count=5,
+            retry_budget=5,
+        )
+        lifecycle = self.cache.read_lifecycle(NOW)
+        self.assertIsNotNone(lifecycle)
+        self.assertEqual(lifecycle["status"], "stopped")
+        self.assertEqual(lifecycle["exit_reason"], "expired")
+        self.assertIsNone(lifecycle["exit_status"])
+        self.assertEqual(lifecycle["retry_count"], 5)
+
+    def test_client_begin_unavailable_records_unknown_exit_reason(self):
+        self.client.begin.side_effect = FleetError("unavailable")
+
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=lambda seconds: None,
+            send=self.events.append,
+            client=self.client,
+            initial_token=None,
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+        )
+        lifecycle = self.cache.read_lifecycle(NOW)
+        self.assertIsNotNone(lifecycle)
+        self.assertEqual(lifecycle["status"], "exited")
+        self.assertEqual(lifecycle["exit_reason"], "unknown")
+        self.assertIsNone(lifecycle["exit_status"])

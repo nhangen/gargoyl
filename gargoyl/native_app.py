@@ -1095,7 +1095,12 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if restartWorker != nil {
             let alert = NSAlert(); alert.messageText = "Close Gargoyl?"; alert.informativeText = "An accepted manual operation can continue independently. Closing this app never cancels, retries or clears its outcome. Reopen and use Operation status to inspect recorded evidence."
             alert.addButton(withTitle:"Keep open");alert.addButton(withTitle:"Close app")
-            return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+            if alert.runModal() == .alertSecondButtonReturn {
+                fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
+                fleetWorker?.quitFleet()
+                return .terminateNow
+            }
+            return .terminateCancel
         }
         fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
         fleetWorker?.quitFleet()
@@ -1232,6 +1237,81 @@ if CommandLine.arguments.contains("--self-test") {
         print("worker received=\(received) finished=\(ended)"); fflush(stdout)
         precondition(received && ended)
         withExtendedLifetime(worker) {}
+
+        let stdinLog = "/tmp/gargoyl_child_stdin.log"
+        let envLog = "/tmp/gargoyl_child_env.log"
+
+        // Child process test: disconnectFleet() sends "disconnect\n"
+        try? FileManager.default.removeItem(atPath: stdinLog)
+        let discWorker = try! Worker(mode:"fleet-session",event:{ _ in })
+        discWorker.disconnectFleet()
+        let discLimit = Date().addingTimeInterval(0.5)
+        while Date() < discLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        try? discWorker.input.fileHandleForWriting.close()
+        let discData = (try? String(contentsOfFile:stdinLog,encoding:.utf8)) ?? ""
+        precondition(discData.contains("disconnect\n"))
+        withExtendedLifetime(discWorker) {}
+
+        // Child process test: quitFleet() sends "quit\n"
+        try? FileManager.default.removeItem(atPath: stdinLog)
+        let quitWorker = try! Worker(mode:"fleet-session",event:{ _ in })
+        quitWorker.quitFleet()
+        let quitLimit = Date().addingTimeInterval(0.5)
+        while Date() < quitLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        let quitData = (try? String(contentsOfFile:stdinLog,encoding:.utf8)) ?? ""
+        precondition(quitData.contains("quit\n"))
+        withExtendedLifetime(quitWorker) {}
+
+        // Child process test: preview: true sets GARGOYL_PREVIEW=1
+        try? FileManager.default.removeItem(atPath: envLog)
+        let prevWorker = try! Worker(mode:"fleet-session",preview:true,event:{ _ in })
+        let prevLimit = Date().addingTimeInterval(0.5)
+        while Date() < prevLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        try? prevWorker.input.fileHandleForWriting.close()
+        let envData = (try? String(contentsOfFile:envLog,encoding:.utf8)) ?? ""
+        precondition(envData == "1")
+        withExtendedLifetime(prevWorker) {}
+
+        // Worker.restoreCredential passes retry_count
+        try? FileManager.default.removeItem(atPath: stdinLog)
+        let restWorker = try! Worker(mode:"fleet-restore",event:{ _ in })
+        let savedRest = SavedFleetCredential(token:"darkbloom-at-private-test-restore-token",created:100,expires:100+86400)
+        restWorker.restoreCredential(savedRest,retryCount:3)
+        let restLimit = Date().addingTimeInterval(0.5)
+        while Date() < restLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        try? restWorker.input.fileHandleForWriting.close()
+        let restData = (try? String(contentsOfFile:stdinLog,encoding:.utf8)) ?? ""
+        precondition(restData.contains("\"retry_count\":3"))
+        precondition(restData.contains("darkbloom-at-private-test-restore-token"))
+        withExtendedLifetime(restWorker) {}
+
+        // beginFleet with restored credential produces fleet-restore mode and passes retryCount
+        let restoreApp = App(); restoreApp.previewOverride = false
+        restoreApp.connectFleetButton = NSButton(); restoreApp.disconnectFleetButton = NSButton()
+        restoreApp.readRemember = { true }; restoreApp.fleetOwner = { true }
+        restoreApp.beginFleet(remember:false,restored:savedRest,retryCount:4)
+        precondition(restoreApp.fleetWorker?.mode == "fleet-restore")
+        precondition(restoreApp.fleetRetryCount == 4)
+        precondition(restoreApp.savedFleetState.credential?.token == savedRest.token)
+        restoreApp.disconnectFleet()
+
+        // Disconnect-then-finish: call disconnectFleet(), then invoke finished(worker) -> assert fleetRecoveryTimer == nil
+        let discFinishApp = App(); discFinishApp.previewOverride = false
+        discFinishApp.connectFleetButton = NSButton(); discFinishApp.disconnectFleetButton = NSButton()
+        discFinishApp.readRemember = { true }; discFinishApp.fleetOwner = { true }
+        discFinishApp.lastFleetReason = "unavailable"
+        discFinishApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:2000.0)
+        discFinishApp.beginFleet(remember:false,restored:discFinishApp.savedFleetState.credential,retryCount:1)
+        let preDiscGen = discFinishApp.fleetGeneration
+        let activeWorker = discFinishApp.fleetWorker!
+        discFinishApp.disconnectFleet()
+        precondition(discFinishApp.fleetGeneration == preDiscGen + 1)
+        precondition(discFinishApp.fleetRecoveryTimer == nil)
+        activeWorker.finished(activeWorker)
+        precondition(discFinishApp.fleetRecoveryTimer == nil)
+
+        try? FileManager.default.removeItem(atPath: stdinLog)
+        try? FileManager.default.removeItem(atPath: envLog)
     }
     precondition(allowedNavigation(URL(string:"about:blank"),mainFrame:true))
     precondition(!allowedNavigation(URL(string:"about:blank#main"),mainFrame:true))
@@ -1394,11 +1474,19 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(decideFleetRecovery(reason: "session_busy", retryCount: 5, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .terminal)
 
     // Preview app never starts worker or reads credentialStore
-    var previewStoreReads = 0
+    var previewStoreOpens = 0
+    var previewStoreCopies = 0
     let testPreviewApp = App(); testPreviewApp.previewOverride = true
-    testPreviewApp.credentialStore = LoginFleetCredentialStore(open: { (errSecSuccess, nil) }, copy: { _ in previewStoreReads += 1; return (errSecSuccess, nil) })
+    testPreviewApp.readRemember = { true }
+    testPreviewApp.fleetOwner = { true }
+    testPreviewApp.credentialStore = LoginFleetCredentialStore(
+        open: { previewStoreOpens += 1; return (errSecSuccess, nil) },
+        copy: { _ in previewStoreCopies += 1; return (errSecSuccess, nil) }
+    )
     testPreviewApp.restoreSavedFleetIfEnabled()
-    precondition(previewStoreReads == 0)
+    testPreviewApp.credentialQueue.sync {}
+    precondition(previewStoreOpens == 0)
+    precondition(previewStoreCopies == 0)
     precondition(testPreviewApp.fleetWorker == nil)
 
     // Disconnect invalidates pending recovery timer

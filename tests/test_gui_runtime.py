@@ -343,7 +343,11 @@ class MonitorControlTests(unittest.TestCase):
     def test_native_view_plumbs_preview_environment(self):
         from gargoyl.gui_runtime import native_view
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("gargoyl.gui_runtime.export_evidence", side_effect=OSError),
+            patch("socket.gethostname", return_value="MBP-2026.local"),
+        ):
             tmp_path = Path(tmp).resolve()
             with (
                 patch("gargoyl.gui_runtime.owner_home", return_value=tmp_path),
