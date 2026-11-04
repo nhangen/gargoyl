@@ -3,7 +3,10 @@
 Environment: mock data / static analysis (does not claim live Linux CI or hosted runner execution).
 """
 
+import contextlib
+import copy
 import hashlib
+import io
 import json
 import os
 import re
@@ -36,6 +39,47 @@ EXIT_CONTRACT_FAILED = 1
 EXIT_USAGE_ERROR = 2
 EXIT_HELD_BLOCKED = 3
 
+EXPECTED_HELD_GATE_NAMES = [
+    "local_fleet_capacity",
+    "repository_enrollment",
+    "branch_protection_visibility",
+    "linux_matrix_runtime",
+    "strict_vulnerability_audit",
+    "release_packaging_and_verification",
+    "container_unprivileged_profile",
+    "hosted_pipeline_equivalence",
+    "fork_pr_and_state_isolation",
+    "python314_pyyaml_sdist_build_risk",
+    "macos_native_full_suite_local_proof",
+    "macos_native_retained_hosted",
+]
+
+GATE_SHELL = "/bin/bash"
+GATE_SHELL_PATH = "/usr/bin:/bin"
+
+
+def hermetic_env(home, **extra):
+    """Build a subprocess environment that excludes the caller's startup files and env.
+
+    PATH is pinned to system directories, and HOME, TMPDIR and git config point at the
+    fixture, so subprocesses do not pick up the operator's PATH shims, shell startup
+    files, exported shell functions, BASH_ENV/ENV, or global/system git config. This is
+    environment isolation only; it does not sandbox absolute-path reads.
+    """
+    env = {
+        "PATH": GATE_SHELL_PATH,
+        "HOME": str(home),
+        "TMPDIR": str(home),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+    }
+    env.update(extra)
+    return env
+
 
 def load_workflow(path=CI_YML_PATH):
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -45,9 +89,13 @@ def load_workflow(path=CI_YML_PATH):
 
 
 def evaluate_prerequisite_gate(linux_result, macos_result, audit_result, doc=None):
-    """Execute the exact production prerequisite gate shell logic extracted from ci.yml.
+    """Execute the prerequisite gate script extracted from ci.yml.
 
-    Runs under /bin/bash -eo pipefail to match GitHub Actions default shell semantics.
+    Approximates GitHub's unspecified-shell form, `bash -e {0}` on a script file.
+    The step must not declare its own shell, which the structural validator enforces.
+    The run is hermetic: --noprofile --norc, stdin from /dev/null, and an explicit env
+    with only PATH, a fixture HOME and the three results. It never inherits the caller's
+    environment, BASH_ENV/ENV or exported functions.
     Returns the process exit code (0 for success, non-zero for refusal).
     """
     if doc is None:
@@ -70,19 +118,24 @@ def evaluate_prerequisite_gate(linux_result, macos_result, audit_result, doc=Non
         f"Prerequisite gate env keys mismatch: {set(env_mapping.keys())} != {expected_env_keys}"
     )
 
-    env = dict(
-        os.environ,
-        LINUX_RESULT=linux_result,
-        MACOS_RESULT=macos_result,
-        AUDIT_RESULT=audit_result,
-    )
-    proc = subprocess.run(
-        ["/bin/bash", "-eo", "pipefail", "-c", script],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    with tempfile.TemporaryDirectory() as fixture_home:
+        script_path = Path(fixture_home) / "prerequisite_gate.sh"
+        script_path.write_text(script, encoding="utf-8")
+        env = {
+            "PATH": GATE_SHELL_PATH,
+            "HOME": fixture_home,
+            "LINUX_RESULT": linux_result,
+            "MACOS_RESULT": macos_result,
+            "AUDIT_RESULT": audit_result,
+        }
+        proc = subprocess.run(
+            [GATE_SHELL, "--noprofile", "--norc", "-e", str(script_path)],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     return proc.returncode
 
 
@@ -281,6 +334,32 @@ def validate_workflow_invariants(doc):
 
 
 class CIWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._fixture_dir = tempfile.TemporaryDirectory()
+        cls.fixture_home = Path(cls._fixture_dir.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._fixture_dir.cleanup()
+
+    def _run_preflight(self, *args, **extra_env):
+        return subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools" / "ci_preflight.py"), *args],
+            env=hermetic_env(self.fixture_home, **extra_env),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def _run_main_in_process(self, argv):
+        with (
+            mock.patch.dict(os.environ, hermetic_env(self.fixture_home), clear=True),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            return preflight_mod.main(argv)
+
     def test_workflow_file_integrity_and_exact_hashes(self):
         content = CI_YML_PATH.read_bytes()
         sha256 = hashlib.sha256(content).hexdigest()
@@ -291,7 +370,10 @@ class CIWorkflowTests(unittest.TestCase):
         )
 
         git_hash = subprocess.check_output(
-            ["git", "hash-object", str(CI_YML_PATH)], text=True
+            ["git", "hash-object", str(CI_YML_PATH)],
+            env=hermetic_env(self.fixture_home),
+            stdin=subprocess.DEVNULL,
+            text=True,
         ).strip()
         self.assertEqual(
             git_hash,
@@ -333,7 +415,7 @@ class CIWorkflowTests(unittest.TestCase):
         )
 
     def test_release_prerequisite_gate_fail_closed(self):
-        """Verify that release-artifact strictly refuses execution under bash -eo pipefail unless all prerequisites succeed."""
+        """Verify that release-artifact refuses execution unless all prerequisites succeed."""
         # Only all-success should exit 0
         self.assertEqual(evaluate_prerequisite_gate("success", "success", "success"), 0)
 
@@ -361,6 +443,40 @@ class CIWorkflowTests(unittest.TestCase):
         # Empty or unexpected results must refuse
         self.assertEqual(evaluate_prerequisite_gate("", "", ""), 1)
         self.assertEqual(evaluate_prerequisite_gate("unknown", "unknown", "unknown"), 1)
+
+    def test_prerequisite_gate_ignores_caller_shell_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            poisoned_home = tmp_path / "home"
+            poisoned_home.mkdir()
+            marker = tmp_path / "STARTUP_SOURCED"
+            override = f'test() {{ touch "{marker}"; return 0; }}\n'
+            for rc_name in (".bashrc", ".bash_profile", ".profile"):
+                (poisoned_home / rc_name).write_text(override, encoding="utf-8")
+            env_file = tmp_path / "bash_env.sh"
+            env_file.write_text(override, encoding="utf-8")
+            exported_function = f'() {{ touch "{marker}"; return 0\n}}'
+            poisoned = {
+                "HOME": str(poisoned_home),
+                "BASH_ENV": str(env_file),
+                "ENV": str(env_file),
+                "BASH_FUNC_test%%": exported_function,
+                "BASH_FUNC_test()": exported_function,
+            }
+            with mock.patch.dict(os.environ, poisoned):
+                self.assertEqual(
+                    evaluate_prerequisite_gate("success", "success", "success"), 0
+                )
+                self.assertEqual(
+                    evaluate_prerequisite_gate("failure", "success", "success"), 1
+                )
+                self.assertEqual(
+                    evaluate_prerequisite_gate("success", "skipped", "success"), 1
+                )
+                self.assertEqual(
+                    evaluate_prerequisite_gate("success", "success", "cancelled"), 1
+                )
+            self.assertFalse(marker.exists())
 
     def test_causal_mutations_fail_invariants(self):
         """Verify that mutating required production gates in scratch copies causes regression failures."""
@@ -535,6 +651,8 @@ class CIWorkflowTests(unittest.TestCase):
         proc = subprocess.run(
             [sys.executable, "-c", match.group(1)],
             cwd=str(REPO_ROOT),
+            env=hermetic_env(self.fixture_home),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=True,
@@ -570,13 +688,8 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertNotIn("local-ci-326cbb95", target)
 
         # 3. Verify via tool CLI execution in JSON mode
-        preflight_script = str(REPO_ROOT / "tools" / "ci_preflight.py")
-        proc = subprocess.run(
-            [sys.executable, preflight_script, "--json"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = self._run_preflight("--json")
+        self.assertEqual(proc.returncode, EXIT_HELD_BLOCKED)
         data = json.loads(proc.stdout)
         self.assertEqual(
             data["proposed_routing"]["target_label_state"], "UNRESOLVED_HELD"
@@ -587,15 +700,8 @@ class CIWorkflowTests(unittest.TestCase):
 
     def test_preflight_cli_modes_and_exit_semantics(self):
         """Causally test that preflight CLI modes enforce correct exit semantics and avoid false readiness."""
-        preflight_script = str(REPO_ROOT / "tools" / "ci_preflight.py")
-
         # 1. --check-source verifies static contracts and exits 0 on valid source
-        proc_source = subprocess.run(
-            [sys.executable, preflight_script, "--check-source"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc_source = self._run_preflight("--check-source")
         self.assertEqual(
             proc_source.returncode,
             EXIT_READY,
@@ -604,12 +710,7 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("Source Contracts:     PASS", proc_source.stdout)
 
         # 2. --check-readiness evaluates held infrastructure gates and exits 3 (EXIT_HELD_BLOCKED)
-        proc_ready = subprocess.run(
-            [sys.executable, preflight_script, "--check-readiness"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc_ready = self._run_preflight("--check-readiness")
         self.assertEqual(
             proc_ready.returncode,
             EXIT_HELD_BLOCKED,
@@ -617,49 +718,30 @@ class CIWorkflowTests(unittest.TestCase):
         )
         self.assertIn("Deployment Readiness: BLOCKED", proc_ready.stdout)
 
-        # 3. Default --check MUST exit 3 (EXIT_HELD_BLOCKED), not 0, while infrastructure gates are held
-        proc_check = subprocess.run(
-            [sys.executable, preflight_script, "--check"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(
-            proc_check.returncode,
-            EXIT_HELD_BLOCKED,
-            "Default --check must return 3 while gates held (no false passing readiness)",
-        )
+        # 3. Default --check and the no-argument form exit 3 while infrastructure gates are held
+        for args in (("--check",), ()):
+            proc_check = self._run_preflight(*args)
+            self.assertEqual(
+                proc_check.returncode,
+                EXIT_HELD_BLOCKED,
+                f"{args or 'no-argument'} must return 3 while gates held",
+            )
 
         # 4. --manifest-only outputs the 5 extracted requirements and exits 0
-        proc_manifest = subprocess.run(
-            [sys.executable, preflight_script, "--manifest-only"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc_manifest = self._run_preflight("--manifest-only")
         self.assertEqual(proc_manifest.returncode, EXIT_READY)
         lines = proc_manifest.stdout.strip().splitlines()
         self.assertEqual(len(lines), 5)
         self.assertIn("PyYAML==6.0.2", lines)
 
         # 5. --manifest-only --json outputs JSON and exits 0
-        proc_manifest_json = subprocess.run(
-            [sys.executable, preflight_script, "--manifest-only", "--json"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc_manifest_json = self._run_preflight("--manifest-only", "--json")
         self.assertEqual(proc_manifest_json.returncode, EXIT_READY)
         data = json.loads(proc_manifest_json.stdout)
         self.assertEqual(len(data.get("declared_dependencies", [])), 5)
 
         # 6. Typos / unrecognized arguments exit with 2 (EXIT_USAGE_ERROR)
-        proc_bogus = subprocess.run(
-            [sys.executable, preflight_script, "--bogus"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc_bogus = self._run_preflight("--bogus")
         self.assertEqual(
             proc_bogus.returncode,
             EXIT_USAGE_ERROR,
@@ -667,12 +749,7 @@ class CIWorkflowTests(unittest.TestCase):
         )
 
         # 7. Conflicting check modes must be rejected with 2 (EXIT_USAGE_ERROR)
-        proc_conflict = subprocess.run(
-            [sys.executable, preflight_script, "--check", "--check-source"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc_conflict = self._run_preflight("--check", "--check-source")
         self.assertEqual(
             proc_conflict.returncode,
             EXIT_USAGE_ERROR,
@@ -680,70 +757,47 @@ class CIWorkflowTests(unittest.TestCase):
         )
         self.assertIn("not allowed with argument", proc_conflict.stderr)
 
-        # 8. Contract failure in isolated scratch fixture exits with 1 (EXIT_CONTRACT_FAILED)
-        # and guarantees deployment_ready is False in both JSON and text (no false READY on contract failure)
+        # 8. Contract failure in an isolated fixture exits 1 (EXIT_CONTRACT_FAILED) in every
+        # check mode, including default --check and no arguments, and never reports READY.
         with tempfile.TemporaryDirectory() as tmpdir:
             broken_workflow = Path(tmpdir) / "broken_ci.yml"
             doc = load_workflow()
-            del doc["jobs"]["release-artifact"]  # mutate to break contract
+            del doc["jobs"]["release-artifact"]
             broken_workflow.write_text(yaml.dump(doc), encoding="utf-8")
+            override = {"GARGOYL_CI_WORKFLOW_PATH": str(broken_workflow)}
 
-            env = dict(os.environ, GARGOYL_CI_WORKFLOW_PATH=str(broken_workflow))
-            proc_fail_source = subprocess.run(
-                [sys.executable, preflight_script, "--check-source"],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(
-                proc_fail_source.returncode,
-                EXIT_CONTRACT_FAILED,
-                "Broken workflow must exit 1 on --check-source",
-            )
+            for args in (("--check-source",), ("--check-readiness",), ("--check",), ()):
+                proc_fail = self._run_preflight(*args, **override)
+                self.assertEqual(
+                    proc_fail.returncode,
+                    EXIT_CONTRACT_FAILED,
+                    f"Broken workflow must exit 1 on {args or 'no-argument'}",
+                )
 
-            proc_fail_readiness = subprocess.run(
-                [sys.executable, preflight_script, "--check-readiness"],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(
-                proc_fail_readiness.returncode,
-                EXIT_CONTRACT_FAILED,
-                "Broken workflow must exit 1 on --check-readiness",
-            )
+            proc_fail_readiness = self._run_preflight("--check-readiness", **override)
             self.assertIn(
                 "BLOCKED (source contracts failed", proc_fail_readiness.stdout
             )
 
-            proc_fail_json = subprocess.run(
-                [sys.executable, preflight_script, "--check-readiness", "--json"],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
+            proc_fail_json = self._run_preflight(
+                "--check-readiness", "--json", **override
             )
             self.assertEqual(proc_fail_json.returncode, EXIT_CONTRACT_FAILED)
             fail_report = json.loads(proc_fail_json.stdout)
             self.assertFalse(fail_report["source_contracts_passed"])
             self.assertFalse(fail_report["deployment_ready"])
 
-        # 9. Verify every HELD_GATES entry participates in readiness mapping (no duplicate/divergent inventory)
-        from tools.ci_preflight import HELD_GATES
+        # 9. The gate inventory matches a hand-written list: no rename, drop, or duplicate.
+        gate_names = [g["gate"] for g in preflight_mod.HELD_GATES]
+        self.assertEqual(gate_names, EXPECTED_HELD_GATE_NAMES)
+        self.assertEqual(len(set(gate_names)), len(EXPECTED_HELD_GATE_NAMES))
 
-        proc_full_json = subprocess.run(
-            [sys.executable, preflight_script, "--json"],
-            capture_output=True,
-            text=True,
-            check=False,
+        full_proc = self._run_preflight("--json")
+        self.assertEqual(full_proc.returncode, EXIT_HELD_BLOCKED)
+        full_report = json.loads(full_proc.stdout)
+        self.assertEqual(
+            sorted(full_report["readiness"].keys()), sorted(EXPECTED_HELD_GATE_NAMES)
         )
-        full_report = json.loads(proc_full_json.stdout)
-        expected_gate_names = {g["gate"] for g in HELD_GATES}
-        self.assertEqual(set(full_report["readiness"].keys()), expected_gate_names)
-        self.assertIn("hosted_pipeline_equivalence", full_report["readiness"])
-        self.assertIn("python314_pyyaml_sdist_build_risk", full_report["readiness"])
         self.assertFalse(full_report["readiness"]["hosted_pipeline_equivalence"])
         self.assertFalse(full_report["readiness"]["python314_pyyaml_sdist_build_risk"])
         self.assertFalse(
@@ -752,20 +806,17 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertTrue(full_report["readiness"]["macos_native_retained_hosted"])
 
         # 10. Causal F6 proof: simulate all recorded infrastructure gates as VERIFIED.
-        # When all infrastructure gates are VERIFIED, broken source contracts MUST still force
-        # is_ready=False and exit code 1 (EXIT_CONTRACT_FAILED) in evaluate_deployment_readiness and main().
+        # Broken source contracts MUST still force is_ready=False and exit 1.
         simulated_verified_gates = [
             {"gate": g["gate"], "status": "VERIFIED", "reason": "simulated"}
             for g in preflight_mod.HELD_GATES
         ]
         with mock.patch.object(preflight_mod, "HELD_GATES", simulated_verified_gates):
-            # Unit check: if source_ok is True and gates are VERIFIED, returns True
             ready_when_source_ok, _ = preflight_mod.evaluate_deployment_readiness(
                 source_ok=True
             )
             self.assertTrue(ready_when_source_ok)
 
-            # Causal check: if source_ok is False, returns False even though all gates are VERIFIED
             ready_when_source_fail, _ = preflight_mod.evaluate_deployment_readiness(
                 source_ok=False
             )
@@ -774,7 +825,6 @@ class CIWorkflowTests(unittest.TestCase):
                 "evaluate_deployment_readiness must be False on source failure even when all infrastructure gates are VERIFIED",
             )
 
-            # CLI check: main() with --check-readiness on broken workflow exits 1 (EXIT_CONTRACT_FAILED)
             with tempfile.TemporaryDirectory() as tmpdir:
                 broken_workflow = Path(tmpdir) / "broken_ci.yml"
                 doc = load_workflow()
@@ -782,12 +832,68 @@ class CIWorkflowTests(unittest.TestCase):
                 broken_workflow.write_text(yaml.dump(doc), encoding="utf-8")
 
                 with mock.patch.object(preflight_mod, "CI_YML_PATH", broken_workflow):
-                    rc = preflight_mod.main(["--check-readiness"])
+                    for argv in (["--check-readiness"], ["--check"], []):
+                        self.assertEqual(
+                            self._run_main_in_process(argv),
+                            EXIT_CONTRACT_FAILED,
+                            f"main({argv}) must exit 1 on contract failure even when all gates are simulated VERIFIED",
+                        )
+
+    def test_preflight_digest_mismatch_fails_source_gate(self):
+        self.assertEqual(self._run_main_in_process(["--check-source"]), EXIT_READY)
+
+        ci_key = ".github/workflows/ci.yml"
+        for field, bad_value in (("sha256", "0" * 64), ("git", "0" * 40)):
+            tampered = copy.deepcopy(preflight_mod.EXPECTED_DIGESTS)
+            tampered[ci_key][field] = bad_value
+            with mock.patch.object(preflight_mod, "EXPECTED_DIGESTS", tampered):
+                for argv in (
+                    ["--check-source"],
+                    ["--check-readiness"],
+                    ["--check"],
+                    [],
+                ):
                     self.assertEqual(
-                        rc,
+                        self._run_main_in_process(argv),
                         EXIT_CONTRACT_FAILED,
-                        "main(--check-readiness) must exit 1 on contract failure even when all gates are simulated VERIFIED",
+                        f"{field} mismatch must exit 1 on main({argv})",
                     )
+
+    def test_preflight_each_contract_key_fails_closed(self):
+        def drop_audit_need(doc):
+            doc["jobs"]["release-artifact"]["needs"] = ["lint-and-test", "macos-native"]
+
+        mutations = {
+            "permissions_read_only": lambda doc: doc.update(
+                permissions={"contents": "write"}
+            ),
+            "current_routing_intact": lambda doc: doc["jobs"]["lint-and-test"].update(
+                {"runs-on": "self-hosted"}
+            ),
+            "release_needs_all_three": drop_audit_need,
+            "release_if_always": lambda doc: doc["jobs"]["release-artifact"].update(
+                {"if": "${{ success() }}"}
+            ),
+        }
+        for contract_key, mutate in mutations.items():
+            with self.subTest(contract_key=contract_key):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    mutated_workflow = Path(tmpdir) / "mutated_ci.yml"
+                    doc = load_workflow()
+                    mutate(doc)
+                    mutated_workflow.write_text(yaml.dump(doc), encoding="utf-8")
+                    with mock.patch.object(
+                        preflight_mod, "CI_YML_PATH", mutated_workflow
+                    ):
+                        passed, checks = preflight_mod.verify_workflow_contracts()
+                        self.assertFalse(passed)
+                        self.assertFalse(checks[contract_key])
+                        failing = sorted(k for k, ok in checks.items() if not ok)
+                        self.assertEqual(failing, [contract_key])
+                        self.assertEqual(
+                            self._run_main_in_process(["--check-source"]),
+                            EXIT_CONTRACT_FAILED,
+                        )
 
 
 if __name__ == "__main__":

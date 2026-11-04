@@ -37,7 +37,7 @@ It is critical to distinguish three separate dependency tiers:
    - `project.optional-dependencies.dev`: `ruff==0.14.3`, `PyYAML==6.0.2`
    - `project.optional-dependencies.release`: `setuptools==84.1.0`, `wheel==0.46.2`
    - Yields the 5 declared packages: `setuptools==84.1.0`, `wheel==0.46.2`, `cryptography>=46,<51`, `ruff==0.14.3`, `PyYAML==6.0.2`.
-2. **Transitive Dependency Resolution**: Computing the complete dependency tree during `pip install`. For example, `cryptography` resolves transitive dependencies `cffi>=1.12` and `pycparser`.
+2. **Transitive Dependency Resolution**: Computing the complete dependency tree during `pip install`. This preparation did not perform resolution. As local, unaudited metadata only: the local venv's `cryptography 50.0.2` declares `cffi>=2.0.0`.
 3. **Vulnerability Audit**: Dynamic querying of external vulnerability databases (OSV, PyPA Advisory DB) via `pip-audit --strict` over the network against resolved wheels. Zero vulnerability waivers or policy relaxations are allowed.
 
 ### 1.3 End-to-End Workflow Execution Graph and Dynamic Inputs
@@ -121,7 +121,7 @@ The intended local runner profile managed by `nhangen/local-ci` (deployment for 
 | `--check` (default) | Executes both source contract validation and static recorded readiness evaluation | `0` = Fully Ready, `1` = Contract Violation, `3` = Source PASS but Rollout HELD | Prevents false passing readiness by returning non-zero exit code while gates are held |
 | `--manifest-only` | Extracts declared dependencies (static manifest extraction; not resolution or a vulnerability audit) | `0` = Success | Prints 5 declared requirements |
 
-*Validator scope*: `--check-source` combines exact file digests with a small set of workflow contract checks. The stronger structural validator (`validate_workflow_invariants` in `tests/test_ci_workflow.py`, with in-memory mutants) runs in the unit suite. Any routing change must refresh the `ci.yml` digest; before that, the structural checks must cover the new `runs-on` labels so the digest refresh does not remove the only guard.
+*Validator scope*: `--check-source` combines exact file digests with a small set of workflow contract checks. The stronger structural validator (`validate_workflow_invariants` in `tests/test_ci_workflow.py`, with in-memory mutants) runs in the unit suite. Any routing change must refresh the `ci.yml` digest. Before that refresh, the structural checks must close the known escapes, or the digest refresh removes the only guard. They must cover the new `runs-on` labels, forbid workflow- and job-level `defaults` (a `run.shell` override disables `-e` on the release gate), forbid job `container`/`services`, match `run` commands exactly or forbid `||`, `;` and `exit` (today a substring check lets `|| true` and `-p` suite narrowing through), locate build, verify and upload by content and require exactly one of each in that order (today: fixed step indices 5 and 6), forbid matrix `include`/`exclude`, require `timeout-minutes` on every job, allowlist every `uses` value against `actions/(checkout|setup-python|upload-artifact)@<40-hex>` including entries without `@`, forbid job-level `if` on the three prerequisite jobs, and require `persist-credentials: false` on every `actions/checkout` step (on a persistent self-hosted runner the default leaves the job token in `.git/config`). The tool's own `--check-source` contract checks are weaker still and accept most of these mutants.
 
 *Exit Code Mapping*:
 - `0`: Success / fully ready
