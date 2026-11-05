@@ -21,8 +21,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CI_YML_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-EXPECTED_CI_GIT_SHA = "545f03c2df66a9f9feb72aaa7cf425dca8f40bb2"
-EXPECTED_CI_SHA256 = "1e7c8eda685a3765f2eb1fc47e5ab34a17416913459cc47d72a5e99dd3a78d0b"
+EXPECTED_CI_GIT_SHA = "293d7359163fdbceb1026b91455579c9ac5efb18"
+EXPECTED_CI_SHA256 = "35a7429a2fd273414524e5df762e17508b58256138153ff0d777720c3bf64166"
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -51,7 +51,7 @@ EXPECTED_HELD_GATE_NAMES = [
     "fork_pr_and_state_isolation",
     "python314_pyyaml_sdist_build_risk",
     "macos_native_full_suite_local_proof",
-    "macos_native_retained_hosted",
+    "macos_runner_enrollment",
 ]
 
 GATE_SHELL = "/bin/bash"
@@ -139,197 +139,209 @@ def evaluate_prerequisite_gate(linux_result, macos_result, audit_result, doc=Non
     return proc.returncode
 
 
-def validate_workflow_invariants(doc):
-    """Verify that a workflow document satisfies all Gargoyl production gates."""
-    assert isinstance(doc, dict), "Workflow document must be a mapping"
-    assert doc.get("permissions") == {"contents": "read"}, (
-        "Root permissions must be strictly read-only contents: read"
-    )
+LINUX_RUNS_ON = "local-ci-b6b0a4fed6586b3a"
+MACOS_RUNS_ON = "${{ vars.GARGOYL_MACOS_RUNNER_LABEL }}"
+GENERIC_RUNNER_LABELS = {"self-hosted", "linux", "macos", "x64", "arm64"}
+ALLOWED_ACTION = re.compile(
+    r"^actions/(checkout|setup-python|upload-artifact)@[0-9a-f]{40}$"
+)
+CHECKOUT = {
+    "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+    "with": {"persist-credentials": False},
+}
+VENV_STEP = {
+    "name": "Create job-local virtualenv",
+    "run": 'python -m venv "$RUNNER_TEMP/venv"\n'
+    'echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"\n',
+}
 
-    # 1. Triggers (normalize PyYAML unquoted 'on' boolean parse if needed)
+
+def setup_python(version):
+    return {
+        "uses": "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
+        "with": {"python-version": version},
+    }
+
+
+SAME_REPOSITORY_ONLY = (
+    "${{ github.event_name == 'push' || "
+    "github.event.pull_request.head.repo.full_name == github.repository }}"
+)
+EXPECTED_TRIGGERS = {"pull_request": None, "push": {"branches": ["main"]}}
+EXPECTED_CONCURRENCY = {
+    "group": "ci-${{ github.event_name == 'pull_request' && "
+    "format('pr-{0}', github.event.pull_request.number) || "
+    "format('push-{0}', github.sha) }}",
+    "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+}
+EXPECTED_JOBS = {
+    "lint-and-test": {
+        "if": SAME_REPOSITORY_ONLY,
+        "runs-on": LINUX_RUNS_ON,
+        "timeout-minutes": 30,
+        "strategy": {"matrix": {"python-version": ["3.11", "3.12", "3.13", "3.14"]}},
+        "steps": [
+            CHECKOUT,
+            setup_python("${{ matrix.python-version }}"),
+            VENV_STEP,
+            {"run": "python -m pip install -e '.[dev]'"},
+            {"run": "python -m ruff check ."},
+            {"run": "python tools/run_tests.py discover -s tests -v"},
+        ],
+    },
+    "macos-native": {
+        "if": SAME_REPOSITORY_ONLY,
+        "runs-on": MACOS_RUNS_ON,
+        "timeout-minutes": 15,
+        "steps": [
+            {
+                "name": "Require macOS runner with Xcode toolchain",
+                "run": 'test "$RUNNER_OS" = macOS\n'
+                "command -v xcrun\n"
+                "command -v swiftc\n",
+            },
+            CHECKOUT,
+            setup_python("3.14"),
+            VENV_STEP,
+            {"run": "python -m pip install -e '.[dev]'"},
+            {
+                "name": "Run full macOS suite including compiled Swift self-test",
+                "run": "export TMPDIR=\"$(python -c 'import os,tempfile; "
+                "print(os.path.realpath(tempfile.gettempdir()))')\"\n"
+                "python tools/run_tests.py discover -s tests -v\n",
+            },
+        ],
+    },
+    "dependency-audit": {
+        "if": SAME_REPOSITORY_ONLY,
+        "runs-on": LINUX_RUNS_ON,
+        "timeout-minutes": 10,
+        "steps": [
+            CHECKOUT,
+            setup_python("3.14"),
+            VENV_STEP,
+            {"run": "python -m pip install pip-audit==2.10.1"},
+            {
+                "name": "Resolve and audit declared dependencies",
+                "run": "python -c 'import tomllib; "
+                'p=tomllib.load(open("pyproject.toml","rb")); d=p["project"]; '
+                'req=p["build-system"]["requires"]+d["dependencies"]'
+                '+sum(d["optional-dependencies"].values(), []); '
+                'print("\\n".join(dict.fromkeys(req)))\' > audit-requirements.txt\n'
+                "python -m pip_audit --strict --progress-spinner off "
+                "-r audit-requirements.txt\n",
+            },
+        ],
+    },
+    "release-artifact": {
+        "needs": ["lint-and-test", "macos-native", "dependency-audit"],
+        "if": "${{ always() }}",
+        "runs-on": LINUX_RUNS_ON,
+        "timeout-minutes": 15,
+        "steps": [
+            {
+                "name": "Require successful platform and audit prerequisites",
+                "env": {
+                    "LINUX_RESULT": "${{ needs.lint-and-test.result }}",
+                    "MACOS_RESULT": "${{ needs.macos-native.result }}",
+                    "AUDIT_RESULT": "${{ needs.dependency-audit.result }}",
+                },
+                "run": 'test "$LINUX_RESULT" = success\n'
+                'test "$MACOS_RESULT" = success\n'
+                'test "$AUDIT_RESULT" = success\n',
+            },
+            CHECKOUT,
+            setup_python("3.12"),
+            VENV_STEP,
+            {"run": "python -m pip install -e '.[release]'"},
+            {
+                "run": "python -m pip wheel --no-deps --no-build-isolation "
+                "--wheel-dir dist ."
+            },
+            {
+                "run": "python tools/verify_release_artifact.py "
+                "dist/gargoyl-0.1.0-py3-none-any.whl"
+            },
+            {
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                    "name": "gargoyl-wheel-${{ github.sha }}",
+                    "path": "dist/*.whl",
+                    "if-no-files-found": "error",
+                },
+            },
+        ],
+    },
+}
+
+
+def validate_workflow_invariants(doc):
+    """Require the workflow to match the reviewed self-hosted routing exactly.
+
+    Exact matching closes the escapes a substring or index check leaves open:
+    workflow- or job-level defaults (a run.shell override drops -e), container
+    or services, matrix include/exclude, extra job-level if, appended `|| true`,
+    reordered build/verify/upload steps, unpinned or non-allowlisted actions,
+    and persisted checkout credentials.
+    """
+    if not isinstance(doc, dict):
+        raise AssertionError("Workflow document must be a mapping")
     if True in doc and "on" not in doc:
         doc["on"] = doc.pop(True)
-    triggers = doc.get("on")
-    assert isinstance(triggers, dict), "Triggers must be a mapping"
-    assert "pull_request" in triggers, "pull_request trigger required"
-    assert "pull_request_target" not in triggers, (
-        "pull_request_target trigger is strictly forbidden"
-    )
-    assert triggers.get("push", {}).get("branches") == ["main"], (
-        "push trigger must be restricted to main"
-    )
-    unauthorized_triggers = set(triggers.keys()) - {"push", "pull_request"}
-    assert not unauthorized_triggers, (
-        f"Unauthorized triggers present: {unauthorized_triggers}"
-    )
-
-    # 2. Required jobs
-    jobs = doc.get("jobs", {})
-    expected_jobs = {
-        "lint-and-test",
-        "macos-native",
-        "dependency-audit",
-        "release-artifact",
-    }
-    assert set(jobs.keys()) == expected_jobs, (
-        f"Jobs mismatch: {set(jobs.keys())} != {expected_jobs}"
-    )
-
-    for job_name, job in jobs.items():
-        assert not job.get("continue-on-error"), (
-            f"Job {job_name} must not have continue-on-error"
+    if set(doc) != {"name", "on", "permissions", "concurrency", "jobs"}:
+        raise AssertionError(
+            f"Unexpected top-level workflow keys: {sorted(map(str, doc))}"
         )
-        job_perms = job.get("permissions")
-        if job_perms is not None:
-            assert job_perms == {"contents": "read"}, (
-                f"Job {job_name} permissions exceed read-only: {job_perms}"
+    if doc["permissions"] != {"contents": "read"}:
+        raise AssertionError("Root permissions must be exactly contents: read")
+    if doc["on"] != EXPECTED_TRIGGERS:
+        raise AssertionError(
+            f"Triggers must be exactly {EXPECTED_TRIGGERS}: {doc['on']}"
+        )
+    if doc["concurrency"] != EXPECTED_CONCURRENCY:
+        raise AssertionError(
+            "Concurrency must cancel only superseded PR runs, never main validation"
+        )
+    jobs = doc["jobs"]
+    if not isinstance(jobs, dict) or set(jobs) != set(EXPECTED_JOBS):
+        raise AssertionError(
+            f"Jobs mismatch: {jobs if not isinstance(jobs, dict) else sorted(jobs)}"
+        )
+    for job_name, expected in EXPECTED_JOBS.items():
+        job = jobs[job_name]
+        if not isinstance(job, dict):
+            raise AssertionError(f"Job {job_name} must be a mapping")
+        runs_on = job.get("runs-on")
+        labels = set(runs_on) if isinstance(runs_on, list) else {runs_on}
+        if labels & GENERIC_RUNNER_LABELS:
+            raise AssertionError(
+                f"Job {job_name} uses a generic runner selector: {runs_on}"
             )
-
-    # 3. lint-and-test invariants
-    lint_job = jobs["lint-and-test"]
-    assert lint_job.get("runs-on") == "ubuntu-latest", (
-        "Current Linux routing must be ubuntu-latest"
-    )
-    matrix = lint_job.get("strategy", {}).get("matrix", {})
-    assert matrix.get("python-version") == ["3.11", "3.12", "3.13", "3.14"], (
-        "Matrix must include all 4 Python versions: 3.11, 3.12, 3.13, 3.14"
-    )
-    lint_steps = lint_job.get("steps", [])
-    assert any(
-        "ruff check ." in step.get("run", "")
-        and not step.get("continue-on-error")
-        and not step.get("if")
-        for step in lint_steps
-    ), "lint-and-test must execute ruff check without continue-on-error or if"
-    assert any(
-        "python tools/run_tests.py discover -s tests -v" in step.get("run", "")
-        and not step.get("continue-on-error")
-        and not step.get("if")
-        for step in lint_steps
-    ), "lint-and-test must execute test suite without continue-on-error or if"
-
-    # 4. macos-native invariants
-    macos_job = jobs["macos-native"]
-    assert macos_job.get("runs-on") == "macos-15", (
-        "macos-native must run on real macos-15 runner"
-    )
-    assert macos_job.get("timeout-minutes") == 15, "macos-native timeout must be 15"
-    macos_steps = macos_job.get("steps", [])
-    assert any(
-        'export TMPDIR="$(python -c' in step.get("run", "")
-        and "os.path.realpath(tempfile.gettempdir())" in step.get("run", "")
-        and "python tools/run_tests.py discover -s tests -v" in step.get("run", "")
-        and not step.get("continue-on-error")
-        and not step.get("if")
-        for step in macos_steps
-    ), (
-        "macos-native must export canonical TMPDIR and run the suite in the same "
-        "step, without continue-on-error or if"
-    )
-
-    # 5. dependency-audit invariants
-    audit_job = jobs["dependency-audit"]
-    assert audit_job.get("runs-on") == "ubuntu-latest", (
-        "dependency-audit must run on ubuntu-latest"
-    )
-    audit_steps = audit_job.get("steps", [])
-    assert any(
-        "pip-audit==2.10.1" in step.get("run", "") and not step.get("continue-on-error")
-        for step in audit_steps
-    ), "dependency-audit must install pip-audit==2.10.1"
-    assert any(
-        "--strict" in step.get("run", "")
-        and "-r audit-requirements.txt" in step.get("run", "")
-        and not step.get("continue-on-error")
-        and not step.get("if")
-        for step in audit_steps
-    ), "dependency-audit must execute --strict audit without continue-on-error"
-
-    # 6. release-artifact invariants
-    release_job = jobs["release-artifact"]
-    assert set(release_job.get("needs", [])) == {
-        "lint-and-test",
-        "macos-native",
-        "dependency-audit",
-    }, "release-artifact must depend on all three prior gates"
-    assert release_job.get("if") == "${{ always() }}", (
-        "release-artifact must have if: ${{ always() }}"
-    )
-    assert release_job.get("runs-on") == "ubuntu-latest", (
-        "release-artifact must run on ubuntu-latest"
-    )
-    release_steps = release_job.get("steps", [])
-    assert len(release_steps) >= 7, "release-artifact must contain at least 7 steps"
-
-    # Step 0: Gate
-    gate_step = release_steps[0]
-    assert (
-        gate_step.get("name") == "Require successful platform and audit prerequisites"
-    ), "Step 0 must be prerequisite verification gate"
-    assert not gate_step.get("continue-on-error"), (
-        "Gate step must not have continue-on-error"
-    )
-    assert not gate_step.get("shell"), "Gate step must not override shell"
-    assert not gate_step.get("if"), "Gate step must not have if condition"
-
-    gate_env = gate_step.get("env", {})
-    assert gate_env.get("LINUX_RESULT") == "${{ needs.lint-and-test.result }}", (
-        "LINUX_RESULT binding mismatch"
-    )
-    assert gate_env.get("MACOS_RESULT") == "${{ needs.macos-native.result }}", (
-        "MACOS_RESULT binding mismatch"
-    )
-    assert gate_env.get("AUDIT_RESULT") == "${{ needs.dependency-audit.result }}", (
-        "AUDIT_RESULT binding mismatch"
-    )
-
-    gate_run = gate_step.get("run", "").strip().splitlines()
-    expected_run = [
-        'test "$LINUX_RESULT" = success',
-        'test "$MACOS_RESULT" = success',
-        'test "$AUDIT_RESULT" = success',
-    ]
-    assert gate_run == expected_run, (
-        f"Gate step script mismatch: {gate_run} != {expected_run}"
-    )
-
-    # Step 5: Verify wheel
-    verify_step = release_steps[5]
-    assert (
-        "python tools/verify_release_artifact.py dist/gargoyl-0.1.0-py3-none-any.whl"
-        in verify_step.get("run", "")
-    ), "Step 5 must verify release artifact wheel"
-    assert not verify_step.get("continue-on-error"), (
-        "Verify artifact step must not have continue-on-error"
-    )
-    assert not verify_step.get("if"), "Verify artifact step must not have if condition"
-
-    # Step 6: Upload artifact
-    upload_step = release_steps[6]
-    assert upload_step.get("uses", "").startswith("actions/upload-artifact@"), (
-        "Step 6 must use actions/upload-artifact"
-    )
-    assert not upload_step.get("continue-on-error"), (
-        "Upload step must not have continue-on-error"
-    )
-    assert not upload_step.get("if"), (
-        "Upload step must not have if condition (must use default if: success())"
-    )
-    upload_with = upload_step.get("with", {})
-    assert upload_with.get("path") == "dist/*.whl", "Upload must publish dist/*.whl"
-    assert upload_with.get("if-no-files-found") == "error", (
-        "Upload must fail when no wheel exists (if-no-files-found: error)"
-    )
-
-    # Action pins
-    hex40_pattern = re.compile(r"^[0-9a-f]{40}$")
-    for j_name, j_data in jobs.items():
-        for s in j_data.get("steps", []):
-            u = s.get("uses")
-            if u and "@" in u:
-                action_name, action_sha = u.split("@", 1)
-                assert hex40_pattern.match(action_sha), (
-                    f"Action {action_name} in {j_name} not pinned to 40-char hex SHA: {action_sha}"
+        if set(job) != set(expected):
+            raise AssertionError(
+                f"Job {job_name} keys {sorted(job)} != {sorted(expected)}"
+            )
+        for key in expected:
+            if key == "steps":
+                continue
+            if job[key] != expected[key]:
+                raise AssertionError(
+                    f"Job {job_name} {key}: {job[key]!r} != {expected[key]!r}"
+                )
+        steps = job["steps"]
+        if not isinstance(steps, list) or len(steps) != len(expected["steps"]):
+            raise AssertionError(
+                f"Job {job_name} must have exactly {len(expected['steps'])} steps"
+            )
+        for index, (step, expected_step) in enumerate(zip(steps, expected["steps"])):
+            uses = step.get("uses") if isinstance(step, dict) else None
+            if uses is not None and not ALLOWED_ACTION.match(uses):
+                raise AssertionError(
+                    f"Job {job_name} step {index} uses non-allowlisted action {uses!r}"
+                )
+            if step != expected_step:
+                raise AssertionError(
+                    f"Job {job_name} step {index} mismatch: {step!r} != {expected_step!r}"
                 )
 
 
@@ -600,6 +612,81 @@ class CIWorkflowTests(unittest.TestCase):
         macos_steps.insert(suite_index, {"run": export_line})
         assert_mutant_fails(m17, "Split canonical TMPDIR export into a separate step")
 
+        def mutant(mutate):
+            doc = yaml.safe_load(yaml.dump(base_doc))
+            mutate(doc)
+            return doc
+
+        def drop_fork_guard(doc):
+            del doc["jobs"]["lint-and-test"]["if"]
+
+        def persist_credentials(doc):
+            doc["jobs"]["dependency-audit"]["steps"][0]["with"][
+                "persist-credentials"
+            ] = True
+
+        def drop_venv(doc):
+            doc["jobs"]["release-artifact"]["steps"].pop(3)
+
+        def or_true(doc):
+            doc["jobs"]["dependency-audit"]["steps"][4]["run"] += "|| true\n"
+
+        def unpinned_action(doc):
+            doc["jobs"]["lint-and-test"]["steps"][0]["uses"] = "actions/checkout@v4"
+
+        def foreign_action(doc):
+            doc["jobs"]["macos-native"]["steps"].insert(
+                0, {"uses": "evil/action@" + "a" * 40}
+            )
+
+        def swap_verify_and_upload(doc):
+            steps = doc["jobs"]["release-artifact"]["steps"]
+            steps[6], steps[7] = steps[7], steps[6]
+
+        new_mutants = {
+            "generic self-hosted label": lambda d: d["jobs"]["lint-and-test"].update(
+                {"runs-on": ["self-hosted", "linux"]}
+            ),
+            "hard-coded runner label": lambda d: d["jobs"]["macos-native"].update(
+                {"runs-on": "local-ci-unreviewed"}
+            ),
+            "workflow defaults.run.shell": lambda d: d.update(
+                defaults={"run": {"shell": "bash {0}"}}
+            ),
+            "job defaults.run.shell": lambda d: d["jobs"]["release-artifact"].update(
+                defaults={"run": {"shell": "bash {0}"}}
+            ),
+            "job container": lambda d: d["jobs"]["dependency-audit"].update(
+                container="python:3.14"
+            ),
+            "matrix include": lambda d: d["jobs"]["lint-and-test"]["strategy"][
+                "matrix"
+            ].update(include=[{"python-version": "3.10"}]),
+            "cancel main validation": lambda d: d["concurrency"].update(
+                {"cancel-in-progress": True}
+            ),
+            "dropped concurrency": lambda d: d.pop("concurrency"),
+            "fork PR guard removed": drop_fork_guard,
+            "checkout persists credentials": persist_credentials,
+            "job-local venv removed": drop_venv,
+            "audit || true": or_true,
+            "unpinned action": unpinned_action,
+            "non-allowlisted action": foreign_action,
+            "upload before verify": swap_verify_and_upload,
+            "release timeout removed": lambda d: d["jobs"]["release-artifact"].pop(
+                "timeout-minutes"
+            ),
+            "macOS runner check removed": lambda d: d["jobs"]["macos-native"][
+                "steps"
+            ].pop(0),
+            "macOS runner check weakened": lambda d: d["jobs"]["macos-native"]["steps"][
+                0
+            ].update({"run": "command -v xcrun || true\n"}),
+        }
+        for desc, mutate in new_mutants.items():
+            with self.subTest(mutant=desc):
+                assert_mutant_fails(mutant(mutate), desc)
+
     def test_action_and_script_graph_digests(self):
         digests = {
             "pyproject.toml": "10f1a10cc95e3b8e2ec5b0931b91f580fe3061f7a00eeac2f4d4215555db3b69",
@@ -662,21 +749,32 @@ class CIWorkflowTests(unittest.TestCase):
 
     def test_routing_delta_proposal_validator(self):
         """Validate the local-ci unique custom label profile against tool's actual PROPOSED_LOCAL_ROUTING contract."""
-        # 1. Verify current production routing is held on ubuntu-latest
         doc = load_workflow()
-        self.assertEqual(doc["jobs"]["lint-and-test"]["runs-on"], "ubuntu-latest")
-        self.assertEqual(doc["jobs"]["macos-native"]["runs-on"], "macos-15")
-        self.assertEqual(doc["jobs"]["dependency-audit"]["runs-on"], "ubuntu-latest")
-        self.assertEqual(doc["jobs"]["release-artifact"]["runs-on"], "ubuntu-latest")
+        linux = "local-ci-b6b0a4fed6586b3a"
+        identity = b"github:nhangen/gargoyl:ml1-wsl"
+        self.assertEqual(linux, "local-ci-" + hashlib.sha256(identity).hexdigest()[:16])
+        self.assertEqual(doc["jobs"]["lint-and-test"]["runs-on"], linux)
+        self.assertEqual(
+            doc["jobs"]["macos-native"]["runs-on"],
+            "${{ vars.GARGOYL_MACOS_RUNNER_LABEL }}",
+        )
+        self.assertEqual(doc["jobs"]["dependency-audit"]["runs-on"], linux)
+        self.assertEqual(doc["jobs"]["release-artifact"]["runs-on"], linux)
+        self.assertEqual(doc["jobs"]["release-artifact"]["if"], "${{ always() }}")
 
         # 2. Verify preflight tool's actual PROPOSED_LOCAL_ROUTING contract
         self.assertEqual(PROPOSED_LOCAL_ROUTING["profile"], "nhangen/local-ci")
         self.assertEqual(PROPOSED_LOCAL_ROUTING["flags"], "--no-default-labels")
         self.assertEqual(
-            PROPOSED_LOCAL_ROUTING["target_label_state"], "UNRESOLVED_HELD"
+            PROPOSED_LOCAL_ROUTING["target_label_state"], "DERIVED_NOT_ENROLLED"
         )
+        self.assertEqual(PROPOSED_LOCAL_ROUTING["target_label"], linux)
         self.assertEqual(
-            PROPOSED_LOCAL_ROUTING["macos_jobs_excluded"], ["macos-native"]
+            PROPOSED_LOCAL_ROUTING["target_label_identity"], identity.decode()
+        )
+        self.assertEqual(PROPOSED_LOCAL_ROUTING["macos_jobs"], ["macos-native"])
+        self.assertEqual(
+            PROPOSED_LOCAL_ROUTING["macos_label_variable"], "GARGOYL_MACOS_RUNNER_LABEL"
         )
         self.assertEqual(
             PROPOSED_LOCAL_ROUTING["linux_jobs"],
@@ -692,11 +790,11 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertEqual(proc.returncode, EXIT_HELD_BLOCKED)
         data = json.loads(proc.stdout)
         self.assertEqual(
-            data["proposed_routing"]["target_label_state"], "UNRESOLVED_HELD"
+            data["proposed_routing"]["target_label_state"], "DERIVED_NOT_ENROLLED"
         )
         self.assertFalse(data["deployment_ready"])
-        self.assertEqual(data["held_gates_count"], 11)
-        self.assertEqual(data["preserved_gates_count"], 1)
+        self.assertEqual(data["held_gates_count"], 12)
+        self.assertNotIn("preserved_gates_count", data)
 
     def test_preflight_cli_modes_and_exit_semantics(self):
         """Causally test that preflight CLI modes enforce correct exit semantics and avoid false readiness."""
@@ -803,7 +901,7 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertFalse(
             full_report["readiness"]["macos_native_full_suite_local_proof"]
         )
-        self.assertTrue(full_report["readiness"]["macos_native_retained_hosted"])
+        self.assertFalse(full_report["readiness"]["macos_runner_enrollment"])
 
         # 10. Causal F6 proof: simulate all recorded infrastructure gates as VERIFIED.
         # Broken source contracts MUST still force is_ready=False and exit 1.
@@ -863,16 +961,25 @@ class CIWorkflowTests(unittest.TestCase):
         def drop_audit_need(doc):
             doc["jobs"]["release-artifact"]["needs"] = ["lint-and-test", "macos-native"]
 
+        def persist_release_checkout(doc):
+            doc["jobs"]["release-artifact"]["steps"][1]["with"][
+                "persist-credentials"
+            ] = True
+
         mutations = {
             "permissions_read_only": lambda doc: doc.update(
                 permissions={"contents": "write"}
             ),
-            "current_routing_intact": lambda doc: doc["jobs"]["lint-and-test"].update(
+            "self_hosted_routing": lambda doc: doc["jobs"]["lint-and-test"].update(
                 {"runs-on": "self-hosted"}
             ),
             "release_needs_all_three": drop_audit_need,
             "release_if_always": lambda doc: doc["jobs"]["release-artifact"].update(
                 {"if": "${{ success() }}"}
+            ),
+            "checkout_credentials_not_persisted": persist_release_checkout,
+            "main_validation_not_cancelled": lambda doc: doc["concurrency"].update(
+                {"cancel-in-progress": True}
             ),
         }
         for contract_key, mutate in mutations.items():

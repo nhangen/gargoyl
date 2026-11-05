@@ -49,8 +49,8 @@ EXIT_HELD_BLOCKED = 3
 
 EXPECTED_DIGESTS = {
     ".github/workflows/ci.yml": {
-        "sha256": "1e7c8eda685a3765f2eb1fc47e5ab34a17416913459cc47d72a5e99dd3a78d0b",
-        "git": "545f03c2df66a9f9feb72aaa7cf425dca8f40bb2",
+        "sha256": "35a7429a2fd273414524e5df762e17508b58256138153ff0d777720c3bf64166",
+        "git": "293d7359163fdbceb1026b91455579c9ac5efb18",
     },
     "pyproject.toml": {
         "sha256": "10f1a10cc95e3b8e2ec5b0931b91f580fe3061f7a00eeac2f4d4215555db3b69",
@@ -87,7 +87,7 @@ HELD_GATES = [
     {
         "gate": "repository_enrollment",
         "status": "HELD",
-        "reason": "GitHub reports 0 repository runners; Gargoyl is not enrolled in the nhangen/local-ci fleet; target label remains UNRESOLVED_HELD.",
+        "reason": "GitHub reports 0 repository runners; Gargoyl is not enrolled in the nhangen/local-ci fleet. The Linux jobs target the derived label local-ci-b6b0a4fed6586b3a (github:nhangen/gargoyl on ml1-wsl), but no runner carries it, so they queue until enrollment.",
     },
     {
         "gate": "branch_protection_visibility",
@@ -122,7 +122,7 @@ HELD_GATES = [
     {
         "gate": "fork_pr_and_state_isolation",
         "status": "HELD",
-        "reason": "Fork-PR policy, ephemeral runner lifecycle (--ephemeral), and workspace/tool-cache state cleanup isolation plan not established.",
+        "reason": "The local-ci GitHub profile is a persistent (not ephemeral) non-root container with no host bind mounts or Docker socket, one repository per runner. The fork boundary is the repository setting that disables workflows from fork PRs, which is unconfirmed; the same-repository guard is defense in depth because a fork PR runs its own workflow file. The runner HOME, workspace, setup-python tool cache and leftover processes persist between jobs, so a same-repository PR can change state (for example pip.conf or .gitconfig) that a later main or release job reuses. Per-job runner replacement, or a fresh HOME, workspace and tool cache per job, is not available in the profile.",
     },
     {
         "gate": "python314_pyyaml_sdist_build_risk",
@@ -135,19 +135,28 @@ HELD_GATES = [
         "reason": "The full suite including tests/test_native_app.py and the compiled Swift self-test was not executed at the current head: native, Keychain, and Security paths are prohibited locally until a separately approved isolated boundary exists. The last local full-suite result (612 tests, macOS Python 3.14.7) is from older code head 38a4636.",
     },
     {
-        "gate": "macos_native_retained_hosted",
-        "status": "PRESERVED_ON_HOSTED",
-        "reason": "macos-native requires real macOS Darwin host with Swift/AppKit/WebKit; retained on hosted macos-15 runner.",
+        "gate": "macos_runner_enrollment",
+        "status": "HELD",
+        "reason": "macos-native routes to a self-hosted macOS runner selected by vars.GARGOYL_MACOS_RUNNER_LABEL. No macOS runner is enrolled, the variable is unset, and the Keychain/login-session isolation boundary the native suite needs on that host is unapproved.",
     },
 ]
 
 PROPOSED_LOCAL_ROUTING = {
     "profile": "nhangen/local-ci",
     "flags": "--no-default-labels",
-    "target_label": "UNRESOLVED_HELD (opaque unique custom label local-ci-<hash> assigned upon enrollment; 0 runners currently enrolled)",
-    "target_label_state": "UNRESOLVED_HELD",
+    "target_label": "local-ci-b6b0a4fed6586b3a",
+    "target_label_identity": "github:nhangen/gargoyl:ml1-wsl",
+    "target_label_state": "DERIVED_NOT_ENROLLED",
+    "macos_label_variable": "GARGOYL_MACOS_RUNNER_LABEL",
     "linux_jobs": ["lint-and-test", "dependency-audit", "release-artifact"],
-    "macos_jobs_excluded": ["macos-native"],
+    "macos_jobs": ["macos-native"],
+}
+
+LINUX_RUNS_ON = "local-ci-b6b0a4fed6586b3a"
+MACOS_RUNS_ON = "${{ vars.GARGOYL_MACOS_RUNNER_LABEL }}"
+EXPECTED_CONCURRENCY = {
+    "group": "ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}",
+    "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
 }
 
 
@@ -240,22 +249,30 @@ def verify_workflow_contracts():
     audit_job = jobs.get("dependency-audit", {})
     release_job = jobs.get("release-artifact", {})
 
+    checkout_steps = [
+        step
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+
     checks = {
         "permissions_read_only": raw.get("permissions") == {"contents": "read"},
-        "has_lint_and_test": "lint-and-test" in jobs,
-        "has_macos_native": "macos-native" in jobs,
-        "has_dependency_audit": "dependency-audit" in jobs,
-        "has_release_artifact": "release-artifact" in jobs,
-        "current_routing_intact": (
-            lint_job.get("runs-on") == "ubuntu-latest"
-            and macos_job.get("runs-on") == "macos-15"
-            and audit_job.get("runs-on") == "ubuntu-latest"
-            and release_job.get("runs-on") == "ubuntu-latest"
+        "self_hosted_routing": (
+            lint_job.get("runs-on") == LINUX_RUNS_ON
+            and audit_job.get("runs-on") == LINUX_RUNS_ON
+            and release_job.get("runs-on") == LINUX_RUNS_ON
+            and macos_job.get("runs-on") == MACOS_RUNS_ON
         ),
         "release_needs_all_three": set(release_job.get("needs", []))
         == {"lint-and-test", "macos-native", "dependency-audit"},
         "release_if_always": release_job.get("if") == "${{ always() }}",
-        "macos_native_retained_on_macos_15": macos_job.get("runs-on") == "macos-15",
+        "checkout_credentials_not_persisted": len(checkout_steps) == 4
+        and all(
+            (step.get("with") or {}).get("persist-credentials") is False
+            for step in checkout_steps
+        ),
+        "main_validation_not_cancelled": raw.get("concurrency") == EXPECTED_CONCURRENCY,
     }
     all_passed = all(checks.values())
     return all_passed, checks
@@ -272,7 +289,7 @@ def evaluate_deployment_readiness(source_ok):
     for entry in HELD_GATES:
         gate_name = entry["gate"]
         status = entry["status"]
-        gate_status[gate_name] = status in ("VERIFIED", "PRESERVED_ON_HOSTED")
+        gate_status[gate_name] = status == "VERIFIED"
 
     all_gates_ok = all(gate_status.values())
     is_ready = all_gates_ok and bool(source_ok)
@@ -325,7 +342,6 @@ def main(argv=None):
     deps = extract_declared_dependencies()
 
     held_count = sum(1 for g in HELD_GATES if g["status"] == "HELD")
-    preserved_count = sum(1 for g in HELD_GATES if g["status"] == "PRESERVED_ON_HOSTED")
 
     report = {
         "source_contracts_passed": source_ok,
@@ -338,7 +354,6 @@ def main(argv=None):
         "proposed_routing": PROPOSED_LOCAL_ROUTING,
         "held_gates": HELD_GATES,
         "held_gates_count": held_count,
-        "preserved_gates_count": preserved_count,
     }
 
     if args.json:
@@ -352,9 +367,11 @@ def main(argv=None):
         if ready_ok:
             readiness_text = "READY"
         elif not source_ok:
-            readiness_text = f"BLOCKED (source contracts failed; {held_count} held gates, {preserved_count} preserved on hosted)"
+            readiness_text = (
+                f"BLOCKED (source contracts failed; {held_count} held gates)"
+            )
         else:
-            readiness_text = f"BLOCKED ({held_count} held gates, {preserved_count} preserved on hosted)"
+            readiness_text = f"BLOCKED ({held_count} held gates)"
         print(f"Deployment Readiness: {readiness_text}")
         print(
             f"Current Python:       {env['python_version']} ({env['python_executable']})"
@@ -364,13 +381,16 @@ def main(argv=None):
         print(
             f"macOS SDK Tools:      xcrun={env['has_xcrun']}, swiftc={env['has_swiftc']}"
         )
-        print("Routing Status:       HELD on ubuntu-latest (0 repo runners enrolled)")
-        print(
-            f"Target Custom Label:  {PROPOSED_LOCAL_ROUTING['target_label_state']} (opaque custom label under {PROPOSED_LOCAL_ROUTING['flags']}; unassigned)"
+        routing_text = (
+            f"self-hosted: Linux {LINUX_RUNS_ON}, macOS vars.GARGOYL_MACOS_RUNNER_LABEL"
+            if contracts_ok
+            else "workflow routing contract FAILED"
         )
+        print(f"Routing Status:       {routing_text} (0 repo runners enrolled)")
         print(
-            f"Held Gates Count:     {held_count} held (plus {preserved_count} preserved on hosted)"
+            f"Target Custom Label:  {PROPOSED_LOCAL_ROUTING['target_label']} {PROPOSED_LOCAL_ROUTING['target_label_state']} (under {PROPOSED_LOCAL_ROUTING['flags']})"
         )
+        print(f"Held Gates Count:     {held_count} held")
 
     if args.check_source:
         return EXIT_READY if source_ok else EXIT_CONTRACT_FAILED

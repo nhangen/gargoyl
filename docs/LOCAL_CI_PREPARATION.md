@@ -88,25 +88,36 @@ A static inventory of in-tree source and workflow definitions reveals:
 
 ---
 
-## 2. Current vs. Potential Target Runner Routing Deltas
+## 2. Self-Hosted Routing
 
-### 2.1 Unique Custom Label Profile (`nhangen/local-ci`)
+### 2.1 Linux: `nhangen/local-ci` GitHub profile
 
-The intended local runner profile managed by `nhangen/local-ci` (deployment for other repositories is reported, not verified from allowlisted evidence here) specifies:
-- Registration with `--no-default-labels` (strips standard `self-hosted`, `linux`, `x64` tags).
-- A single, repository-unique custom label string: the target label is explicitly `UNRESOLVED_HELD` and unassigned; an opaque generated `local-ci-<hash>` may only be assigned after separately approved enrollment (0 runners currently enrolled; no concrete label deployed).
-- Multi-label selectors such as `[self-hosted, linux, gargoyl]` are invalid under this profile and will fail to match any runner.
+`nhangen/local-ci` derives each runner label as `local-ci-` plus the first 16 hex characters of `sha256("<provider>:<slug>:<host ssh alias>")` (`Repo.label` in `src/local_ci/config.py`). For `github:nhangen/gargoyl:ml1-wsl` this is `local-ci-b6b0a4fed6586b3a`. The runner registers with `--no-default-labels`, so that label is its only one, and generic selectors such as `self-hosted` or `linux` never match it. The installed scanner accepts only static Linux `runs-on` values (an `ubuntu-*` image or a `local-ci-*` label), so the Linux jobs name the label directly rather than through a repository variable.
 
-### 2.2 Routing Delta Matrix
+No runner carries the label yet. Until one is enrolled, the Linux jobs queue and `release-artifact` cannot succeed.
 
-| Job Name | Current Production Routing | Potential Target Routing | Status | Notes |
-|---|---|---|---|---|
-| `lint-and-test` | `runs-on: ubuntu-latest` | `runs-on: UNRESOLVED_HELD` (opaque custom label under `--no-default-labels`; unassigned) | **HELD** | Preserved on `ubuntu-latest` pending approved capacity & enrollment |
-| `macos-native` | `runs-on: macos-15` | `runs-on: macos-15` (Unchanged) | **PRESERVED** | Real macOS runner required for Swift/AppKit/WebKit; canonical `TMPDIR` |
-| `dependency-audit` | `runs-on: ubuntu-latest` | `runs-on: UNRESOLVED_HELD` (opaque custom label under `--no-default-labels`; unassigned) | **HELD** | Preserved on `ubuntu-latest`; strict audit with zero waivers |
-| `release-artifact` | `runs-on: ubuntu-latest` | `runs-on: UNRESOLVED_HELD` (opaque custom label under `--no-default-labels`; unassigned) | **HELD** | Preserved on `ubuntu-latest`; `if: ${{ always() }}` fail-closed tri-gate |
+### 2.2 Routing
 
-**Policy Invariant**: Actual routing is **HELD** on `ubuntu-latest`. Production `.github/workflows/ci.yml` is kept intact (`runs-on: ubuntu-latest`) to avoid routing jobs to nonexistent local runner labels while Gargoyl enrollment (0 runners) and capacity (28/28 allocated) remain unapproved.
+| Job | Before | Now | Notes |
+|---|---|---|---|
+| `lint-and-test` | `ubuntu-latest` | `local-ci-b6b0a4fed6586b3a` | Python 3.11–3.14 matrix; same-repository/push guard |
+| `dependency-audit` | `ubuntu-latest` | `local-ci-b6b0a4fed6586b3a` | `pip-audit --strict`, no waivers; same-repository/push guard |
+| `release-artifact` | `ubuntu-latest` | `local-ci-b6b0a4fed6586b3a` | `if: ${{ always() }}` tri-gate; no guard, so a skipped prerequisite fails it |
+| `macos-native` | `macos-15` | `${{ vars.GARGOYL_MACOS_RUNNER_LABEL }}` | Full native suite including Swift; local-ci has no macOS profile, so this job is not a local-ci enrollment target and stays HELD (`macos_runner_enrollment`) |
+
+Every job installs into a job-local venv under `$RUNNER_TEMP`, and every checkout sets `persist-credentials: false`. Concurrency is keyed by PR number or by push SHA: a new PR head cancels its superseded run, and pushes to `main` are never cancelled or replaced. The local-ci scanner reports this as a `custom` concurrency block, which its plan preserves.
+
+### 2.3 Runner lifecycle and residual risk
+
+The local-ci GitHub profile is not ephemeral. It is one persistent, non-root runner container per repository, with no host bind mounts and no Docker socket, and the local-ci README limits it to trusted private repositories and contributors. Earlier drafts of this document required ephemeral or JIT runners; the profile does not provide that, and this document no longer claims it.
+
+Under those constraints the boundary is:
+- `nhangen/gargoyl` is private, and the fork boundary is the repository setting "Run workflows from fork pull requests" being off. That setting is unconfirmed and must be confirmed before enrollment. The same-repository/push guard is defense in depth only: a `pull_request` run uses the PR's own copy of `ci.yml`, so a fork could remove the guard, and the unguarded `release-artifact` job is scheduled on the runner for every fork PR (it fails at its first step).
+- Code that does run is same-repository code from collaborators with push access.
+
+The remaining risk: the runner persists between jobs, including the runner user's HOME, the workspace, the setup-python tool cache and any process a job leaves behind. A same-repository PR can therefore change state that a later `main` or `release-artifact` job reuses, for example a `~/.config/pip/pip.conf` that redirects the release install's package index, or a `~/.gitconfig` that checkout reads. The job-local venv does not prevent this. The minimal unmet boundary is per-job runner or container replacement, or at least a fresh HOME, workspace and tool cache for every job, which the profile does not offer today. This is tracked as the HELD `fork_pr_and_state_isolation` gate.
+
+The `macos-native` job selects its runner through a variable that the static validator cannot check, so its first step fails unless the runner reports `RUNNER_OS=macOS` and provides `xcrun` and `swiftc`. Without that step, a non-macOS or no-Xcode runner would skip the native tests and report success.
 
 ---
 
@@ -121,7 +132,7 @@ The intended local runner profile managed by `nhangen/local-ci` (deployment for 
 | `--check` (default) | Executes both source contract validation and static recorded readiness evaluation | `0` = Fully Ready, `1` = Contract Violation, `3` = Source PASS but Rollout HELD | Prevents false passing readiness by returning non-zero exit code while gates are held |
 | `--manifest-only` | Extracts declared dependencies (static manifest extraction; not resolution or a vulnerability audit) | `0` = Success | Prints 5 declared requirements |
 
-*Validator scope*: `--check-source` combines exact file digests with a small set of workflow contract checks. The stronger structural validator (`validate_workflow_invariants` in `tests/test_ci_workflow.py`, with in-memory mutants) runs in the unit suite. Any routing change must refresh the `ci.yml` digest. Before that refresh, the structural checks must close the known escapes, or the digest refresh removes the only guard. They must cover the new `runs-on` labels, forbid workflow- and job-level `defaults` (a `run.shell` override disables `-e` on the release gate), forbid job `container`/`services`, match `run` commands exactly or forbid `||`, `;` and `exit` (today a substring check lets `|| true` and `-p` suite narrowing through), locate build, verify and upload by content and require exactly one of each in that order (today: fixed step indices 5 and 6), forbid matrix `include`/`exclude`, require `timeout-minutes` on every job, allowlist every `uses` value against `actions/(checkout|setup-python|upload-artifact)@<40-hex>` including entries without `@`, forbid job-level `if` on the three prerequisite jobs, and require `persist-credentials: false` on every `actions/checkout` step (on a persistent self-hosted runner the default leaves the job token in `.git/config`). The tool's own `--check-source` contract checks are weaker still and accept most of these mutants.
+*Validator scope*: `--check-source` combines exact file digests with six workflow contract checks: read-only permissions, self-hosted routing, the release `needs` and `always()`, `persist-credentials: false` on all four checkouts, and the PR-only cancellation concurrency. The structural validator (`validate_workflow_invariants` in `tests/test_ci_workflow.py`) requires the workflow to match the reviewed structure exactly: the top-level keys, triggers, permissions and concurrency; each job's key set (so no `defaults`, `container`, `services` or extra `if`); `runs-on`, timeouts and the matrix; and every step, including the exact `run` text and order. It also rejects generic runner labels and any `uses` outside `actions/(checkout|setup-python|upload-artifact)@<40-hex>`. In-memory mutants cover `defaults.run.shell`, `|| true`, matrix `include`, step reordering, generic or hard-coded labels, cancelling `main`, a removed fork guard, a removed or weakened macOS runner check, persisted credentials and non-allowlisted actions. The three prerequisite jobs carry exactly one allowed job-level `if`, the same-repository/push guard; a skipped prerequisite still fails the release tri-gate.
 
 *Exit Code Mapping*:
 - `0`: Success / fully ready
@@ -133,16 +144,16 @@ The intended local runner profile managed by `nhangen/local-ci` (deployment for 
 
 ## 4. Remaining Action-Time Gates and Capacity Blockers
 
-Rollout to local runners is gated on 11 explicit held gates (plus 1 preserved hosted gate), matching the inventory in `tools/ci_preflight.py`. Readiness is static recorded gate state, not a live evaluation; no gate may flip to `VERIFIED` without recorded evidence:
+Rollout to local runners is gated on 12 explicit held gates, matching the inventory in `tools/ci_preflight.py`. Readiness is static recorded gate state, not a live evaluation; no gate may flip to `VERIFIED` without recorded evidence:
 
 1. **Local Fleet Capacity Allocation (`local_fleet_capacity` - HELD)**:
    - Fleet capacity recorded historical snapshot of 28/28 CPUs and 46/48 GiB memory remains unverified current capacity without allowlisted receipt.
    - Proposed Tron resize is unapproved.
-   - Default matrix runs up to 4 concurrent legs; candidate sizing estimate of 4 CPUs / 4 GiB per leg (up to 16 CPUs / 16 GiB peak matrix demand plus independent audit load) requires authorized headroom; Gargoyl cannot schedule jobs locally until explicit capacity headroom is authorized.
+   - One local-ci runner serializes all Linux jobs, so peak demand is one job: a candidate allocation of 2 CPUs / 4 GiB plus about 5 GB of disk for matrix venvs and the setup-python tool cache. This is an unmeasured estimate, and Gargoyl cannot schedule jobs locally until capacity headroom is authorized.
 
 2. **Repository Runner Enrollment (`repository_enrollment` - HELD)**:
    - GitHub reports 0 repository runners configured for `nhangen/gargoyl`.
-   - Registration with the `nhangen/local-ci` fleet controller requires action-time enrollment approval and credential provisioning; target label remains `UNRESOLVED_HELD` under `--no-default-labels`.
+   - Registration with the `nhangen/local-ci` fleet controller requires action-time enrollment approval and credential provisioning. The Linux jobs target the derived label `local-ci-b6b0a4fed6586b3a` (`github:nhangen/gargoyl` on `ml1-wsl`), which no runner carries yet.
 
 3. **Branch Protection Constraints (`branch_protection_visibility` - HELD)**:
    - Access to GitHub branch protection API was denied (`HTTP 403`).
@@ -164,7 +175,7 @@ Rollout to local runners is gated on 11 explicit held gates (plus 1 preserved ho
    - Direct execution equivalence between local runner environment and hosted GitHub Actions runners not verified.
 
 9. **Fork-PR and State Isolation Plan (`fork_pr_and_state_isolation` - HELD)**:
-   - Fork-PR security policy, ephemeral runner lifecycle (`--ephemeral`), and workspace/tool-cache state cleanup isolation plan not established.
+   - The local-ci runner is persistent, not ephemeral. The fork boundary is the repository setting that disables workflows from fork PRs, which is unconfirmed; the same-repository guard is defense in depth only, because a fork PR runs its own copy of `ci.yml`. The runner HOME, workspace, tool cache and leftover processes persist between same-repository jobs, and neither per-job runner replacement nor a fresh HOME, workspace and tool cache per job is available (see §2.3).
 
 10. **Python 3.14 PyYAML sdist Build Risk (`python314_pyyaml_sdist_build_risk` - HELD)**:
     - The local macOS cp314 PyYAML 6.0.2 install was built from source (installed `WHEEL` metadata names setuptools as generator), which proves a local source build only. Whether a published cp314 wheel exists was not checked (offline). Linux resolution, sdist compilation, and build inputs remain unverified. The pin is required because `tests/test_ci_workflow.py` imports `yaml`; no version bump is made without its own resolution and audit evidence.
@@ -172,8 +183,8 @@ Rollout to local runners is gated on 11 explicit held gates (plus 1 preserved ho
 11. **Native macOS Full-Suite Local Proof (`macos_native_full_suite_local_proof` - HELD)**:
     - The full suite including `tests/test_native_app.py` and the compiled Swift self-test was not executed at the current head; native, Keychain, and Security paths are prohibited locally until a separately approved isolated boundary exists. The last local full-suite result is from older code head `38a4636`.
 
-12. **Native macOS Retained on Hosted (`macos_native_retained_hosted` - PRESERVED)**:
-    - `macos-native` requires real macOS Darwin host with Swift/AppKit/WebKit; retained on hosted `macos-15` runner.
+12. **macOS Runner Enrollment (`macos_runner_enrollment` - HELD)**:
+    - `macos-native` routes to a self-hosted macOS runner selected by `vars.GARGOYL_MACOS_RUNNER_LABEL`. local-ci has no macOS profile, no macOS runner is enrolled, the variable is unset, and the Keychain/login-session isolation boundary the native suite needs on that host is unapproved. Until this clears, `macos-native` cannot run and `release-artifact` fails closed.
 
 **Capture Receipt Status**:
 `UNVERIFIED / UNAVAILABLE`: No local capture receipt or readback was produced or observed; coordinator handles canonical nonsecret delivery.
