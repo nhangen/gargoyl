@@ -831,10 +831,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                     self.fleetStatus.stringValue = "\(reasonDesc) Retrying in \(Int(delay))s (attempt \(attempt)/5). No new grant or provider action."
                     self.fleetRecoveryTimer?.invalidate()
                     self.fleetRecoveryTimer = Timer.scheduledTimer(withTimeInterval:delay,repeats:false) { [weak self] _ in
-                        guard let self=self, generation == self.fleetGeneration, self.fleetWorker == nil else { return }
-                        self.resetRestoreControls(generation:generation)
-                        guard self.fleetOwner(), let saved = self.savedFleetState.credential, saved.expires > Date().timeIntervalSince1970 else { return }
-                        self.beginFleet(remember:false,restored:saved,retryCount:attempt)
+                        guard let self=self else { return }
+                        self.runRecovery(generation:generation,attempt:attempt)
                     }
                 case .terminal:
                     self.fleetStatus.stringValue = "Account reader recovery stopped after reaching retry budget. Saved sign-in is preserved; resume manually when available."
@@ -850,6 +848,12 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             fleetStatus.stringValue = "Account connection unavailable. No provider action or credential fallback was attempted."
             connectFleetButton.isEnabled = !previewOnly; disconnectFleetButton.isEnabled = false
         }
+    }
+    func runRecovery(generation:Int,attempt:Int) {
+        guard generation == self.fleetGeneration, self.fleetWorker == nil else { return }
+        self.resetRestoreControls(generation:generation)
+        guard self.fleetOwner(), let saved=self.savedFleetState.credential, saved.expires > Date().timeIntervalSince1970 else { return }
+        self.beginFleet(remember:false,restored:saved,retryCount:attempt)
     }
     func rememberFreshFleetCredential(_ value:[String:Any],generation:Int) {
         guard let token=fleetCredentialGate.take(value,mode:fleetWorker?.mode ?? "",remember:rememberCurrentFleet,owner:self.fleetOwner(),generation:generation,current:fleetGeneration) else { disconnectFleet(); return }
@@ -1354,12 +1358,13 @@ if CommandLine.arguments.contains("--self-test") {
         precondition(restoreApp.savedFleetState.credential?.token == savedRest.token)
         restoreApp.disconnectFleet()
 
-        // Disconnect-then-finish: call disconnectFleet(), then invoke finished(worker) -> assert fleetRecoveryTimer == nil
+        // Disconnect-then-finish: call disconnectFleet(), then invoke finished(worker) -> assert fleetRecoveryTimer == nil.
+        // The credential is unexpired so the generation guard, not credential expiry, drives this outcome.
         let discFinishApp = App(); discFinishApp.previewOverride = false
         discFinishApp.connectFleetButton = NSButton(); discFinishApp.disconnectFleetButton = NSButton()
         discFinishApp.readRemember = { true }; discFinishApp.fleetOwner = { true }
         discFinishApp.lastFleetReason = "unavailable"
-        discFinishApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:2000.0)
+        discFinishApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
         discFinishApp.beginFleet(remember:false,restored:discFinishApp.savedFleetState.credential,retryCount:1)
         let preDiscGen = discFinishApp.fleetGeneration
         let activeWorker = discFinishApp.fleetWorker!
@@ -1368,6 +1373,58 @@ if CommandLine.arguments.contains("--self-test") {
         precondition(discFinishApp.fleetRecoveryTimer == nil)
         activeWorker.finished(activeWorker)
         precondition(discFinishApp.fleetRecoveryTimer == nil)
+
+        // Finish without disconnect: bounded recovery is scheduled from the in-memory grant.
+        let retryApp = App(); retryApp.previewOverride = false
+        retryApp.connectFleetButton = NSButton(); retryApp.disconnectFleetButton = NSButton()
+        retryApp.readRemember = { true }; retryApp.fleetOwner = { true }
+        retryApp.lastFleetReason = "unavailable"
+        retryApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
+        retryApp.beginFleet(remember:false,restored:retryApp.savedFleetState.credential,retryCount:1)
+        let retryWorker = retryApp.fleetWorker!
+        precondition(retryApp.fleetRecoveryTimer == nil)
+        retryWorker.finished(retryWorker)
+        precondition(retryApp.fleetWorker == nil)
+        precondition(retryApp.fleetRecoveryTimer != nil)
+        retryApp.disconnectFleet()
+        precondition(retryApp.fleetRecoveryTimer == nil)
+
+        // runRecovery restores the saved credential through beginFleet with the recorded attempt.
+        let recoveryApp = App(); recoveryApp.previewOverride = false
+        recoveryApp.connectFleetButton = NSButton(); recoveryApp.disconnectFleetButton = NSButton()
+        recoveryApp.readRemember = { true }; recoveryApp.fleetOwner = { true }
+        recoveryApp.savedFleetState.credential = SavedFleetCredential(token:"darkbloom-at-private-test-recovery-token",created:100,expires:Date().timeIntervalSince1970+3600)
+        recoveryApp.runRecovery(generation:recoveryApp.fleetGeneration,attempt:3)
+        precondition(recoveryApp.fleetWorker?.mode == "fleet-restore")
+        precondition(recoveryApp.fleetRetryCount == 3)
+        precondition(recoveryApp.savedFleetState.credential?.token == "darkbloom-at-private-test-recovery-token")
+        recoveryApp.disconnectFleet()
+
+        // Stale generation never schedules recovery.
+        let staleGenApp = App(); staleGenApp.previewOverride = false
+        staleGenApp.connectFleetButton = NSButton(); staleGenApp.disconnectFleetButton = NSButton()
+        staleGenApp.fleetOwner = { true }
+        staleGenApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
+        staleGenApp.runRecovery(generation:staleGenApp.fleetGeneration+1,attempt:1)
+        precondition(staleGenApp.fleetWorker == nil && staleGenApp.fleetRecoveryTimer == nil)
+
+        // Owner change cancels recovery after the restore-controls reset.
+        var ownerFlag = false
+        let ownerSwitchApp = App(); ownerSwitchApp.previewOverride = false
+        ownerSwitchApp.connectFleetButton = NSButton(); ownerSwitchApp.disconnectFleetButton = NSButton()
+        ownerSwitchApp.fleetOwner = { ownerFlag }; ownerSwitchApp.readRemember = { true }
+        ownerSwitchApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
+        ownerSwitchApp.runRecovery(generation:ownerSwitchApp.fleetGeneration,attempt:1)
+        precondition(ownerSwitchApp.fleetWorker == nil && ownerSwitchApp.fleetRecoveryTimer == nil)
+        precondition(!ownerSwitchApp.disconnectFleetButton.isEnabled)
+
+        // An expired saved credential never schedules recovery.
+        let expiredCredApp = App(); expiredCredApp.previewOverride = false
+        expiredCredApp.connectFleetButton = NSButton(); expiredCredApp.disconnectFleetButton = NSButton()
+        expiredCredApp.fleetOwner = { true }
+        expiredCredApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970-10)
+        expiredCredApp.runRecovery(generation:expiredCredApp.fleetGeneration,attempt:1)
+        precondition(expiredCredApp.fleetWorker == nil && expiredCredApp.fleetRecoveryTimer == nil)
 
         try? FileManager.default.removeItem(atPath: stdinLog)
         try? FileManager.default.removeItem(atPath: envLog)
