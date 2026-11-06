@@ -1409,7 +1409,7 @@ if CommandLine.arguments.contains("--self-test") {
         precondition(staleGenApp.fleetWorker == nil && staleGenApp.fleetRecoveryTimer == nil)
 
         // Owner change cancels recovery after the restore-controls reset.
-        var ownerFlag = false
+        let ownerFlag = false
         let ownerSwitchApp = App(); ownerSwitchApp.previewOverride = false
         ownerSwitchApp.connectFleetButton = NSButton(); ownerSwitchApp.disconnectFleetButton = NSButton()
         ownerSwitchApp.fleetOwner = { ownerFlag }; ownerSwitchApp.readRemember = { true }
