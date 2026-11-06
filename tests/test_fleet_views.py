@@ -181,6 +181,18 @@ class FleetViewTests(unittest.TestCase):
             self.assertIn("Supervising pipe closed (cause unknown)", page)
             self.assertNotIn("retrying with backoff", page)
 
+            # A crashed reader in the transient state records exit_reason "none", not pipe_eof.
+            raw_lifecycle["exit_reason"] = "none"
+            cache.write_lifecycle(raw_lifecycle)
+            crash_resolved = effective_lifecycle(cache, NOW, alive=lambda _: False)
+            self.assertEqual(crash_resolved["status"], "exited")
+            self.assertEqual(crash_resolved["exit_reason"], "unknown")
+            crash_page = render_view(
+                "fleet", None, None, inventory=value, now=NOW, lifecycle=crash_resolved
+            )
+            self.assertIn("Account reader has stopped (unknown)", crash_page)
+            self.assertNotIn("auth_required", crash_page)
+
     def test_management_projection_and_html_distinguish_preview_mode(self):
         from gargoyl.fleet_management import management_html, management_projection
 
