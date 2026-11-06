@@ -227,6 +227,9 @@ func scrollNativeFragment(_ action: WKNavigationAction, in web: WKWebView, local
 }
 
 func ownerActive() -> Bool {
+    #if GARGOYL_NATIVE_TESTS
+    if let value = ProcessInfo.processInfo.environment["GARGOYL_TEST_OWNER"], value == "1" { return true }
+    #endif
     var uid: uid_t = 0; var gid: gid_t = 0
     return SCDynamicStoreCopyConsoleUser(nil, &uid, &gid) != nil && uid == geteuid() && geteuid() != 0
 }

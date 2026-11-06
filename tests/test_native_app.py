@@ -11,7 +11,6 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from gargoyl.gui_runtime import console_owner
 from gargoyl.native_app import SWIFT
 
 
@@ -125,11 +124,11 @@ class NativeGateTests(unittest.TestCase):
                 environment = dict(
                     os.environ,
                     HOME=str(home),
+                    GARGOYL_TEST_OWNER="1",
+                    GARGOYL_FIXTURE_PYTHON=str(fake),
                     GARGOYL_TEST_FLEET_HTML=str(fixture_html),
                     GARGOYL_TEST_BLOCKED_RESOURCE=f"http://127.0.0.1:{server.server_port}",
                 )
-                if console_owner():
-                    environment["GARGOYL_FIXTURE_PYTHON"] = str(fake)
                 result = subprocess.run(
                     [str(binary), "--self-test"],
                     check=False,
