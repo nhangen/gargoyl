@@ -186,6 +186,12 @@ func endedFleetStatus(_ previous:String, disconnected:Bool, preview:Bool=false) 
     }
     return disconnected ? "Account memory collection disconnected. Saved sign-in is separate; use Forget to remove it." : previous + " Account session ended; cached reports are not live. Reconnect to resume."
 }
+func observedExitText(_ observation: (status: Int32, signal: Bool)?) -> String? {
+    guard let observation = observation else { return nil }
+    return observation.signal
+        ? " The account reader was terminated by signal \(observation.status)."
+        : " The account reader exited with status \(observation.status)."
+}
 func viewDestination(_ url: URL?, mainFrame: Bool) -> String? {
     guard mainFrame, let url = url else { return nil }
     let prefix = "gargoyl-view://"
@@ -284,6 +290,7 @@ final class Worker {
     let output = Pipe()
     var buffer = Data()
     var replied = false
+    var exitObservation: (status: Int32, signal: Bool)?
     var completion = CompletionGate()
     let event: ([String: Any]) -> Void
     let finished: (Worker) -> Void
@@ -327,7 +334,11 @@ final class Worker {
                 }
             }
         }
-        process.terminationHandler = { [weak self] _ in DispatchQueue.main.async { if let self = self { self.completion.ended = true; self.finishIfReady() } } }
+        process.terminationHandler = { [weak self] terminated in DispatchQueue.main.async {
+            guard let self = self else { return }
+            self.exitObservation = (terminated.terminationStatus, terminated.terminationReason == .uncaughtSignal)
+            self.completion.ended = true; self.finishIfReady()
+        } }
         try process.run()
     }
     func finishIfReady() {
@@ -826,6 +837,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                 case .none:
                     break
                 }
+                if let exitText = observedExitText(completed.exitObservation) {
+                    self.fleetStatus.stringValue = self.fleetStatus.stringValue + exitText
+                }
             })
             if let restored=restored { fleetWorker?.restoreCredential(restored, retryCount: retryCount) }
         } catch {
@@ -1263,6 +1277,10 @@ if CommandLine.arguments.contains("--self-test") {
         print("worker received=\(received) finished=\(ended)"); fflush(stdout)
         precondition(received && ended)
         withExtendedLifetime(worker) {}
+        let observed = worker.exitObservation
+        precondition(observed != nil)
+        precondition(observed?.status == 0 && observed?.signal == false)
+        precondition(observedExitText(observed) == " The account reader exited with status 0.")
 
         let fixtureLogs = URL(fileURLWithPath:ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"]!).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("logs")
         let stdinLog = fixtureLogs.appendingPathComponent("child_stdin.log").path
@@ -1541,6 +1559,9 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(endedFleetStatus("scope confirmed",disconnected:true).contains("disconnected"))
     precondition(endedFleetStatus("Account API returned 4 records.",disconnected:false,preview:true).contains("Read-only preview"))
     precondition(!endedFleetStatus("Account API returned 4 records.",disconnected:false,preview:true).contains("Reconnect to resume"))
+    precondition(observedExitText(nil) == nil)
+    precondition(observedExitText((0,false)) == " The account reader exited with status 0.")
+    precondition(observedExitText((301,true)) == " The account reader was terminated by signal 301.")
     for change in [["expires_in":true],["purpose":"provider"],["token":"must-not-cross-native-pipe"],["expires_in":901],["user_code":"bad\ncode"]] as [[String:Any]] {
         var bad = accountPreview; bad.merge(change) { _,new in new }; precondition(!validFleetAuthorization(bad))
     }

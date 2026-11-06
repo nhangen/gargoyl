@@ -99,7 +99,8 @@ The account reader runs as an unprivileged child worker under the native macOS a
 tracks process incarnation (`pid`, `born_us` via kernel `proc_pidinfo`), observation
 timestamp (`observed_at`), execution status, error classification, and retry state.
 `gui_owner` records unverified parent PID and start time (`pid`, `born_us`), retained for
-informational diagnostics only and dropped with reason if unverified or absent.
+informational diagnostics only and omitted (null) when the parent start time is
+unavailable or cannot be verified.
 Actual credentials, authorization codes, tokens, and process arguments are strictly
 excluded.
 
@@ -118,8 +119,12 @@ Gargoyl distinguishes operational display states from underlying on-disk lifecyc
 4. **Intentional stop (`stopped`)**: User clicked **Disconnect fleet** (`intentional_disconnect`)
    or explicitly quit the application process (**Gargoyl → Quit** / Command-Q, sending a
    quit token `quit\n` recorded as `intentional_quit`). The session was closed cleanly with explicit
-   intent. Exit status is left null in the reader's self-record because a process cannot observe its
-   own exit status from within.
+    intent. Exit status is left null in the reader's self-record because a process cannot observe its
+    own exit status from within. The native supervisor observes the child's actual exit status
+    (exit code, or signal for uncaught-signal terminations) when the process terminates and shows it
+    in the account status line at observation time; it is deliberately not persisted into
+    `reader_lifecycle.json`, because a post-exit lifecycle write from the supervisor would need a new
+    write authority and belongs to the declared durable-supervision blocker.
    Note that closing the Mac window does not stop collection: `applicationShouldTerminateAfterLastWindowClosed`
    returns `false`, keeping `Gargoyl.app` and its reader child process actively running in the background.
 5. **Supervising pipe closed (`exited` / `pipe_eof`)**: Bare EOF on the private supervising pipe
@@ -148,7 +153,9 @@ private pipe:
   with a terminal failure message. Cumulative budget across successful recoveries is intended
   and conservative: it prevents unbounded auto-reconnect loops if connections repeatedly cycle or flap,
   halting with terminal status rather than spinning indefinitely. Swift's supervisor owns the `.terminal`
-  exhaustion decision; the reader child process preserves its observed exit reason and leaves `exit_status = None`.
+  exhaustion decision; the reader child process preserves its observed exit reason and leaves `exit_status = None`;
+  the supervisor observes the child's termination status and surfaces it only in the status line, never as a
+  persisted lifecycle field.
 - In-process recovery reuses the unexpired in-memory session grant; no user consent
   or device authorization prompt is repeated.
 - Intentional disconnection cancels active recovery timers and increments the session
@@ -164,10 +171,10 @@ Closing the Mac window keeps collection running: `applicationShouldTerminateAfte
 returns `false`, matching the connection sheet confirmation ("Closing the window keeps collection
 running"). However, quitting `Gargoyl.app` (**Gargoyl → Quit** / Command-Q) sends a quit intent
 token (`quit\n`), while unexpected app termination closes file descriptors and delivers bare EOF
-on the reader's standard input pipe, prompting reader shutdown (`exit_reason="pipe_eof"`). As an
-unverified design input, the existing local monitor LaunchAgent (`gargoyl monitor`) does not supervise
-the account reader: the monitor is a local operational helper (not an OS sandbox) running local checks
-with no login Keychain access and no network egress to Darkbloom API endpoints.
+on the reader's standard input pipe, prompting reader shutdown (`exit_reason="pipe_eof"`). The
+existing local monitor LaunchAgent (`gargoyl monitor`) does not supervise the account reader: the
+monitor is a local operational helper (not an OS sandbox) running local checks; its no login Keychain
+access and no network egress to Darkbloom API endpoints are unverified design inputs.
 
 Genuinely durable detached background supervision when the application process is not
 running (outside GUI process lifetime) represents an authority blocker requiring explicit
