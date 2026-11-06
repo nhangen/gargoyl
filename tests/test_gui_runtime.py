@@ -365,3 +365,48 @@ class MonitorControlTests(unittest.TestCase):
             ):
                 normal_result = native_view("fleet")
                 self.assertNotIn("Read-only preview mode", normal_result["html"])
+
+
+class PreviewFleetRefusalTests(unittest.TestCase):
+    def test_preview_environment_refuses_fleet_modes_without_a_session(self):
+        from contextlib import ExitStack
+
+        from gargoyl.gui_runtime import main
+
+        for mode in ("fleet-session", "fleet-session-remember", "fleet-restore"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                incoming, writer = os.pipe()
+                outgoing, output = os.pipe()
+                run = Mock()
+                with ExitStack() as stack:
+                    stack.enter_context(os.fdopen(writer, "w"))
+                    stdin = stack.enter_context(os.fdopen(incoming, "r"))
+                    stack.enter_context(os.fdopen(outgoing, "r"))
+                    stdout = stack.enter_context(os.fdopen(output, "w"))
+                    stack.enter_context(patch.object(sys, "stdin", stdin))
+                    stack.enter_context(patch.object(sys, "stdout", stdout))
+                    stack.enter_context(
+                        patch.object(
+                            sys, "argv", ["gargoyl.gui_runtime", mode]
+                        )
+                    )
+                    stack.enter_context(
+                        patch.dict(os.environ, {"GARGOYL_PREVIEW": "1"})
+                    )
+                    stack.enter_context(
+                        patch(
+                            "gargoyl.gui_runtime.console_owner", return_value=True
+                        )
+                    )
+                    stack.enter_context(
+                        patch(
+                            "gargoyl.gui_runtime.owner_home",
+                            return_value=Path(tmp),
+                        )
+                    )
+                    stack.enter_context(
+                        patch("gargoyl.fleet_session.run_session", run)
+                    )
+                    result = main()
+                self.assertEqual(result, 1)
+                run.assert_not_called()

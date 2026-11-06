@@ -296,6 +296,7 @@ final class Worker {
     let finished: (Worker) -> Void
     init(mode: String, preview: Bool = false, event: @escaping ([String: Any]) -> Void, finished: @escaping (Worker) -> Void = { _ in }) throws {
         self.mode = mode; self.event = event; self.finished = finished
+        if preview && ["fleet-session", "fleet-session-remember", "fleet-restore"].contains(mode) { throw NSError(domain:"Gargoyl", code:1) }
         var pythonPath = Bundle.main.object(forInfoDictionaryKey: "GargoylPython") as? String
         #if GARGOYL_NATIVE_TESTS
         pythonPath = ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] ?? pythonPath
@@ -1307,15 +1308,25 @@ if CommandLine.arguments.contains("--self-test") {
         precondition(quitData.contains("quit\n"))
         withExtendedLifetime(quitWorker) {}
 
-        // Child process test: preview: true sets GARGOYL_PREVIEW=1
+        // Child process test: preview sets GARGOYL_PREVIEW=1 without a fleet mode
         try? FileManager.default.removeItem(atPath: envLog)
-        let prevWorker = try! Worker(mode:"fleet-session",preview:true,event:{ _ in })
+        let prevWorker = try! Worker(mode:"status",preview:true,event:{ _ in })
         let prevLimit = Date().addingTimeInterval(0.5)
         while Date() < prevLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
         try? prevWorker.input.fileHandleForWriting.close()
         let envData = (try? String(contentsOfFile:envLog,encoding:.utf8)) ?? ""
         precondition(envData == "1")
         withExtendedLifetime(prevWorker) {}
+
+        // Preview combined with any fleet mode is refused by Worker construction.
+        var previewFleetRefused = false
+        do { _ = try Worker(mode:"fleet-session",preview:true,event:{ _ in }) } catch { previewFleetRefused = true }
+        precondition(previewFleetRefused)
+        for refusedMode in ["fleet-session-remember","fleet-restore"] {
+            var refused = false
+            do { _ = try Worker(mode:refusedMode,preview:true,event:{ _ in }) } catch { refused = true }
+            precondition(refused)
+        }
 
         // Worker.restoreCredential passes retry_count
         try? FileManager.default.removeItem(atPath: stdinLog)

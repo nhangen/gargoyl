@@ -431,6 +431,11 @@ def main():
         return 1
     mode = sys.argv[1]
     try:
+        if (
+            mode in {"fleet-session", "fleet-session-remember", "fleet-restore"}
+            and os.environ.get("GARGOYL_PREVIEW") == "1"
+        ):
+            raise ValueError("preview mode cannot run a fleet session")
         if mode.startswith("view-"):
             payload = json.dumps(native_view(mode), ensure_ascii=False) + "\n"
             if len(payload.encode()) > 590000:
