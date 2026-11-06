@@ -153,6 +153,31 @@ class FleetLifecycleTests(unittest.TestCase):
         self.assertEqual(final["status"], "stopped")
         self.assertEqual(final["exit_reason"], "auth_required")
 
+    def test_owner_inactive_exit_reason_when_owner_changes_away(self):
+        owner = {"present": True}
+
+        def owner_state():
+            return owner["present"]
+
+        def send_and_flip(event):
+            self.events.append(event)
+            if event.get("kind") == "fleet-updated":
+                owner["present"] = False
+
+        run_session(
+            self.cache,
+            owner=owner_state,
+            wait=lambda _: None,
+            send=send_and_flip,
+            client=self.client,
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+            initial_token="darkbloom-at-fixture-token",
+        )
+        final = self.cache.read_lifecycle(NOW)
+        self.assertEqual(final["exit_reason"], "owner_inactive")
+        self.assertEqual(final["status"], "exited")
+
     def test_effective_lifecycle_detects_dead_process_and_pid_reuse(self):
         running = {
             "schema": 1,
