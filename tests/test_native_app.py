@@ -63,18 +63,28 @@ class NativeGateTests(unittest.TestCase):
             payload = (
                 json.dumps(dict(kind="view", view="tools", html="x" * 23000)) + "\n"
             )
+            logs = root / "logs"
+            logs.mkdir(mode=0o700)
+            home = root / "home"
+            home.mkdir(mode=0o700)
             fake.write_text(
                 "#!/usr/bin/python3\n"
                 "import os, sys\n"
+                "logs = os.path.join(os.path.dirname(os.path.dirname("
+                "os.path.dirname(os.path.abspath(__file__)))), 'logs')\n"
+                "def sink(name, flags):\n"
+                "    fd = os.open(os.path.join(logs, name),"
+                " flags | os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)\n"
+                "    return os.fdopen(fd, 'w')\n"
                 "mode = sys.argv[-1] if len(sys.argv) > 1 else ''\n"
                 "if mode == 'view-tools':\n"
                 "    sys.stdout.write(" + repr(payload) + ")\n"
                 "    sys.stdout.flush()\n"
                 "else:\n"
                 "    env_val = os.environ.get('GARGOYL_PREVIEW', '')\n"
-                "    with open('/tmp/gargoyl_child_env.log', 'w') as f:\n"
+                "    with sink('child_env.log', os.O_TRUNC) as f:\n"
                 "        f.write(env_val)\n"
-                "    with open('/tmp/gargoyl_child_stdin.log', 'a') as f:\n"
+                "    with sink('child_stdin.log', os.O_APPEND) as f:\n"
                 "        for line in sys.stdin:\n"
                 "            f.write(line)\n"
                 "            f.flush()\n"
@@ -114,6 +124,7 @@ class NativeGateTests(unittest.TestCase):
             try:
                 environment = dict(
                     os.environ,
+                    HOME=str(home),
                     GARGOYL_TEST_FLEET_HTML=str(fixture_html),
                     GARGOYL_TEST_BLOCKED_RESOURCE=f"http://127.0.0.1:{server.server_port}",
                 )

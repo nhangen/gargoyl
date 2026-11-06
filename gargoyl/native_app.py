@@ -62,6 +62,16 @@ final class LoginFleetCredentialStore {
     let add:(CFDictionary)->OSStatus
     let update:(CFDictionary,CFDictionary)->OSStatus
     let delete:(CFDictionary)->OSStatus
+    #if GARGOYL_NATIVE_TESTS
+    // Test builds must never reach the real Keychain, whatever HOME, preferences or callbacks say.
+    init(open:@escaping ()->(OSStatus,AnyObject?) = LoginFleetCredentialStore.openLogin,
+         copy:@escaping (CFDictionary)->(OSStatus,CFTypeRef?) = { _ in (errSecNotAvailable,nil) },
+         add:@escaping (CFDictionary)->OSStatus = { _ in errSecNotAvailable },
+         update:@escaping (CFDictionary,CFDictionary)->OSStatus = { _,_ in errSecNotAvailable },
+         delete:@escaping (CFDictionary)->OSStatus = { _ in errSecNotAvailable }) {
+        self.open=open; self.copy=copy; self.add=add; self.update=update; self.delete=delete
+    }
+    #else
     init(open:@escaping ()->(OSStatus,AnyObject?) = LoginFleetCredentialStore.openLogin,
          copy:@escaping (CFDictionary)->(OSStatus,CFTypeRef?) = { query in var out:CFTypeRef?; let status=SecItemCopyMatching(query,&out); return (status,out) },
          add:@escaping (CFDictionary)->OSStatus = { SecItemAdd($0,nil) },
@@ -69,12 +79,16 @@ final class LoginFleetCredentialStore {
          delete:@escaping (CFDictionary)->OSStatus = { SecItemDelete($0) }) {
         self.open=open; self.copy=copy; self.add=add; self.update=update; self.delete=delete
     }
+    #endif
     static func trustedLoginMetadata(fileOwner:Int, mode:Int, regular:Bool, parentOwner:Int, parentMode:Int, uid:Int)->Bool {
         // The OS-managed file is encrypted; read bits are not a plaintext-secret
         // boundary. Never chmod it. Refuse untrusted ownership or writable paths.
         return regular && fileOwner == uid && parentOwner == uid && mode & 0o022 == 0 && parentMode & 0o022 == 0
     }
     static func openLogin()->(OSStatus,AnyObject?) {
+        #if GARGOYL_NATIVE_TESTS
+        return (errSecNotAvailable,nil)
+        #else
         let path=NSHomeDirectory()+"/Library/Keychains/login.keychain-db"
         let url=URL(fileURLWithPath:path)
         guard url.resolvingSymlinksInPath().path == path,
@@ -87,6 +101,7 @@ final class LoginFleetCredentialStore {
         var keychain:SecKeychain?
         let status=SecKeychainOpen(path,&keychain)
         return (status,keychain)
+        #endif
     }
     static func query(_ keychain:AnyObject)->[String:Any] {
         return [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:account,kSecMatchSearchList as String:[keychain],kSecMatchLimit as String:kSecMatchLimitOne]
@@ -415,8 +430,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var approvalTimer: Timer?
     var exportData: Data?
     let fleetStatus = NSTextField(wrappingLabelWithString:"Account fleet not connected. This Mac’s local collection is separate.")
+    #if GARGOYL_NATIVE_TESTS
+    var readRemember:()->Bool = { false }
+    var writeRemember:(Bool)->Void = { _ in }
+    #else
     var readRemember:()->Bool = { UserDefaults.standard.bool(forKey:"rememberReadOnlyFleet") }
     var writeRemember:(Bool)->Void = { UserDefaults.standard.set($0,forKey:"rememberReadOnlyFleet") }
+    #endif
     var fleetOwner:()->Bool = { ownerActive() }
     var credentialStore=LoginFleetCredentialStore()
     let credentialQueue=DispatchQueue(label:"dev.gargoyl.readonly-keychain")
@@ -672,9 +692,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if let sheet = sheet { window.endSheet(sheet); sheet.orderOut(nil) }
     }
     @objc func openFleetSignIn() {
+        #if !GARGOYL_NATIVE_TESTS
         guard fleetAuthSheet != nil, fleetWorker != nil, ownerActive() else { return }
         NSWorkspace.shared.open(fleetSignInURL)
         fleetStatus.stringValue = "Awaiting your official read-only approval. The one-time code remains in the native sheet."
+        #endif
     }
     @objc func copyFleetCode() {
         guard fleetAuthSheet != nil, ownerActive(), let code = fleetUserCode else { return }
@@ -1064,6 +1086,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             guard let self = self, let worker = worker, self.restartWorker === worker, self.pending?["request_id"] as? String == id else { return }
             self.consentSheet = nil
             guard response == .alertFirstButtonReturn, ownerActive() else { self.cancelApproval("Cancelled. No manual operation was authorized."); return }
+            #if GARGOYL_NATIVE_TESTS
+            self.cancelApproval("Mac owner authentication is unavailable. The manual operation remains blocked.")
+            #else
             let context = LAContext(); context.touchIDAuthenticationAllowableReuseDuration = 0; context.localizedCancelTitle = reconciling ? "Cancel reconciliation" : "Cancel restart"
             var error: NSError?
             guard context.canEvaluatePolicy(.deviceOwnerAuthentication,error:&error) else { self.cancelApproval("Mac owner authentication is unavailable. The manual operation remains blocked."); return }
@@ -1082,6 +1107,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                     self.show(reconciling ? "Mac owner confirmed. Rechecking current observations before recording reconciliation. No provider command runs." : "Mac owner confirmed. Rechecking the target before one graceful restart. Closing the app will not cancel or retry accepted work.")
                 }
             }
+            #endif
         }
     }
     func cancelApproval(_ message: String) {
@@ -1238,8 +1264,9 @@ if CommandLine.arguments.contains("--self-test") {
         precondition(received && ended)
         withExtendedLifetime(worker) {}
 
-        let stdinLog = "/tmp/gargoyl_child_stdin.log"
-        let envLog = "/tmp/gargoyl_child_env.log"
+        let fixtureLogs = URL(fileURLWithPath:ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"]!).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("logs")
+        let stdinLog = fixtureLogs.appendingPathComponent("child_stdin.log").path
+        let envLog = fixtureLogs.appendingPathComponent("child_env.log").path
 
         // Child process test: disconnectFleet() sends "disconnect\n"
         try? FileManager.default.removeItem(atPath: stdinLog)
