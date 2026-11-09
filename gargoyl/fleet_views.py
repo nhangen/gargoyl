@@ -224,17 +224,18 @@ def render_fleet(
         )
         if inventory["partial"]:
             body += '<div class="callout warn"><p>Partial inventory: some records or pages are unavailable. Missing machines must not be treated as absent or healthy.</p></div>'
-        if inventory["connection"] != "connected":
+        reader_stopped = lifecycle is not None and lifecycle.get("status") in {
+            "exited",
+            "stopped",
+            "terminal_failure",
+        }
+        if inventory["connection"] != "connected" or reader_stopped:
             if preview:
                 warn_text = (
                     "Read-only preview mode: account connection, saved-session recovery and provider controls are disabled. "
                     "These are cached records. Heartbeat timestamps are historical evidence."
                 )
-            elif lifecycle is not None and lifecycle.get("status") in {
-                "exited",
-                "stopped",
-                "terminal_failure",
-            }:
+            elif reader_stopped:
                 reason = lifecycle.get("exit_reason", "unknown")
                 if reason == "intentional_disconnect":
                     warn_text = (

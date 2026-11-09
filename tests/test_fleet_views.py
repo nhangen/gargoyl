@@ -193,6 +193,43 @@ class FleetViewTests(unittest.TestCase):
             self.assertIn("Account reader has stopped (unknown)", crash_page)
             self.assertNotIn("auth_required", crash_page)
 
+    def test_killed_reader_renders_stopped_while_cache_still_reports_connected(self):
+        import os
+        import tempfile
+
+        from gargoyl.fleet_state import FleetCache, effective_lifecycle
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache = FleetCache(os.path.realpath(temp_dir), os.getuid())
+            value = normalize_inventory(response(), NOW)
+            self.assertEqual(value["connection"], "connected")
+            cache.write(value)
+            cache.write_lifecycle({
+                "schema": 1,
+                "status": "running",
+                "observed_at": NOW,
+                "owner_uid": os.getuid(),
+                "incarnation": {"pid": 999999, "born_us": 123456789},
+                "gui_owner": None,
+                "started_at": NOW,
+                "last_read_at": NOW,
+                "exit_reason": "none",
+                "exit_status": None,
+                "retry_count": 0,
+                "retry_budget": 5,
+            })
+            killed = effective_lifecycle(cache, NOW, alive=lambda _: False)
+            self.assertEqual((killed["status"], killed["exit_reason"]), ("exited", "unknown"))
+
+            page = render_view("fleet", None, None, inventory=value, now=NOW, lifecycle=killed)
+            self.assertIn("Account reader has stopped (unknown)", page)
+
+            live = render_view(
+                "fleet", None, None, inventory=value, now=NOW,
+                lifecycle={"status": "running", "exit_reason": "none"},
+            )
+            self.assertNotIn("Account reader has stopped", live)
+
     def test_management_projection_and_html_distinguish_preview_mode(self):
         from gargoyl.fleet_management import management_html, management_projection
 
