@@ -695,7 +695,7 @@ class CIWorkflowTests(unittest.TestCase):
     def test_action_and_script_graph_digests(self):
         digests = {
             "pyproject.toml": "10f1a10cc95e3b8e2ec5b0931b91f580fe3061f7a00eeac2f4d4215555db3b69",
-            "README.md": "c1ba02440f8c5cfa07c5457f57b03110f5148e33a6e8aeec8c9aa6c6d197469b",
+            "README.md": "cd44f5310ffcc58b7cd59b43e173eb512e66f849962e70ce2ef1eac3f197c7e2",
             "tools/run_tests.py": "522456210ef5c77d9109388e12088ab4695ed203af8f2f491327b8c9a3f9977f",
             "tools/verify_release_artifact.py": (
                 "eec6c171586a8acb7b52914e04b1209e01a929a2dbd6afd5bdeee65ffbe264a7"
