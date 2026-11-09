@@ -269,7 +269,7 @@ def render_fleet(
                     )
                 else:
                     warn_text = (
-                        f"Account reader has stopped ({e(reason)}). "
+                        f"Account reader has stopped ({reason}). "
                         "These are cached records; no credential rejection is inferred. "
                         "Heartbeat timestamps are historical evidence."
                     )

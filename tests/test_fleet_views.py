@@ -230,6 +230,16 @@ class FleetViewTests(unittest.TestCase):
             )
             self.assertNotIn("Account reader has stopped", live)
 
+    def test_stop_reason_is_escaped_exactly_once(self):
+        value = normalize_inventory(response(), NOW)
+        value["connection"] = "disconnected"
+        page = render_view(
+            "fleet", None, None, inventory=value, now=NOW,
+            lifecycle={"status": "exited", "exit_reason": "a&b"},
+        )
+        self.assertIn("Account reader has stopped (a&amp;b)", page)
+        self.assertNotIn("&amp;amp;", page)
+
     def test_management_projection_and_html_distinguish_preview_mode(self):
         from gargoyl.fleet_management import management_html, management_projection
 
