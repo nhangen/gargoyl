@@ -1,0 +1,190 @@
+# Local CI Migration Preparation, Safety Invariants, and Capacity Audit (Issue #82)
+
+## Overview and Context
+
+Gargoyl issue [#82](https://github.com/nhangen/gargoyl/issues/82) tracks preparing repository-specific local CI routing for eligible Linux checks while strictly preserving the real macOS / Swift gate and the release artifact gate's fail-closed dependency on all platform and audit checks.
+
+This document records the called action and script graph inventory, inspected in-tree file provenance, dynamic inputs, transitive dependency vs. manifest extraction boundaries, runner workload capacity requirements, custom label profile specifications, and the concrete infrastructure blockers preventing immediate rollout.
+
+---
+
+## 1. Called Action and Script Graph Scope, Inspected File Provenance, and Boundary Inventory
+
+### 1.1 Inspected In-Tree File Provenance and Called Action Inventory
+
+In-tree workflow definitions, project manifests, execution scripts, and external action references in `.github/workflows/ci.yml` have been inventoried. In-tree files are verified with cryptographic SHA-256 and Git object digests, while external actions and dynamic execution boundaries remain explicitly uninspected offline:
+
+| Component | Target / Path | Type / Identifier | SHA-256 Digest | Git Object SHA | Inspection Scope |
+|---|---|---|---|---|---|
+| Workflow Definition | `.github/workflows/ci.yml` | GitHub Actions workflow | `1e7c8eda685a3765f2eb1fc47e5ab34a17416913459cc47d72a5e99dd3a78d0b` | `545f03c2df66a9f9feb72aaa7cf425dca8f40bb2` | In-tree verified |
+| Project Manifest | `pyproject.toml` | Build & dependency config | `10f1a10cc95e3b8e2ec5b0931b91f580fe3061f7a00eeac2f4d4215555db3b69` | `643f86a81242779294bd52355060ab4be8efe214` | In-tree verified |
+| Repository Documentation | `README.md` | Primary documentation | `c1ba02440f8c5cfa07c5457f57b03110f5148e33a6e8aeec8c9aa6c6d197469b` | `82cf909595abbfb1e469ec85b0063abfbabad1e6` | In-tree verified |
+| Test Runner | `tools/run_tests.py` | Resource leak check driver | `522456210ef5c77d9109388e12088ab4695ed203af8f2f491327b8c9a3f9977f` | `68232f9278ee542cd1f5fa2f0463e8c30e0863ae` | In-tree verified |
+| Release Verification | `tools/verify_release_artifact.py` | Wheel verification script | `eec6c171586a8acb7b52914e04b1209e01a929a2dbd6afd5bdeee65ffbe264a7` | `ed3bff4559b8bd9e6cc879247a9e256b38aaf806` | In-tree verified |
+| Native macOS Builder | `tools/build_macos_app.py` | Swift bundle builder | `9627562a2ac1ac3ccf909fd75b07ae8844034d7065fc1e0a6d85434893d375f5` | `a502c81700737257a7ba0562353bb56537621d29` | In-tree verified |
+| Acceptance Evidence | `tools/offline_acceptance_evidence.py` | Offline pilot evidence tool | `1447cd6f98336efa34d23e6bfc411d2ae6498c011c7abd0f76aa6b5e8f2c8734` | `8dcabdfffcad123a1bb81a07ac2bd011198679b8` | In-tree verified |
+| CI Preflight Tool | `tools/ci_preflight.py` | Local inspection CLI | Tracked in repository | Tracked in repository | In-tree preflight tool |
+| Checkout Action | `actions/checkout` | External action pin | `@11d5960a326750d5838078e36cf38b85af677262` (`ci.yml` comment `# v4`; exact release tag unverified) | External GitHub pin | External action pin only; remote script internals and release tags uninspected |
+| Setup-Python Action | `actions/setup-python` | External action pin | `@a26af69be951a213d495a4c3e4e4022e16d87065` (`ci.yml` comment `# v5`; exact release tag unverified) | External GitHub pin | External action pin only; remote script internals and release tags uninspected |
+| Upload-Artifact Action | `actions/upload-artifact` | External action pin | `@ea165f8d65b6e75b540449e92b4886f43607fa02` (`ci.yml` comment `# v4`; exact release tag unverified) | External GitHub pin | External action pin only; remote script internals and release tags uninspected |
+
+### 1.2 Manifest Extraction vs. Transitive Resolution vs. Security Audit
+
+It is critical to distinguish three separate dependency tiers:
+1. **Manifest Extraction**: Static parsing of declared top-level package requirements from `pyproject.toml` via standard library `tomllib`:
+   - `build-system.requires`: `setuptools==84.1.0`, `wheel==0.46.2`
+   - `project.dependencies`: `cryptography>=46,<51`
+   - `project.optional-dependencies.dev`: `ruff==0.14.3`, `PyYAML==6.0.2`
+   - `project.optional-dependencies.release`: `setuptools==84.1.0`, `wheel==0.46.2`
+   - Yields the 5 declared packages: `setuptools==84.1.0`, `wheel==0.46.2`, `cryptography>=46,<51`, `ruff==0.14.3`, `PyYAML==6.0.2`.
+2. **Transitive Dependency Resolution**: Computing the complete dependency tree during `pip install`. This preparation did not perform resolution. As local, unaudited metadata only: the local venv's `cryptography 50.0.2` declares `cffi>=2.0.0`.
+3. **Vulnerability Audit**: Dynamic querying of external vulnerability databases (OSV, PyPA Advisory DB) via `pip-audit --strict` over the network against resolved wheels. Zero vulnerability waivers or policy relaxations are allowed.
+
+### 1.3 End-to-End Workflow Execution Graph and Dynamic Inputs
+
+Every job in `.github/workflows/ci.yml` was traced for dependencies, dynamic inputs, and runtime capacity:
+
+- **`lint-and-test` (Linux Matrix: Python 3.11, 3.12, 3.13, 3.14)**:
+  - *Dynamic Inputs*: Matrix variable `${{ matrix.python-version }}`.
+  - *Execution Sequence*: `actions/checkout` -> `actions/setup-python` -> `pip install -e '.[dev]'` -> `ruff check .` -> `python tools/run_tests.py discover -s tests -v`.
+  - *Workload Capacity*: Up to 4 concurrent matrix legs (the unchanged workflow at `.github/workflows/ci.yml:14-16` defines 4 matrix versions and no `max-parallel: 1`; legs execute concurrently, not serialized). The last local full-suite run (612 tests OK, 0 skips, macOS 26.7.1 / Darwin 25.6.0, Python 3.14.7) was at older code head `38a4636`; the full suite was not re-run at later heads because native, Keychain, and Security paths are prohibited locally until a separately approved isolated boundary exists. Linux collected/executed/skipped counts remain UNVERIFIED. Exercises in-memory and temporary SQLite stores, cryptographic Ed25519 signatures, thread synchronization, and `unraisablehook` resource warning traps. Sizing candidate is an explicitly UNMEASURED estimate of 4 CPUs / 4 GiB memory per matrix leg (non-root user, no Docker daemon required). Aggregate peak matrix demand can reach up to 16 CPUs / 16 GiB memory if all 4 legs execute concurrently, plus independent `dependency-audit` load; `release-artifact` runs via `if: ${{ always() }}` after prior jobs complete, refusing execution at step 0 if any prerequisite failed. There is NO measured capacity or safe allocation claim.
+- **`macos-native` (Native macOS: macOS 15, Python 3.14)**:
+  - *Dynamic Inputs*: Canonical temp directory path via `python -c 'import os,tempfile; print(os.path.realpath(tempfile.gettempdir()))'`.
+  - *Execution Sequence*: `actions/checkout` -> `actions/setup-python` -> `pip install -e '.[dev]'` -> canonical `TMPDIR` export -> `python tools/run_tests.py discover -s tests -v`.
+  - *Native Subsystem*: Compiles Swift GUI test harness (`gargoyl/native_app.py:SWIFT`) using `/usr/bin/xcrun swiftc -swift-version 5 -D GARGOYL_NATIVE_TESTS` linking `AppKit`, `WebKit`, `LocalAuthentication`, `Security`, and `SystemConfiguration`. Runs `fixture --self-test` and tests ad-hoc codesigning via `/usr/bin/codesign`.
+  - *Workload Capacity*: Strictly requires real macOS Darwin hardware with Xcode CLI tools and GUI subsystem entitlements. Cannot run in a Linux container or on unprivileged Linux runners.
+- **`dependency-audit` (Linux: Python 3.14)**:
+  - *Dynamic Inputs*: `audit-requirements.txt` generated dynamically via `tomllib` without private PyPI lookup.
+  - *Execution Sequence*: `actions/checkout` -> `actions/setup-python` -> `pip install pip-audit==2.10.1` -> manifest generation -> `python -m pip_audit --strict --progress-spinner off -r audit-requirements.txt`.
+  - *Workload Capacity*: Requires outbound network access to query the OSV / PyPA vulnerability database APIs.
+- **`release-artifact` (Linux: Python 3.12)**:
+  - *Dynamic Inputs*: Prior job result variables:
+    - `LINUX_RESULT: ${{ needs.lint-and-test.result }}`
+    - `MACOS_RESULT: ${{ needs.macos-native.result }}`
+    - `AUDIT_RESULT: ${{ needs.dependency-audit.result }}`
+    - Artifact name `${{ github.sha }}`.
+  - *Execution Sequence*: Shell tri-prerequisite verification -> `actions/checkout` -> `actions/setup-python` -> `pip install -e '.[release]'` -> `pip wheel` -> `tools/verify_release_artifact.py` -> `actions/upload-artifact`.
+  - *Fail-Closed Invariant*: `needs: [lint-and-test, macos-native, dependency-audit]` combined with `if: ${{ always() }}` and explicit checks:
+    ```sh
+    test "$LINUX_RESULT" = success
+    test "$MACOS_RESULT" = success
+    test "$AUDIT_RESULT" = success
+    ```
+    If ANY prerequisite is failed, cancelled, or skipped, wheel generation and artifact upload are strictly refused.
+
+### 1.4 External Action Inspection Limits
+
+External actions (`actions/checkout`, `actions/setup-python`, `actions/upload-artifact`) are pinned to immutable 40-character commit SHAs. However, their internal execution scripts (Node.js runtime scripts, `action.yml` metadata, and bundled JavaScript dependencies) are hosted on GitHub. Offline static analysis in this workspace cannot inspect remote external action internals. In a local runner environment, executing these actions requires either runner network connectivity to GitHub Actions services or a pre-cached action runner environment.
+
+### 1.5 Static Source Inventory and Unresolved Execution Boundaries
+
+A static inventory of in-tree source and workflow definitions reveals:
+- **In-Tree Python Scope**: 125 Python files (53 in `gargoyl/`, 66 in `tests/`, 5 in `tools/`, 1 in `site/`).
+- **Static Imports and Call Sites** (recorded from the coordinator static inventory at `9b63349` over 124 files, excluding `site/build.py`; not recomputed): 1,812 imports (919 local imports) and 14,639 AST call-site rows.
+- **Workflow Step Definitions**: 20 step definitions across 4 jobs.
+- **Static Entrypoints** (same recorded inventory): 3 (`gargoyl/cli.py`, `tools/run_tests.py`, `tools/verify_release_artifact.py`), reaching 27 statically import-reachable files.
+- **Embedded Native Boundary**: `gargoyl/native_app.py:SWIFT` (103,604 characters, SHA-256 `7fc68b8ea6ddf069bd01a001ebb3d64e53fb52d26c54c59da08b1249e5e5adfe`) contains embedded Swift source that is opaque to Python AST analysis; native testing compiles and executes separately via `/usr/bin/xcrun swiftc`.
+- **Unresolved Execution Boundaries**: External action execution scripts, dynamic unittest discovery, subprocess dispatch, live network queries (`pip-audit`), and container isolation are runtime boundaries that cannot be replaced by static analysis.
+
+---
+
+## 2. Self-Hosted Routing
+
+### 2.1 Linux: `nhangen/local-ci` GitHub profile
+
+`nhangen/local-ci` derives each runner label as `local-ci-` plus the first 16 hex characters of `sha256("<provider>:<slug>:<host ssh alias>")` (`Repo.label` in `src/local_ci/config.py`). For `github:nhangen/gargoyl:ml1-wsl` this is `local-ci-b6b0a4fed6586b3a`. The runner registers with `--no-default-labels`, so that label is its only one, and generic selectors such as `self-hosted` or `linux` never match it. The installed scanner accepts only static Linux `runs-on` values (an `ubuntu-*` image or a `local-ci-*` label), so the Linux jobs name the label directly rather than through a repository variable.
+
+No runner carries the label yet. Until one is enrolled, the Linux jobs queue and `release-artifact` cannot succeed.
+
+### 2.2 Routing
+
+| Job | Before | Now | Notes |
+|---|---|---|---|
+| `lint-and-test` | `ubuntu-latest` | `local-ci-b6b0a4fed6586b3a` | Python 3.11–3.14 matrix; same-repository/push guard |
+| `dependency-audit` | `ubuntu-latest` | `local-ci-b6b0a4fed6586b3a` | `pip-audit --strict`, no waivers; same-repository/push guard |
+| `release-artifact` | `ubuntu-latest` | `local-ci-b6b0a4fed6586b3a` | `if: ${{ always() }}` tri-gate; no guard, so a skipped prerequisite fails it |
+| `macos-native` | `macos-15` | `${{ vars.GARGOYL_MACOS_RUNNER_LABEL }}` | Full native suite including Swift; local-ci has no macOS profile, so this job is not a local-ci enrollment target and stays HELD (`macos_runner_enrollment`) |
+
+Every job installs into a job-local venv under `$RUNNER_TEMP`, and every checkout sets `persist-credentials: false`. Concurrency is keyed by PR number or by push SHA: a new PR head cancels its superseded run, and pushes to `main` are never cancelled or replaced. The local-ci scanner reports this as a `custom` concurrency block, which its plan preserves.
+
+### 2.3 Runner lifecycle and residual risk
+
+The local-ci GitHub profile is not ephemeral. It is one persistent, non-root runner container per repository, with no host bind mounts and no Docker socket, and the local-ci README limits it to trusted private repositories and contributors. Earlier drafts of this document required ephemeral or JIT runners; the profile does not provide that, and this document no longer claims it.
+
+Under those constraints the boundary is:
+- `nhangen/gargoyl` is private, and the fork boundary is the repository setting "Run workflows from fork pull requests" being off. That setting is unconfirmed and must be confirmed before enrollment. The same-repository/push guard is defense in depth only: a `pull_request` run uses the PR's own copy of `ci.yml`, so a fork could remove the guard, and the unguarded `release-artifact` job is scheduled on the runner for every fork PR (it fails at its first step).
+- Code that does run is same-repository code from collaborators with push access.
+
+The remaining risk: the runner persists between jobs, including the runner user's HOME, the workspace, the setup-python tool cache and any process a job leaves behind. A same-repository PR can therefore change state that a later `main` or `release-artifact` job reuses, for example a `~/.config/pip/pip.conf` that redirects the release install's package index, or a `~/.gitconfig` that checkout reads. The job-local venv does not prevent this. The minimal unmet boundary is per-job runner or container replacement, or at least a fresh HOME, workspace and tool cache for every job, which the profile does not offer today. This is tracked as the HELD `fork_pr_and_state_isolation` gate.
+
+The `macos-native` job selects its runner through a variable that the static validator cannot check, so its first step fails unless the runner reports `RUNNER_OS=macOS` and provides `xcrun` and `swiftc`. Without that step, a non-macOS or no-Xcode runner would skip the native tests and report success.
+
+---
+
+## 3. Preflight Tooling and Explicit Exit Semantics
+
+`tools/ci_preflight.py` provides local verification with distinct CLI modes and explicit exit semantics to prevent false passing readiness:
+
+| Mode Flag | Purpose | Exit Code Semantics | Output Status |
+|---|---|---|---|
+| `--check-source` | Verifies static repository source contracts and graph digests only | `0` = PASS, `1` = Contract Violation | Explicitly notes: static source check only; does not imply rollout readiness |
+| `--check-readiness` | Evaluates deployment rollout readiness against static recorded infrastructure gates | `0` = Ready (unreachable currently), `1` = Contract Violation, `3` = BLOCKED (Held gates) | Explicitly details: static recorded gate state; never advertises READY on source failure |
+| `--check` (default) | Executes both source contract validation and static recorded readiness evaluation | `0` = Fully Ready, `1` = Contract Violation, `3` = Source PASS but Rollout HELD | Prevents false passing readiness by returning non-zero exit code while gates are held |
+| `--manifest-only` | Extracts declared dependencies (static manifest extraction; not resolution or a vulnerability audit) | `0` = Success | Prints 5 declared requirements |
+
+*Validator scope*: `--check-source` combines exact file digests with six workflow contract checks: read-only permissions, self-hosted routing, the release `needs` and `always()`, `persist-credentials: false` on all four checkouts, and the PR-only cancellation concurrency. The structural validator (`validate_workflow_invariants` in `tests/test_ci_workflow.py`) requires the workflow to match the reviewed structure exactly: the top-level keys, triggers, permissions and concurrency; each job's key set (so no `defaults`, `container`, `services` or extra `if`); `runs-on`, timeouts and the matrix; and every step, including the exact `run` text and order. It also rejects generic runner labels and any `uses` outside `actions/(checkout|setup-python|upload-artifact)@<40-hex>`. In-memory mutants cover `defaults.run.shell`, `|| true`, matrix `include`, step reordering, generic or hard-coded labels, cancelling `main`, a removed fork guard, a removed or weakened macOS runner check, persisted credentials and non-allowlisted actions. The three prerequisite jobs carry exactly one allowed job-level `if`, the same-repository/push guard; a skipped prerequisite still fails the release tri-gate.
+
+*Exit Code Mapping*:
+- `0`: Success / fully ready
+- `1`: Source contract or graph integrity violation
+- `2`: Command-line usage error or conflicting arguments (standard `argparse` error)
+- `3`: Source contracts passed, but deployment rollout readiness is held / blocked
+
+---
+
+## 4. Remaining Action-Time Gates and Capacity Blockers
+
+Rollout to local runners is gated on 12 explicit held gates, matching the inventory in `tools/ci_preflight.py`. Readiness is static recorded gate state, not a live evaluation; no gate may flip to `VERIFIED` without recorded evidence:
+
+1. **Local Fleet Capacity Allocation (`local_fleet_capacity` - HELD)**:
+   - Fleet capacity recorded historical snapshot of 28/28 CPUs and 46/48 GiB memory remains unverified current capacity without allowlisted receipt.
+   - Proposed Tron resize is unapproved.
+   - One local-ci runner serializes all Linux jobs, so peak demand is one job: a candidate allocation of 2 CPUs / 4 GiB plus about 5 GB of disk for matrix venvs and the setup-python tool cache. This is an unmeasured estimate, and Gargoyl cannot schedule jobs locally until capacity headroom is authorized.
+
+2. **Repository Runner Enrollment (`repository_enrollment` - HELD)**:
+   - GitHub reports 0 repository runners configured for `nhangen/gargoyl`.
+   - Registration with the `nhangen/local-ci` fleet controller requires action-time enrollment approval and credential provisioning. The Linux jobs target the derived label `local-ci-b6b0a4fed6586b3a` (`github:nhangen/gargoyl` on `ml1-wsl`), which no runner carries yet.
+
+3. **Branch Protection Constraints (`branch_protection_visibility` - HELD)**:
+   - Access to GitHub branch protection API was denied (`HTTP 403`).
+   - Required status check names remain unconfirmed; exact job names (`lint-and-test`, `macos-native`, `dependency-audit`, `release-artifact`) must be maintained to prevent blocking merges.
+
+4. **Linux Matrix Runtime Verification (`linux_matrix_runtime` - HELD)**:
+   - Linux Python 3.11–3.14 installation and test execution in container/runner profile not performed (Python 3.11 absent locally; unverified on Linux).
+
+5. **Strict Vulnerability Audit (`strict_vulnerability_audit` - HELD)**:
+   - Live network `pip-audit --strict` over fully resolved transitive dependency tree (including PyYAML 6.0.2) not performed.
+
+6. **Release Packaging and Verification (`release_packaging_and_verification` - HELD)**:
+   - Wheel build, `verify_release_artifact.py`, and `upload-artifact` compatibility in intended unprivileged runner profile not performed.
+
+7. **Container Unprivileged Profile (`container_unprivileged_profile` - HELD)**:
+   - Execution under non-root unprivileged container profile with dropped capabilities (`capDropALL` unverified; no Docker daemon; no host Docker socket) not validated.
+
+8. **Hosted Pipeline Equivalence (`hosted_pipeline_equivalence` - HELD)**:
+   - Direct execution equivalence between local runner environment and hosted GitHub Actions runners not verified.
+
+9. **Fork-PR and State Isolation Plan (`fork_pr_and_state_isolation` - HELD)**:
+   - The local-ci runner is persistent, not ephemeral. The fork boundary is the repository setting that disables workflows from fork PRs, which is unconfirmed; the same-repository guard is defense in depth only, because a fork PR runs its own copy of `ci.yml`. The runner HOME, workspace, tool cache and leftover processes persist between same-repository jobs, and neither per-job runner replacement nor a fresh HOME, workspace and tool cache per job is available (see §2.3).
+
+10. **Python 3.14 PyYAML sdist Build Risk (`python314_pyyaml_sdist_build_risk` - HELD)**:
+    - The local macOS cp314 PyYAML 6.0.2 install was built from source (installed `WHEEL` metadata names setuptools as generator), which proves a local source build only. Whether a published cp314 wheel exists was not checked (offline). Linux resolution, sdist compilation, and build inputs remain unverified. The pin is required because `tests/test_ci_workflow.py` imports `yaml`; no version bump is made without its own resolution and audit evidence.
+
+11. **Native macOS Full-Suite Local Proof (`macos_native_full_suite_local_proof` - HELD)**:
+    - The full suite including `tests/test_native_app.py` and the compiled Swift self-test was not executed at the current head; native, Keychain, and Security paths are prohibited locally until a separately approved isolated boundary exists. The last local full-suite result is from older code head `38a4636`.
+
+12. **macOS Runner Enrollment (`macos_runner_enrollment` - HELD)**:
+    - `macos-native` routes to a self-hosted macOS runner selected by `vars.GARGOYL_MACOS_RUNNER_LABEL`. local-ci has no macOS profile, no macOS runner is enrolled, the variable is unset, and the Keychain/login-session isolation boundary the native suite needs on that host is unapproved. Until this clears, `macos-native` cannot run and `release-artifact` fails closed.
+
+**Capture Receipt Status**:
+`UNVERIFIED / UNAVAILABLE`: No local capture receipt or readback was produced or observed; coordinator handles canonical nonsecret delivery.
