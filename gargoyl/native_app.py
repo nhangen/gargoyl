@@ -804,7 +804,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         displayView("fleet")
         do {
             let mode=restored != nil ? "fleet-restore" : (remember ? "fleet-session-remember" : "fleet-session")
-            fleetWorker = try Worker(mode:mode,event:{ [weak self] value in
+            fleetWorker = try Worker(mode:mode,preview:previewOnly,event:{ [weak self] value in
                 guard let self = self, generation == self.fleetGeneration else { return }
                 // Credentials are consumed here; never enter generic rendering/status paths.
                 if value["kind"] as? String == "fleet-credential" { self.rememberFreshFleetCredential(value,generation:generation); return }
