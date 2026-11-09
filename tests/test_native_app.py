@@ -87,6 +87,8 @@ class NativeGateTests(unittest.TestCase):
                 "        for line in sys.stdin:\n"
                 "            f.write(line)\n"
                 "            f.flush()\n"
+                "            if line == 'exit-now\\n':\n"
+                "                break\n"
             )
             fake.chmod(0o700)
             from test_fleet_state import NOW, response

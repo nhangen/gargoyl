@@ -1190,6 +1190,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { show("Monitoring is unavailable. Use Start monitoring; this never starts or restarts Darkbloom. Existing operation outcomes remain separate.") }
 }
 
+// Intent tokens can reach a reader that already exited; the write must fail with EPIPE, not kill the app.
+signal(SIGPIPE, SIG_IGN)
+
 #if GARGOYL_NATIVE_TESTS
 final class ResourceFixture: NSObject, WKNavigationDelegate {
     let localHostID = "00000000-0000-4000-8000-000000000002"
@@ -1314,6 +1317,16 @@ if CommandLine.arguments.contains("--self-test") {
         let quitData = (try? String(contentsOfFile:stdinLog,encoding:.utf8)) ?? ""
         precondition(quitData.contains("quit\n"))
         withExtendedLifetime(quitWorker) {}
+
+        for send in [{ (w:Worker) in w.disconnectFleet() }, { (w:Worker) in w.quitFleet() }] {
+            let exitedWorker = try! Worker(mode:"fleet-session",event:{ _ in })
+            try? exitedWorker.input.fileHandleForWriting.write(contentsOf:Data("exit-now\n".utf8))
+            let exitLimit = Date().addingTimeInterval(5)
+            while exitedWorker.process.isRunning && Date() < exitLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+            precondition(!exitedWorker.process.isRunning)
+            send(exitedWorker)
+            withExtendedLifetime(exitedWorker) {}
+        }
 
         // Child process test: preview sets GARGOYL_PREVIEW=1 without a fleet mode
         try? FileManager.default.removeItem(atPath: envLog)
