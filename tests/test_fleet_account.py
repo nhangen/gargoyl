@@ -1,7 +1,7 @@
 import threading
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from gargoyl.fleet_account import (
     CONSOLE_URL,
@@ -174,11 +174,13 @@ class AccountTests(unittest.TestCase):
         transport = BoundedTransport(stalled, timeout=0.03)
         began = time.monotonic()
         try:
-            with self.assertRaises(FleetError):
+            with self.assertRaises(FleetError) as caught1:
                 transport("GET", "/v1/me/providers")
+            self.assertEqual(caught1.exception.reason, "unavailable")
             self.assertLess(time.monotonic() - began, 0.3)
-            with self.assertRaises(FleetError):
+            with self.assertRaises(FleetError) as caught2:
                 transport("GET", "/v1/me/providers")
+            self.assertEqual(caught2.exception.reason, "unavailable")
             self.assertEqual(len(calls), 1)
             self.assertTrue(transport.active.daemon)
         finally:
@@ -194,3 +196,86 @@ class AccountTests(unittest.TestCase):
             with self.assertRaises(FleetError) as e:
                 decode_json(body)
             self.assertEqual(str(e.exception), "invalid_data")
+
+    def test_http_status_classification_distinguishes_auth_from_transport_failure(self):
+        from gargoyl.fleet_account import _request
+
+        token = "darkbloom-at-fixture-token-valid-abc"
+
+        # 401 and 403 map to auth_required
+        for status in (401, 403):
+            fake_conn = Mock()
+            fake_resp = Mock(status=status, read=Mock(return_value=b'{"error": "rejected"}'))
+            fake_conn.getresponse.return_value = fake_resp
+            with patch("gargoyl.fleet_account.http.client.HTTPSConnection", return_value=fake_conn):
+                with self.assertRaises(FleetError) as ctx:
+                    _request("GET", "/v1/me/providers", token=token)
+                self.assertEqual(ctx.exception.reason, "auth_required")
+
+        # 500, 502, 503, 504 and unexpected statuses map to unavailable (transient)
+        for status in (500, 502, 503, 504):
+            fake_conn = Mock()
+            fake_resp = Mock(status=status, read=Mock(return_value=b'{"error": "server error"}'))
+            fake_conn.getresponse.return_value = fake_resp
+            with patch("gargoyl.fleet_account.http.client.HTTPSConnection", return_value=fake_conn):
+                with self.assertRaises(FleetError) as ctx:
+                    _request("GET", "/v1/me/providers", token=token)
+                self.assertEqual(ctx.exception.reason, "unavailable")
+
+        # Socket timeout and OSError map to unavailable (transient transport)
+        for err in (TimeoutError("read timed out"), OSError("network unreachable")):
+            fake_conn = Mock()
+            fake_conn.request.side_effect = err
+            with patch("gargoyl.fleet_account.http.client.HTTPSConnection", return_value=fake_conn):
+                with self.assertRaises(FleetError) as ctx:
+                    _request("GET", "/v1/me/providers", token=token)
+                self.assertEqual(ctx.exception.reason, "unavailable")
+
+    def test_account_client_with_bounded_transport_classifies_auth_vs_transport(self):
+        from gargoyl.fleet_account import _request
+
+        token = "darkbloom-at-fixture-token-valid-abc"
+
+        # 1. 401/403 with BoundedTransport(_request) maps to auth_required
+        for status in (401, 403):
+            fake_conn = Mock()
+            fake_resp = Mock(status=status, read=Mock(return_value=b'{"error": "rejected"}'))
+            fake_conn.getresponse.return_value = fake_resp
+            with patch("gargoyl.fleet_account.http.client.HTTPSConnection", return_value=fake_conn):
+                client = AccountClient(transport=BoundedTransport(_request, timeout=1.0))
+                with self.assertRaises(FleetError) as ctx:
+                    client.providers(token)
+                self.assertEqual(ctx.exception.reason, "auth_required")
+
+        # 2. 500 with BoundedTransport(_request) maps to unavailable
+        fake_conn = Mock()
+        fake_resp = Mock(status=500, read=Mock(return_value=b'{"error": "internal"}'))
+        fake_conn.getresponse.return_value = fake_resp
+        with patch("gargoyl.fleet_account.http.client.HTTPSConnection", return_value=fake_conn):
+            client = AccountClient(transport=BoundedTransport(_request, timeout=1.0))
+            with self.assertRaises(FleetError) as ctx:
+                client.providers(token)
+            self.assertEqual(ctx.exception.reason, "unavailable")
+
+        # 3. OSError with BoundedTransport(_request) maps to unavailable
+        fake_conn = Mock()
+        fake_conn.request.side_effect = OSError("connection reset")
+        with patch("gargoyl.fleet_account.http.client.HTTPSConnection", return_value=fake_conn):
+            client = AccountClient(transport=BoundedTransport(_request, timeout=1.0))
+            with self.assertRaises(FleetError) as ctx:
+                client.providers(token)
+            self.assertEqual(ctx.exception.reason, "unavailable")
+
+        # 4. Transport deadline/timeout with BoundedTransport(_request) maps to unavailable (not auth_required)
+        release = threading.Event()
+        try:
+            def stalled_request(*args, **kwargs):
+                release.wait(1.0)
+                return {"late": "ignored"}
+
+            client_timeout = AccountClient(transport=BoundedTransport(stalled_request, timeout=0.03))
+            with self.assertRaises(FleetError) as ctx:
+                client_timeout.providers(token)
+            self.assertEqual(ctx.exception.reason, "unavailable")
+        finally:
+            release.set()

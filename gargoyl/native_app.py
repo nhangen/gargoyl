@@ -62,6 +62,16 @@ final class LoginFleetCredentialStore {
     let add:(CFDictionary)->OSStatus
     let update:(CFDictionary,CFDictionary)->OSStatus
     let delete:(CFDictionary)->OSStatus
+    #if GARGOYL_NATIVE_TESTS
+    // Test builds must never reach the real Keychain, whatever HOME, preferences or callbacks say.
+    init(open:@escaping ()->(OSStatus,AnyObject?) = LoginFleetCredentialStore.openLogin,
+         copy:@escaping (CFDictionary)->(OSStatus,CFTypeRef?) = { _ in (errSecNotAvailable,nil) },
+         add:@escaping (CFDictionary)->OSStatus = { _ in errSecNotAvailable },
+         update:@escaping (CFDictionary,CFDictionary)->OSStatus = { _,_ in errSecNotAvailable },
+         delete:@escaping (CFDictionary)->OSStatus = { _ in errSecNotAvailable }) {
+        self.open=open; self.copy=copy; self.add=add; self.update=update; self.delete=delete
+    }
+    #else
     init(open:@escaping ()->(OSStatus,AnyObject?) = LoginFleetCredentialStore.openLogin,
          copy:@escaping (CFDictionary)->(OSStatus,CFTypeRef?) = { query in var out:CFTypeRef?; let status=SecItemCopyMatching(query,&out); return (status,out) },
          add:@escaping (CFDictionary)->OSStatus = { SecItemAdd($0,nil) },
@@ -69,12 +79,16 @@ final class LoginFleetCredentialStore {
          delete:@escaping (CFDictionary)->OSStatus = { SecItemDelete($0) }) {
         self.open=open; self.copy=copy; self.add=add; self.update=update; self.delete=delete
     }
+    #endif
     static func trustedLoginMetadata(fileOwner:Int, mode:Int, regular:Bool, parentOwner:Int, parentMode:Int, uid:Int)->Bool {
         // The OS-managed file is encrypted; read bits are not a plaintext-secret
         // boundary. Never chmod it. Refuse untrusted ownership or writable paths.
         return regular && fileOwner == uid && parentOwner == uid && mode & 0o022 == 0 && parentMode & 0o022 == 0
     }
     static func openLogin()->(OSStatus,AnyObject?) {
+        #if GARGOYL_NATIVE_TESTS
+        return (errSecNotAvailable,nil)
+        #else
         let path=NSHomeDirectory()+"/Library/Keychains/login.keychain-db"
         let url=URL(fileURLWithPath:path)
         guard url.resolvingSymlinksInPath().path == path,
@@ -87,6 +101,7 @@ final class LoginFleetCredentialStore {
         var keychain:SecKeychain?
         let status=SecKeychainOpen(path,&keychain)
         return (status,keychain)
+        #endif
     }
     static func query(_ keychain:AnyObject)->[String:Any] {
         return [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:account,kSecMatchSearchList as String:[keychain],kSecMatchLimit as String:kSecMatchLimitOne]
@@ -165,8 +180,17 @@ func aliasRows(_ value:[String:Any]) -> [[String:String]]? {
     }
     return rows
 }
-func endedFleetStatus(_ previous:String, disconnected:Bool) -> String {
+func endedFleetStatus(_ previous:String, disconnected:Bool, preview:Bool=false) -> String {
+    if preview {
+        return "Read-only preview: account connection, saved-session recovery and provider controls are disabled; cached reports are retained."
+    }
     return disconnected ? "Account memory collection disconnected. Saved sign-in is separate; use Forget to remove it." : previous + " Account session ended; cached reports are not live. Reconnect to resume."
+}
+func observedExitText(_ observation: (status: Int32, signal: Bool)?) -> String? {
+    guard let observation = observation else { return nil }
+    return observation.signal
+        ? " The account reader was terminated by signal \(observation.status)."
+        : " The account reader exited with status \(observation.status)."
 }
 func viewDestination(_ url: URL?, mainFrame: Bool) -> String? {
     guard mainFrame, let url = url else { return nil }
@@ -203,6 +227,9 @@ func scrollNativeFragment(_ action: WKNavigationAction, in web: WKWebView, local
 }
 
 func ownerActive() -> Bool {
+    #if GARGOYL_NATIVE_TESTS
+    if let value = ProcessInfo.processInfo.environment["GARGOYL_TEST_OWNER"], value == "1" { return true }
+    #endif
     var uid: uid_t = 0; var gid: gid_t = 0
     return SCDynamicStoreCopyConsoleUser(nil, &uid, &gid) != nil && uid == geteuid() && geteuid() != 0
 }
@@ -266,18 +293,23 @@ final class Worker {
     let output = Pipe()
     var buffer = Data()
     var replied = false
+    var exitObservation: (status: Int32, signal: Bool)?
     var completion = CompletionGate()
     let event: ([String: Any]) -> Void
     let finished: (Worker) -> Void
-    init(mode: String, event: @escaping ([String: Any]) -> Void, finished: @escaping (Worker) -> Void) throws {
+    init(mode: String, preview: Bool = false, event: @escaping ([String: Any]) -> Void, finished: @escaping (Worker) -> Void = { _ in }) throws {
         self.mode = mode; self.event = event; self.finished = finished
+        if preview && ["fleet-session", "fleet-session-remember", "fleet-restore"].contains(mode) { throw NSError(domain:"Gargoyl", code:1) }
         var pythonPath = Bundle.main.object(forInfoDictionaryKey: "GargoylPython") as? String
         #if GARGOYL_NATIVE_TESTS
         pythonPath = ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] ?? pythonPath
+        let pathAllowed = (pythonPath != nil) && (pythonPath!.hasPrefix(NSHomeDirectory() + "/") || ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"] != nil)
+        #else
+        let pathAllowed = (pythonPath != nil) && pythonPath!.hasPrefix(NSHomeDirectory() + "/")
         #endif
         guard ownerActive(), (["restart", "reconcile", "status", "export", "start-monitor", "stop-monitor", "fleet-session", "fleet-alias-list", "fleet-alias-set", "fleet-session-remember", "fleet-restore"].contains(mode) || (mode.hasPrefix("view-") && readOnlyView(String(mode.dropFirst(5))))),
               let path = pythonPath,
-              path.hasPrefix(NSHomeDirectory() + "/"), path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
+              pathAllowed, path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
         else { throw NSError(domain: "Gargoyl", code: 1) }
         let executable = URL(fileURLWithPath: path)
         let attributes = try FileManager.default.attributesOfItem(atPath: executable.resolvingSymlinksInPath().path)
@@ -286,7 +318,9 @@ final class Worker {
         else { throw NSError(domain: "Gargoyl", code: 2) }
         process.executableURL = executable
         process.arguments = ["-I", "-B", "-m", "gargoyl.gui_runtime", mode]
-        process.environment = ["HOME":NSHomeDirectory(), "PATH":"/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE":"1"]
+        var env = ["HOME":NSHomeDirectory(), "PATH":"/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE":"1"]
+        if preview { env["GARGOYL_PREVIEW"] = "1" }
+        process.environment = env
         process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
         process.standardInput = input; process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -304,7 +338,11 @@ final class Worker {
                 }
             }
         }
-        process.terminationHandler = { [weak self] _ in DispatchQueue.main.async { if let self = self { self.completion.ended = true; self.finishIfReady() } } }
+        process.terminationHandler = { [weak self] terminated in DispatchQueue.main.async {
+            guard let self = self else { return }
+            self.exitObservation = (terminated.terminationStatus, terminated.terminationReason == .uncaughtSignal)
+            self.completion.ended = true; self.finishIfReady()
+        } }
         try process.run()
     }
     func finishIfReady() {
@@ -318,10 +356,12 @@ final class Worker {
         }
         try? input.fileHandleForWriting.close()
     }
-    func restoreCredential(_ credential:SavedFleetCredential) {
+    func restoreCredential(_ credential:SavedFleetCredential, retryCount:Int=0) {
         guard mode == "fleet-restore", !replied, SavedFleetCredential.tokenValid(credential.token) else { return }
         replied = true
-        if let data=try? JSONSerialization.data(withJSONObject:["purpose":"desktop_account","token":credential.token,"valid_until":credential.expires]) {
+        var payload: [String: Any] = ["purpose":"desktop_account","token":credential.token,"valid_until":credential.expires]
+        if retryCount > 0 { payload["retry_count"] = retryCount }
+        if let data=try? JSONSerialization.data(withJSONObject:payload) {
             try? input.fileHandleForWriting.write(contentsOf:data+Data([10]))
         }
     }
@@ -335,9 +375,50 @@ final class Worker {
     }
     func disconnectFleet() {
         guard ["fleet-session", "fleet-session-remember", "fleet-restore"].contains(mode) else { return }
+        if let data = "disconnect\n".data(using: .utf8) {
+            try? input.fileHandleForWriting.write(contentsOf: data)
+        }
+        try? input.fileHandleForWriting.close()
+    }
+    func quitFleet() {
+        guard ["fleet-session", "fleet-session-remember", "fleet-restore"].contains(mode) else { return }
+        if let data = "quit\n".data(using: .utf8) {
+            try? input.fileHandleForWriting.write(contentsOf: data)
+        }
         try? input.fileHandleForWriting.close()
     }
     // No terminate/interrupt method: closing the app never cancels accepted work.
+}
+
+enum FleetRecoveryDecision: Equatable {
+    case retry(delay: Double, attempt: Int)
+    case terminal
+    case none
+}
+
+func decideFleetRecovery(
+    reason: String,
+    retryCount: Int,
+    preview: Bool,
+    generationMatch: Bool,
+    savedExpires: Double?,
+    now: Double,
+    ownerActive: Bool
+) -> FleetRecoveryDecision {
+    guard generationMatch, !preview, ownerActive else { return .none }
+    if ["auth_required", "scope_refused", "expired"].contains(reason) {
+        return .none
+    }
+    guard let expires = savedExpires, expires > now else {
+        return .none
+    }
+    if retryCount < 5 {
+        let attempt = retryCount + 1
+        let delay: Double = reason == "session_busy" ? 3.0 : min(60.0, 3.0 * pow(2.0, Double(retryCount)))
+        return .retry(delay: delay, attempt: attempt)
+    } else {
+        return .terminal
+    }
 }
 
 final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, NSMenuItemValidation, NSToolbarDelegate, NSToolbarItemValidation {
@@ -364,8 +445,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var approvalTimer: Timer?
     var exportData: Data?
     let fleetStatus = NSTextField(wrappingLabelWithString:"Account fleet not connected. This Mac’s local collection is separate.")
+    #if GARGOYL_NATIVE_TESTS
+    var readRemember:()->Bool = { false }
+    var writeRemember:(Bool)->Void = { _ in }
+    #else
     var readRemember:()->Bool = { UserDefaults.standard.bool(forKey:"rememberReadOnlyFleet") }
     var writeRemember:(Bool)->Void = { UserDefaults.standard.set($0,forKey:"rememberReadOnlyFleet") }
+    #endif
     var fleetOwner:()->Bool = { ownerActive() }
     var credentialStore=LoginFleetCredentialStore()
     let credentialQueue=DispatchQueue(label:"dev.gargoyl.readonly-keychain")
@@ -391,6 +477,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var fleetUserCode: String?
     var fleetAuthPresented = false
     var fleetAuthTimer: Timer?
+    var fleetRecoveryTimer: Timer?
     var fleetRefreshTimer: Timer?
     var connectFleetButton: NSButton!
     var accountMenu: NSMenu?
@@ -434,7 +521,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         connectFleetButton = NSButton(title:"Connect fleet…",target:self,action:#selector(connectFleet))
         disconnectFleetButton = NSButton(title:"Disconnect fleet",target:self,action:#selector(disconnectFleet)); disconnectFleetButton.isEnabled = false
         forgetFleetButton = NSButton(title:"Forget saved sign-in…",target:self,action:#selector(forgetSavedFleet)); forgetFleetButton.isEnabled = !previewOnly && self.readRemember()
-        if previewOnly { connectFleetButton.isEnabled = false }
+        if previewOnly {
+            connectFleetButton.isEnabled = false
+            fleetStatus.stringValue = "Read-only preview: account connection, saved sign-in, and provider control are disabled."
+        }
         let account = NSMenu(title:"Account")
         let header = NSMenuItem(title:"Darkbloom account · read-only",action:nil,keyEquivalent:""); header.isEnabled = false
         account.addItem(header)
@@ -566,7 +656,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         let generation = viewSelection.generation
         var delivered = false
         do {
-            viewWorker = try Worker(mode:"view-" + view,event:{ [weak self] value in
+            viewWorker = try Worker(mode:"view-" + view,preview:previewOnly,event:{ [weak self] value in
                 guard let self = self, self.viewSelection.accepts(generation),
                       value["kind"] as? String == "view", value["view"] as? String == view,
                       let html = value["html"] as? String, html.utf8.count <= 500000,
@@ -617,9 +707,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if let sheet = sheet { window.endSheet(sheet); sheet.orderOut(nil) }
     }
     @objc func openFleetSignIn() {
+        #if !GARGOYL_NATIVE_TESTS
         guard fleetAuthSheet != nil, fleetWorker != nil, ownerActive() else { return }
         NSWorkspace.shared.open(fleetSignInURL)
         fleetStatus.stringValue = "Awaiting your official read-only approval. The one-time code remains in the native sheet."
+        #endif
     }
     @objc func copyFleetCode() {
         guard fleetAuthSheet != nil, ownerActive(), let code = fleetUserCode else { return }
@@ -627,6 +719,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     @objc func disconnectFleet() {
         fleetGeneration += 1
+        fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
         dismissFleetAuthorization()
         fleetWorker?.disconnectFleet()
         fleetStatus.stringValue = "Disconnecting account collection. Local monitoring and Darkbloom remain unchanged."
@@ -700,8 +793,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     func beginFleet(remember:Bool, restored:SavedFleetCredential?, retryCount:Int=0) {
         guard !previewOnly, fleetWorker == nil, ownerActive() else { return }
         if remember && keychainBusy { show("Remember is unavailable while another Keychain operation is pending. Try again when it finishes."); return }
+        fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
         fleetRetryCount=retryCount; lastFleetReason=""
-        savedFleetState=FleetSavedSessionState(); savedFleetState.credential=restored; savedFleetState.stored=restored != nil
+        savedFleetState=FleetSavedSessionState(); savedFleetState.credential=restored; savedFleetState.stored = (restored != nil) ? self.readRemember() : false
         fleetGeneration += 1; let generation = fleetGeneration; fleetAuthPresented = false
         rememberCurrentFleet=remember; fleetCredentialGate=FleetCredentialGate()
         fleetGrantStartedAt=Date().timeIntervalSince1970
@@ -710,7 +804,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         displayView("fleet")
         do {
             let mode=restored != nil ? "fleet-restore" : (remember ? "fleet-session-remember" : "fleet-session")
-            fleetWorker = try Worker(mode:mode,event:{ [weak self] value in
+            fleetWorker = try Worker(mode:mode,preview:previewOnly,event:{ [weak self] value in
                 guard let self = self, generation == self.fleetGeneration else { return }
                 // Credentials are consumed here; never enter generic rendering/status paths.
                 if value["kind"] as? String == "fleet-credential" { self.rememberFreshFleetCredential(value,generation:generation); return }
@@ -719,25 +813,47 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                 guard let self = self, self.fleetWorker === completed else { return }
                 self.dismissFleetAuthorization(); self.fleetWorker = nil
                 self.connectFleetButton.isEnabled = !self.previewOnly; self.disconnectFleetButton.isEnabled = false
-                self.fleetStatus.stringValue = endedFleetStatus(self.fleetStatus.stringValue,disconnected:generation != self.fleetGeneration)
+                self.fleetStatus.stringValue = endedFleetStatus(self.fleetStatus.stringValue,disconnected:generation != self.fleetGeneration,preview:self.previewOnly)
                 self.refresh()
-                if generation == self.fleetGeneration, self.lastFleetReason == "session_busy", completed.mode == "fleet-restore", self.fleetRetryCount < 6, let saved=self.savedFleetState.credential {
-                    let attempt=self.fleetRetryCount+1
-                    self.connectFleetButton.isEnabled=false; self.disconnectFleetButton.isEnabled=true
-                    self.fleetStatus.stringValue="Waiting for the previous account reader to close… No new grant or provider action."
-                    Timer.scheduledTimer(withTimeInterval:3,repeats:false) { [weak self] _ in
-                        guard let self=self, generation == self.fleetGeneration, self.fleetWorker == nil else { return }
-                        self.resetRestoreControls(generation:generation)
-                        guard ownerActive(), saved.expires > Date().timeIntervalSince1970 else { return }
-                        self.beginFleet(remember:false,restored:saved,retryCount:attempt)
+                let decision = decideFleetRecovery(
+                    reason: self.lastFleetReason,
+                    retryCount: self.fleetRetryCount,
+                    preview: self.previewOnly,
+                    generationMatch: generation == self.fleetGeneration,
+                    savedExpires: self.savedFleetState.credential?.expires,
+                    now: Date().timeIntervalSince1970,
+                    ownerActive: self.fleetOwner()
+                )
+                switch decision {
+                case .retry(let delay, let attempt):
+                    self.connectFleetButton.isEnabled = false; self.disconnectFleetButton.isEnabled = true
+                    let reasonDesc = self.lastFleetReason == "session_busy" ? "Waiting for the previous account reader to close…" : "Recovering account reader with saved sign-in…"
+                    self.fleetStatus.stringValue = "\(reasonDesc) Retrying in \(Int(delay))s (attempt \(attempt)/5). No new grant or provider action."
+                    self.fleetRecoveryTimer?.invalidate()
+                    self.fleetRecoveryTimer = Timer.scheduledTimer(withTimeInterval:delay,repeats:false) { [weak self] _ in
+                        guard let self=self else { return }
+                        self.runRecovery(generation:generation,attempt:attempt)
                     }
+                case .terminal:
+                    self.fleetStatus.stringValue = "Account reader recovery stopped after reaching retry budget. Saved sign-in is preserved; resume manually when available."
+                case .none:
+                    break
+                }
+                if let exitText = observedExitText(completed.exitObservation) {
+                    self.fleetStatus.stringValue = self.fleetStatus.stringValue + exitText
                 }
             })
-            if let restored=restored { fleetWorker?.restoreCredential(restored) }
+            if let restored=restored { fleetWorker?.restoreCredential(restored, retryCount: retryCount) }
         } catch {
             fleetStatus.stringValue = "Account connection unavailable. No provider action or credential fallback was attempted."
             connectFleetButton.isEnabled = !previewOnly; disconnectFleetButton.isEnabled = false
         }
+    }
+    func runRecovery(generation:Int,attempt:Int) {
+        guard generation == self.fleetGeneration, self.fleetWorker == nil else { return }
+        self.resetRestoreControls(generation:generation)
+        guard self.fleetOwner(), let saved=self.savedFleetState.credential, saved.expires > Date().timeIntervalSince1970 else { return }
+        self.beginFleet(remember:false,restored:saved,retryCount:attempt)
     }
     func rememberFreshFleetCredential(_ value:[String:Any],generation:Int) {
         guard let token=fleetCredentialGate.take(value,mode:fleetWorker?.mode ?? "",remember:rememberCurrentFleet,owner:self.fleetOwner(),generation:generation,current:fleetGeneration) else { disconnectFleet(); return }
@@ -992,6 +1108,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
             guard let self = self, let worker = worker, self.restartWorker === worker, self.pending?["request_id"] as? String == id else { return }
             self.consentSheet = nil
             guard response == .alertFirstButtonReturn, ownerActive() else { self.cancelApproval("Cancelled. No manual operation was authorized."); return }
+            #if GARGOYL_NATIVE_TESTS
+            self.cancelApproval("Mac owner authentication is unavailable. The manual operation remains blocked.")
+            #else
             let context = LAContext(); context.touchIDAuthenticationAllowableReuseDuration = 0; context.localizedCancelTitle = reconciling ? "Cancel reconciliation" : "Cancel restart"
             var error: NSError?
             guard context.canEvaluatePolicy(.deviceOwnerAuthentication,error:&error) else { self.cancelApproval("Mac owner authentication is unavailable. The manual operation remains blocked."); return }
@@ -1010,6 +1129,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
                     self.show(reconciling ? "Mac owner confirmed. Rechecking current observations before recording reconciliation. No provider command runs." : "Mac owner confirmed. Rechecking the target before one graceful restart. Closing the app will not cancel or retry accepted work.")
                 }
             }
+            #endif
         }
     }
     func cancelApproval(_ message: String) {
@@ -1023,8 +1143,15 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         if restartWorker != nil {
             let alert = NSAlert(); alert.messageText = "Close Gargoyl?"; alert.informativeText = "An accepted manual operation can continue independently. Closing this app never cancels, retries or clears its outcome. Reopen and use Operation status to inspect recorded evidence."
             alert.addButton(withTitle:"Keep open");alert.addButton(withTitle:"Close app")
-            return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+            if alert.runModal() == .alertSecondButtonReturn {
+                fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
+                fleetWorker?.quitFleet()
+                return .terminateNow
+            }
+            return .terminateCancel
         }
+        fleetRecoveryTimer?.invalidate(); fleetRecoveryTimer = nil
+        fleetWorker?.quitFleet()
         return .terminateNow
     }
     func recordWindow(_ event: String, reopeningVisibleWindows: Bool? = nil) {
@@ -1062,6 +1189,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { return nil }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { show("Monitoring is unavailable. Use Start monitoring; this never starts or restarts Darkbloom. Existing operation outcomes remain separate.") }
 }
+
+// Intent tokens can reach a reader that already exited; the write must fail with EPIPE, not kill the app.
+signal(SIGPIPE, SIG_IGN)
 
 #if GARGOYL_NATIVE_TESTS
 final class ResourceFixture: NSObject, WKNavigationDelegate {
@@ -1158,6 +1288,159 @@ if CommandLine.arguments.contains("--self-test") {
         print("worker received=\(received) finished=\(ended)"); fflush(stdout)
         precondition(received && ended)
         withExtendedLifetime(worker) {}
+        let observed = worker.exitObservation
+        precondition(observed != nil)
+        precondition(observed?.status == 0 && observed?.signal == false)
+        precondition(observedExitText(observed) == " The account reader exited with status 0.")
+
+        let fixtureLogs = URL(fileURLWithPath:ProcessInfo.processInfo.environment["GARGOYL_FIXTURE_PYTHON"]!).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("logs")
+        let stdinLog = fixtureLogs.appendingPathComponent("child_stdin.log").path
+        let envLog = fixtureLogs.appendingPathComponent("child_env.log").path
+
+        // Child process test: disconnectFleet() sends "disconnect\n"
+        try? FileManager.default.removeItem(atPath: stdinLog)
+        let discWorker = try! Worker(mode:"fleet-session",event:{ _ in })
+        discWorker.disconnectFleet()
+        let discLimit = Date().addingTimeInterval(0.5)
+        while Date() < discLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        try? discWorker.input.fileHandleForWriting.close()
+        let discData = (try? String(contentsOfFile:stdinLog,encoding:.utf8)) ?? ""
+        precondition(discData.contains("disconnect\n"))
+        withExtendedLifetime(discWorker) {}
+
+        // Child process test: quitFleet() sends "quit\n"
+        try? FileManager.default.removeItem(atPath: stdinLog)
+        let quitWorker = try! Worker(mode:"fleet-session",event:{ _ in })
+        quitWorker.quitFleet()
+        let quitLimit = Date().addingTimeInterval(0.5)
+        while Date() < quitLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        let quitData = (try? String(contentsOfFile:stdinLog,encoding:.utf8)) ?? ""
+        precondition(quitData.contains("quit\n"))
+        withExtendedLifetime(quitWorker) {}
+
+        for send in [{ (w:Worker) in w.disconnectFleet() }, { (w:Worker) in w.quitFleet() }] {
+            let exitedWorker = try! Worker(mode:"fleet-session",event:{ _ in })
+            try? exitedWorker.input.fileHandleForWriting.write(contentsOf:Data("exit-now\n".utf8))
+            let exitLimit = Date().addingTimeInterval(5)
+            while exitedWorker.process.isRunning && Date() < exitLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+            precondition(!exitedWorker.process.isRunning)
+            send(exitedWorker)
+            withExtendedLifetime(exitedWorker) {}
+        }
+
+        // Child process test: preview sets GARGOYL_PREVIEW=1 without a fleet mode
+        try? FileManager.default.removeItem(atPath: envLog)
+        let prevWorker = try! Worker(mode:"status",preview:true,event:{ _ in })
+        let prevLimit = Date().addingTimeInterval(0.5)
+        while Date() < prevLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        try? prevWorker.input.fileHandleForWriting.close()
+        let envData = (try? String(contentsOfFile:envLog,encoding:.utf8)) ?? ""
+        precondition(envData == "1")
+        withExtendedLifetime(prevWorker) {}
+
+        // Preview combined with any fleet mode is refused by Worker construction.
+        var previewFleetRefused = false
+        do { _ = try Worker(mode:"fleet-session",preview:true,event:{ _ in }) } catch { previewFleetRefused = true }
+        precondition(previewFleetRefused)
+        for refusedMode in ["fleet-session-remember","fleet-restore"] {
+            var refused = false
+            do { _ = try Worker(mode:refusedMode,preview:true,event:{ _ in }) } catch { refused = true }
+            precondition(refused)
+        }
+
+        // Worker.restoreCredential passes retry_count
+        try? FileManager.default.removeItem(atPath: stdinLog)
+        let restWorker = try! Worker(mode:"fleet-restore",event:{ _ in })
+        let savedRest = SavedFleetCredential(token:"darkbloom-at-private-test-restore-token",created:100,expires:100+86400)
+        restWorker.restoreCredential(savedRest,retryCount:3)
+        let restLimit = Date().addingTimeInterval(0.5)
+        while Date() < restLimit { RunLoop.current.run(until:Date().addingTimeInterval(0.01)) }
+        try? restWorker.input.fileHandleForWriting.close()
+        let restData = (try? String(contentsOfFile:stdinLog,encoding:.utf8)) ?? ""
+        precondition(restData.contains("\"retry_count\":3"))
+        precondition(restData.contains("darkbloom-at-private-test-restore-token"))
+        withExtendedLifetime(restWorker) {}
+
+        // beginFleet with restored credential produces fleet-restore mode and passes retryCount
+        let restoreApp = App(); restoreApp.previewOverride = false
+        restoreApp.connectFleetButton = NSButton(); restoreApp.disconnectFleetButton = NSButton()
+        restoreApp.readRemember = { true }; restoreApp.fleetOwner = { true }
+        restoreApp.beginFleet(remember:false,restored:savedRest,retryCount:4)
+        precondition(restoreApp.fleetWorker?.mode == "fleet-restore")
+        precondition(restoreApp.fleetRetryCount == 4)
+        precondition(restoreApp.savedFleetState.credential?.token == savedRest.token)
+        restoreApp.disconnectFleet()
+
+        // Disconnect-then-finish: call disconnectFleet(), then invoke finished(worker) -> assert fleetRecoveryTimer == nil.
+        // The credential is unexpired so the generation guard, not credential expiry, drives this outcome.
+        let discFinishApp = App(); discFinishApp.previewOverride = false
+        discFinishApp.connectFleetButton = NSButton(); discFinishApp.disconnectFleetButton = NSButton()
+        discFinishApp.readRemember = { true }; discFinishApp.fleetOwner = { true }
+        discFinishApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
+        discFinishApp.beginFleet(remember:false,restored:discFinishApp.savedFleetState.credential,retryCount:1)
+        discFinishApp.lastFleetReason = "unavailable"
+        let preDiscGen = discFinishApp.fleetGeneration
+        let activeWorker = discFinishApp.fleetWorker!
+        discFinishApp.disconnectFleet()
+        precondition(discFinishApp.fleetGeneration == preDiscGen + 1)
+        precondition(discFinishApp.fleetRecoveryTimer == nil)
+        activeWorker.finished(activeWorker)
+        precondition(discFinishApp.fleetRecoveryTimer == nil)
+
+        // Finish without disconnect: bounded recovery is scheduled from the in-memory grant.
+        let retryApp = App(); retryApp.previewOverride = false
+        retryApp.connectFleetButton = NSButton(); retryApp.disconnectFleetButton = NSButton()
+        retryApp.readRemember = { true }; retryApp.fleetOwner = { true }
+        retryApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
+        retryApp.beginFleet(remember:false,restored:retryApp.savedFleetState.credential,retryCount:1)
+        retryApp.lastFleetReason = "unavailable"
+        let retryWorker = retryApp.fleetWorker!
+        precondition(retryApp.fleetRecoveryTimer == nil)
+        retryWorker.finished(retryWorker)
+        precondition(retryApp.fleetWorker == nil)
+        precondition(retryApp.fleetRecoveryTimer != nil)
+        retryApp.disconnectFleet()
+        precondition(retryApp.fleetRecoveryTimer == nil)
+
+        // runRecovery restores the saved credential through beginFleet with the recorded attempt.
+        let recoveryApp = App(); recoveryApp.previewOverride = false
+        recoveryApp.connectFleetButton = NSButton(); recoveryApp.disconnectFleetButton = NSButton()
+        recoveryApp.readRemember = { true }; recoveryApp.fleetOwner = { true }
+        recoveryApp.savedFleetState.credential = SavedFleetCredential(token:"darkbloom-at-private-test-recovery-token",created:100,expires:Date().timeIntervalSince1970+3600)
+        recoveryApp.runRecovery(generation:recoveryApp.fleetGeneration,attempt:3)
+        precondition(recoveryApp.fleetWorker?.mode == "fleet-restore")
+        precondition(recoveryApp.fleetRetryCount == 3)
+        precondition(recoveryApp.savedFleetState.credential?.token == "darkbloom-at-private-test-recovery-token")
+        recoveryApp.disconnectFleet()
+
+        // Stale generation never schedules recovery.
+        let staleGenApp = App(); staleGenApp.previewOverride = false
+        staleGenApp.connectFleetButton = NSButton(); staleGenApp.disconnectFleetButton = NSButton()
+        staleGenApp.fleetOwner = { true }
+        staleGenApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
+        staleGenApp.runRecovery(generation:staleGenApp.fleetGeneration+1,attempt:1)
+        precondition(staleGenApp.fleetWorker == nil && staleGenApp.fleetRecoveryTimer == nil)
+
+        // Owner change cancels recovery after the restore-controls reset.
+        let ownerFlag = false
+        let ownerSwitchApp = App(); ownerSwitchApp.previewOverride = false
+        ownerSwitchApp.connectFleetButton = NSButton(); ownerSwitchApp.disconnectFleetButton = NSButton()
+        ownerSwitchApp.fleetOwner = { ownerFlag }; ownerSwitchApp.readRemember = { true }
+        ownerSwitchApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
+        ownerSwitchApp.runRecovery(generation:ownerSwitchApp.fleetGeneration,attempt:1)
+        precondition(ownerSwitchApp.fleetWorker == nil && ownerSwitchApp.fleetRecoveryTimer == nil)
+        precondition(!ownerSwitchApp.disconnectFleetButton.isEnabled)
+
+        // An expired saved credential never schedules recovery.
+        let expiredCredApp = App(); expiredCredApp.previewOverride = false
+        expiredCredApp.connectFleetButton = NSButton(); expiredCredApp.disconnectFleetButton = NSButton()
+        expiredCredApp.fleetOwner = { true }
+        expiredCredApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970-10)
+        expiredCredApp.runRecovery(generation:expiredCredApp.fleetGeneration,attempt:1)
+        precondition(expiredCredApp.fleetWorker == nil && expiredCredApp.fleetRecoveryTimer == nil)
+
+        try? FileManager.default.removeItem(atPath: stdinLog)
+        try? FileManager.default.removeItem(atPath: envLog)
     }
     precondition(allowedNavigation(URL(string:"about:blank"),mainFrame:true))
     precondition(!allowedNavigation(URL(string:"about:blank#main"),mainFrame:true))
@@ -1258,6 +1541,11 @@ if CommandLine.arguments.contains("--self-test") {
     deniedRestore.credentialStore=LoginFleetCredentialStore(open:{ (errSecUserCanceled,nil) })
     deniedRestore.restoreSavedFleetIfEnabled(); waitFakeKeychain(deniedRestore)
     precondition(deniedFlag && deniedRestore.connectFleetButton.isEnabled && !deniedRestore.disconnectFleetButton.isEnabled)
+    let previewApp = App(); previewApp.previewOverride = true; previewApp.connectFleetButton = NSButton(); previewApp.disconnectFleetButton = NSButton()
+    precondition(previewApp.previewOnly)
+    precondition(endedFleetStatus("status", disconnected: false, preview: previewApp.previewOnly).contains("Read-only preview"))
+    let windowCloseApp = App()
+    precondition(!windowCloseApp.applicationShouldTerminateAfterLastWindowClosed(NSApp))
     let replacement=SavedFleetCredential(token:fixtureToken,created:101,expires:201)
     var raceDeletes=0
     let replacementStore=LoginFleetCredentialStore(open:{ (errSecSuccess,loginFixture) },copy:{ query in
@@ -1274,6 +1562,72 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(replacementStore.forget(matching:replacement,authorize:{true}) == errSecSuccess)
     precondition(raceDeletes == 1)
 
+    // S3: Swift recovery decision and bounds unit tests
+    let nowVal = 1000.0
+    let validExpiry = 2000.0
+    let expiredVal = 500.0
+
+    // 1. Preview mode causes .none
+    precondition(decideFleetRecovery(reason: "", retryCount: 0, preview: true, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .none)
+
+    // 2. Generation mismatch causes .none
+    precondition(decideFleetRecovery(reason: "", retryCount: 0, preview: false, generationMatch: false, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .none)
+
+    // 3. Owner inactive causes .none
+    precondition(decideFleetRecovery(reason: "", retryCount: 0, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: false) == .none)
+
+    // 4. Auth/scope/expired causes .none
+    for r in ["auth_required", "scope_refused", "expired"] {
+        precondition(decideFleetRecovery(reason: r, retryCount: 0, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .none)
+    }
+
+    // 5. Expired or missing credential causes .none
+    precondition(decideFleetRecovery(reason: "unavailable", retryCount: 0, preview: false, generationMatch: true, savedExpires: expiredVal, now: nowVal, ownerActive: true) == .none)
+    precondition(decideFleetRecovery(reason: "unavailable", retryCount: 0, preview: false, generationMatch: true, savedExpires: nil, now: nowVal, ownerActive: true) == .none)
+
+    // 6. Exponential backoff progression for attempts 0..4 (capped at 60s)
+    let expectedDelays: [Double] = [3.0, 6.0, 12.0, 24.0, 48.0]
+    for count in 0..<5 {
+        let dec = decideFleetRecovery(reason: "unavailable", retryCount: count, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true)
+        precondition(dec == .retry(delay: expectedDelays[count], attempt: count + 1))
+    }
+
+    // 7. session_busy uses fixed 3.0s delay regardless of attempt
+    for count in 0..<5 {
+        let dec = decideFleetRecovery(reason: "session_busy", retryCount: count, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true)
+        precondition(dec == .retry(delay: 3.0, attempt: count + 1))
+    }
+
+    // 8. 6th attempt (retryCount == 5) reaches .terminal
+    precondition(decideFleetRecovery(reason: "unavailable", retryCount: 5, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .terminal)
+    precondition(decideFleetRecovery(reason: "session_busy", retryCount: 5, preview: false, generationMatch: true, savedExpires: validExpiry, now: nowVal, ownerActive: true) == .terminal)
+
+    // Preview app never starts worker or reads credentialStore
+    var previewStoreOpens = 0
+    var previewStoreCopies = 0
+    let testPreviewApp = App(); testPreviewApp.previewOverride = true
+    testPreviewApp.readRemember = { true }
+    testPreviewApp.fleetOwner = { true }
+    testPreviewApp.credentialStore = LoginFleetCredentialStore(
+        open: { previewStoreOpens += 1; return (errSecSuccess, nil) },
+        copy: { _ in previewStoreCopies += 1; return (errSecSuccess, nil) }
+    )
+    testPreviewApp.restoreSavedFleetIfEnabled()
+    testPreviewApp.credentialQueue.sync {}
+    precondition(previewStoreOpens == 0)
+    precondition(previewStoreCopies == 0)
+    precondition(testPreviewApp.fleetWorker == nil)
+
+    // Disconnect invalidates pending recovery timer
+    let timerApp = App(); timerApp.previewOverride = false
+    timerApp.connectFleetButton = NSButton(); timerApp.disconnectFleetButton = NSButton()
+    timerApp.fleetRecoveryTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: false) { _ in }
+    precondition(timerApp.fleetRecoveryTimer != nil)
+    let preGen = timerApp.fleetGeneration
+    timerApp.disconnectFleet()
+    precondition(timerApp.fleetRecoveryTimer == nil)
+    precondition(timerApp.fleetGeneration == preGen + 1)
+
     precondition(viewDestination(URL(string:"gargoyl-view://fleet-restore/"),mainFrame:true) == nil)
 
     let accountPreview: [String:Any] = ["kind":"fleet-authorization","purpose":"desktop_account","user_code":"TEST-CODE","expires_in":900]
@@ -1287,6 +1641,11 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(URLComponents(url:fleetSignInURL,resolvingAgainstBaseURL:false)!.queryItems == [URLQueryItem(name:"purpose",value:"desktop_account")])
     precondition(endedFleetStatus("Account API returned 4 records.",disconnected:false).contains("session ended; cached reports are not live"))
     precondition(endedFleetStatus("scope confirmed",disconnected:true).contains("disconnected"))
+    precondition(endedFleetStatus("Account API returned 4 records.",disconnected:false,preview:true).contains("Read-only preview"))
+    precondition(!endedFleetStatus("Account API returned 4 records.",disconnected:false,preview:true).contains("Reconnect to resume"))
+    precondition(observedExitText(nil) == nil)
+    precondition(observedExitText((0,false)) == " The account reader exited with status 0.")
+    precondition(observedExitText((301,true)) == " The account reader was terminated by signal 301.")
     for change in [["expires_in":true],["purpose":"provider"],["token":"must-not-cross-native-pipe"],["expires_in":901],["user_code":"bad\ncode"]] as [[String:Any]] {
         var bad = accountPreview; bad.merge(change) { _,new in new }; precondition(!validFleetAuthorization(bad))
     }

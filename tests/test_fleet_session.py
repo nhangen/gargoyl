@@ -227,3 +227,190 @@ class FleetSessionTests(unittest.TestCase):
             client=self.client,
         )
         self.client.begin.assert_not_called()
+
+    def test_real_pipe_disconnect_intent_records_intentional_disconnect(self):
+        from gargoyl.fleet_session import pipe_wait
+
+        r, w = os.pipe()
+        try:
+            os.write(w, b"disconnect\n")
+            os.close(w)
+            w = None
+            stream = open(r, "rb", buffering=0)
+            self.addCleanup(stream.close)
+            run_session(
+                self.cache,
+                owner=lambda: True,
+                wait=lambda seconds: pipe_wait(stream, seconds, lambda: True),
+                send=self.events.append,
+                client=self.client,
+                initial_token="darkbloom-at-private-restored-token",
+                now=lambda: NOW,
+                monotonic=lambda: 0,
+            )
+            lifecycle = self.cache.read_lifecycle(NOW)
+            self.assertIsNotNone(lifecycle)
+            self.assertEqual(lifecycle["status"], "stopped")
+            self.assertEqual(lifecycle["exit_reason"], "intentional_disconnect")
+            self.assertIsNone(lifecycle["exit_status"])
+        finally:
+            if w is not None:
+                os.close(w)
+
+    def test_real_pipe_quit_intent_records_intentional_quit(self):
+        from gargoyl.fleet_session import pipe_wait
+
+        r, w = os.pipe()
+        try:
+            os.write(w, b"quit\n")
+            os.close(w)
+            w = None
+            stream = open(r, "rb", buffering=0)
+            self.addCleanup(stream.close)
+            run_session(
+                self.cache,
+                owner=lambda: True,
+                wait=lambda seconds: pipe_wait(stream, seconds, lambda: True),
+                send=self.events.append,
+                client=self.client,
+                initial_token="darkbloom-at-private-restored-token",
+                now=lambda: NOW,
+                monotonic=lambda: 0,
+            )
+            lifecycle = self.cache.read_lifecycle(NOW)
+            self.assertIsNotNone(lifecycle)
+            self.assertEqual(lifecycle["status"], "stopped")
+            self.assertEqual(lifecycle["exit_reason"], "intentional_quit")
+            self.assertIsNone(lifecycle["exit_status"])
+        finally:
+            if w is not None:
+                os.close(w)
+
+    def test_real_pipe_bare_eof_records_pipe_eof(self):
+        from gargoyl.fleet_session import pipe_wait
+
+        r, w = os.pipe()
+        try:
+            os.close(w)
+            w = None
+            stream = open(r, "rb", buffering=0)
+            self.addCleanup(stream.close)
+            run_session(
+                self.cache,
+                owner=lambda: True,
+                wait=lambda seconds: pipe_wait(stream, seconds, lambda: True),
+                send=self.events.append,
+                client=self.client,
+                initial_token="darkbloom-at-private-restored-token",
+                now=lambda: NOW,
+                monotonic=lambda: 0,
+            )
+            lifecycle = self.cache.read_lifecycle(NOW)
+            self.assertIsNotNone(lifecycle)
+            self.assertEqual(lifecycle["status"], "exited")
+            self.assertEqual(lifecycle["exit_reason"], "pipe_eof")
+            self.assertIsNone(lifecycle["exit_status"])
+        finally:
+            if w is not None:
+                os.close(w)
+
+    def test_transient_failure_then_session_closed_clears_unavailable_and_does_not_show_retrying(self):
+        from gargoyl.fleet_session import SessionClosed
+        from gargoyl.native_views import render_view
+
+        wait_count = 0
+
+        def wait_step(seconds):
+            nonlocal wait_count
+            if seconds >= 30:
+                wait_count += 1
+                if wait_count >= 2:
+                    raise SessionClosed("pipe_eof")
+
+        self.client.providers.side_effect = [response(), FleetError("unavailable")]
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=wait_step,
+            send=self.events.append,
+            client=self.client,
+            initial_token="darkbloom-at-private-restored-token",
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+        )
+        inv = self.cache.read(NOW)
+        self.assertIsNotNone(inv)
+        self.assertEqual(inv["connection"], "disconnected")
+        lifecycle = self.cache.read_lifecycle(NOW)
+        self.assertIsNotNone(lifecycle)
+        self.assertEqual(lifecycle["status"], "exited")
+        self.assertEqual(lifecycle["exit_reason"], "pipe_eof")
+        self.assertIsNone(lifecycle["exit_status"])
+
+        # Verify render_view gives precedence to exited lifecycle and does NOT claim live retrying
+        html = render_view("fleet", None, None, inventory=inv, now=NOW, lifecycle=lifecycle)
+        self.assertIn("Supervising pipe closed (cause unknown)", html)
+        self.assertNotIn("retrying with backoff", html)
+
+    def test_retry_count_at_budget_preserves_established_auth_required_reason(self):
+        self.client.providers.side_effect = FleetError("auth_required")
+
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=lambda seconds: None,
+            send=self.events.append,
+            client=self.client,
+            initial_token="darkbloom-at-private-restored-token",
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+            retry_count=5,
+            retry_budget=5,
+        )
+        lifecycle = self.cache.read_lifecycle(NOW)
+        self.assertIsNotNone(lifecycle)
+        self.assertEqual(lifecycle["status"], "stopped")
+        self.assertEqual(lifecycle["exit_reason"], "auth_required")
+        self.assertIsNone(lifecycle["exit_status"])
+        self.assertEqual(lifecycle["retry_count"], 5)
+
+    def test_retry_count_at_budget_preserves_expired_exit_reason(self):
+        self.client.providers.side_effect = FleetError("expired")
+
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=lambda seconds: None,
+            send=self.events.append,
+            client=self.client,
+            initial_token="darkbloom-at-private-restored-token",
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+            retry_count=5,
+            retry_budget=5,
+        )
+        lifecycle = self.cache.read_lifecycle(NOW)
+        self.assertIsNotNone(lifecycle)
+        self.assertEqual(lifecycle["status"], "stopped")
+        self.assertEqual(lifecycle["exit_reason"], "expired")
+        self.assertIsNone(lifecycle["exit_status"])
+        self.assertEqual(lifecycle["retry_count"], 5)
+
+    def test_client_begin_unavailable_records_unknown_exit_reason(self):
+        self.client.begin.side_effect = FleetError("unavailable")
+
+        run_session(
+            self.cache,
+            owner=lambda: True,
+            wait=lambda seconds: None,
+            send=self.events.append,
+            client=self.client,
+            initial_token=None,
+            now=lambda: NOW,
+            monotonic=lambda: 0,
+        )
+        lifecycle = self.cache.read_lifecycle(NOW)
+        self.assertIsNotNone(lifecycle)
+        self.assertEqual(lifecycle["status"], "exited")
+        self.assertEqual(lifecycle["exit_reason"], "unknown")
+        self.assertIsNone(lifecycle["exit_status"])

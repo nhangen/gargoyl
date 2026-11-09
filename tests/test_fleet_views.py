@@ -4,7 +4,7 @@ import unittest
 from test_fleet_state import NOW, response
 
 from gargoyl.fleet_state import normalize_inventory, provider_key
-from gargoyl.native_views import render_view
+from gargoyl.native_views import HOST, render_view
 
 
 class FleetViewTests(unittest.TestCase):
@@ -60,6 +60,206 @@ class FleetViewTests(unittest.TestCase):
         self.assertIn("stale", page)
         self.assertIn("unknown — no fresh unique account identity match", page)
         self.assertNotIn("healthy", page.replace("absent or healthy", ""))
+
+    def test_preview_mode_explains_limitation_without_reconnect_demand(self):
+        value = normalize_inventory(response(), NOW)
+        value["connection"] = "disconnected"
+        page = render_view(
+            "fleet",
+            None,
+            None,
+            inventory=value,
+            local_alias="Fixture local alias",
+            now=NOW,
+            preview=True,
+        )
+        self.assertIn("Read-only preview mode", page)
+        self.assertIn("cached records", page)
+        self.assertNotIn("reconnect for current reports", page)
+
+        # Empty inventory in preview mode
+        empty_page = render_view(
+            "fleet",
+            None,
+            None,
+            inventory=None,
+            local_alias="Fixture local alias",
+            now=NOW,
+            preview=True,
+        )
+        self.assertIn("Read-only preview mode", empty_page)
+        self.assertNotIn("Connect fleet…", empty_page)
+
+    def test_lifecycle_diagnostics_distinguish_gui_loss_transient_and_auth_failure(self):
+        value = normalize_inventory(response(), NOW)
+
+        # 1. Genuinely established auth failure
+        value["connection"] = "auth_required"
+        auth_page = render_view("fleet", None, None, inventory=value, now=NOW)
+        self.assertIn("Account authorization was rejected (HTTP 401/403)", auth_page)
+        self.assertIn("auth_required", auth_page)
+
+        # 2. Transient failure: communication error, collection retrying
+        value["connection"] = "unavailable"
+        transient_lifecycle = {"status": "transient_failure", "exit_reason": "none"}
+        trans_page = render_view(
+            "fleet", None, None, inventory=value, now=NOW, lifecycle=transient_lifecycle
+        )
+        self.assertIn("Temporary account communication failure", trans_page)
+        self.assertIn("retrying with backoff", trans_page)
+        self.assertNotIn("auth_required", trans_page)
+
+        # 3. Normal GUI loss (pipe_eof): reader exited with GUI, not auth failure
+        value["connection"] = "disconnected"
+        eof_lifecycle = {"status": "exited", "exit_reason": "pipe_eof"}
+        eof_page = render_view(
+            "fleet", None, None, inventory=value, now=NOW, lifecycle=eof_lifecycle
+        )
+        self.assertIn("Supervising pipe closed (cause unknown)", eof_page)
+        self.assertIn("reopening Gargoyl will resume collection", eof_page)
+        self.assertNotIn("auth_required", eof_page)
+
+        # 4. Reader stopped with unknown reason: cached reports retained without guessing auth failure
+        unknown_lifecycle = {"status": "exited", "exit_reason": "unknown"}
+        unknown_page = render_view(
+            "fleet", None, None, inventory=value, now=NOW, lifecycle=unknown_lifecycle
+        )
+        self.assertIn("Account reader has stopped (unknown)", unknown_page)
+        self.assertIn("no credential rejection is inferred", unknown_page)
+
+        # 5. Application quit by user intent: reader stopped cleanly with GUI
+        quit_lifecycle = {"status": "stopped", "exit_reason": "intentional_quit"}
+        quit_page = render_view(
+            "fleet", None, None, inventory=value, now=NOW, lifecycle=quit_lifecycle
+        )
+        self.assertIn("Application was quit by user intent", quit_page)
+        self.assertNotIn("auth_required", quit_page)
+
+        # 6. Intentional disconnect: user disconnected collection
+        disconnect_lifecycle = {"status": "stopped", "exit_reason": "intentional_disconnect"}
+        disc_page = render_view(
+            "fleet", None, None, inventory=value, now=NOW, lifecycle=disconnect_lifecycle
+        )
+        self.assertIn("Account collection was disconnected by user intent", disc_page)
+        self.assertNotIn("auth_required", disc_page)
+
+    def test_effective_lifecycle_dead_incarnation_resolves_exited_over_transient_failure_in_view(self):
+        import os
+        import tempfile
+
+        from gargoyl.fleet_state import FleetCache, effective_lifecycle
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache = FleetCache(os.path.realpath(temp_dir), os.getuid())
+            value = normalize_inventory(response(), NOW)
+            value["connection"] = "unavailable"
+            cache.write(value)
+
+            raw_lifecycle = {
+                "schema": 1,
+                "status": "transient_failure",
+                "observed_at": NOW,
+                "owner_uid": os.getuid(),
+                "incarnation": {"pid": 999999, "born_us": 123456789},
+                "gui_owner": None,
+                "started_at": NOW,
+                "last_read_at": NOW,
+                "exit_reason": "pipe_eof",
+                "exit_status": None,
+                "retry_count": 1,
+                "retry_budget": 5,
+            }
+            cache.write_lifecycle(raw_lifecycle)
+
+            resolved_lifecycle = effective_lifecycle(cache, NOW, alive=lambda _: False)
+            self.assertEqual(resolved_lifecycle["status"], "exited")
+            self.assertEqual(resolved_lifecycle["exit_reason"], "pipe_eof")
+
+            page = render_view(
+                "fleet", None, None, inventory=value, now=NOW, lifecycle=resolved_lifecycle
+            )
+            self.assertIn("Supervising pipe closed (cause unknown)", page)
+            self.assertNotIn("retrying with backoff", page)
+
+            # A crashed reader in the transient state records exit_reason "none", not pipe_eof.
+            raw_lifecycle["exit_reason"] = "none"
+            cache.write_lifecycle(raw_lifecycle)
+            crash_resolved = effective_lifecycle(cache, NOW, alive=lambda _: False)
+            self.assertEqual(crash_resolved["status"], "exited")
+            self.assertEqual(crash_resolved["exit_reason"], "unknown")
+            crash_page = render_view(
+                "fleet", None, None, inventory=value, now=NOW, lifecycle=crash_resolved
+            )
+            self.assertIn("Account reader has stopped (unknown)", crash_page)
+            self.assertNotIn("auth_required", crash_page)
+
+    def test_killed_reader_renders_stopped_while_cache_still_reports_connected(self):
+        import os
+        import tempfile
+
+        from gargoyl.fleet_state import FleetCache, effective_lifecycle
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache = FleetCache(os.path.realpath(temp_dir), os.getuid())
+            value = normalize_inventory(response(), NOW)
+            self.assertEqual(value["connection"], "connected")
+            cache.write(value)
+            cache.write_lifecycle({
+                "schema": 1,
+                "status": "running",
+                "observed_at": NOW,
+                "owner_uid": os.getuid(),
+                "incarnation": {"pid": 999999, "born_us": 123456789},
+                "gui_owner": None,
+                "started_at": NOW,
+                "last_read_at": NOW,
+                "exit_reason": "none",
+                "exit_status": None,
+                "retry_count": 0,
+                "retry_budget": 5,
+            })
+            killed = effective_lifecycle(cache, NOW, alive=lambda _: False)
+            self.assertEqual((killed["status"], killed["exit_reason"]), ("exited", "unknown"))
+
+            page = render_view("fleet", None, None, inventory=value, now=NOW, lifecycle=killed)
+            self.assertIn("Account reader has stopped (unknown)", page)
+
+            live = render_view(
+                "fleet", None, None, inventory=value, now=NOW,
+                lifecycle={"status": "running", "exit_reason": "none"},
+            )
+            self.assertNotIn("Account reader has stopped", live)
+
+    def test_stop_reason_is_escaped_exactly_once(self):
+        value = normalize_inventory(response(), NOW)
+        value["connection"] = "disconnected"
+        page = render_view(
+            "fleet", None, None, inventory=value, now=NOW,
+            lifecycle={"status": "exited", "exit_reason": "a&b"},
+        )
+        self.assertIn("Account reader has stopped (a&amp;b)", page)
+        self.assertNotIn("&amp;amp;", page)
+
+    def test_management_projection_and_html_distinguish_preview_mode(self):
+        from gargoyl.fleet_management import management_html, management_projection
+
+        value = normalize_inventory(response(), NOW)
+        value["connection"] = "disconnected"
+
+        # Normal mode
+        normal_proj = management_projection(value, None, None, NOW, HOST, preview=False)
+        normal_html = management_html(normal_proj, {})
+        self.assertNotIn("read-only preview mode", normal_html)
+
+        # Preview mode
+        preview_proj = management_projection(value, None, None, NOW, HOST, preview=True)
+        preview_html = management_html(preview_proj, {})
+        self.assertIn("read-only preview mode", preview_html)
+
+        # Empty inventory preview
+        empty_preview = management_projection(None, None, None, NOW, HOST, preview=True)
+        empty_html = management_html(empty_preview, {})
+        self.assertIn("Inventory unavailable in read-only preview mode", empty_html)
 
     def test_visible_section_navigation_has_real_targets_in_each_surface(self):
         from html.parser import HTMLParser

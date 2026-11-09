@@ -137,6 +137,8 @@ def render_fleet(
     aliases=None,
     aliases_available=True,
     local_host_id=HOST,
+    preview=False,
+    lifecycle=None,
 ):
     from gargoyl.fleet_aliases import validate_aliases
 
@@ -195,12 +197,20 @@ def render_fleet(
     local_body += ('<dl class="facts">' + "".join("<div><dt>" + e(k) + "</dt><dd>" + v + "</dd></div>" for k, v in facts)
                    + "</dl></section>")
     if inventory is None:
-        body += (
-            "<section id='fleet-overview'><h2>Connect your account</h2><p>No verified account inventory is "
-            "available. Choose <strong>Account → Connect fleet…</strong> in the toolbar, then complete "
-            "Darkbloom’s read-only approval in your browser. No provider grant fallback is accepted.</p>"
-            '<p class="muted">This is not an empty fleet result. Other machines have not been queried.</p></section>'
-        )
+        if preview:
+            body += (
+                "<section id='fleet-overview'><h2>Account inventory unavailable</h2><p>Read-only preview mode: "
+                "live account connection and saved-session recovery are disabled in preview mode. "
+                "No provider grant fallback is accepted.</p>"
+                '<p class="muted">This is not an empty fleet result. Other machines have not been queried.</p></section>'
+            )
+        else:
+            body += (
+                "<section id='fleet-overview'><h2>Connect your account</h2><p>No verified account inventory is "
+                "available. Choose <strong>Account → Connect fleet…</strong> in the toolbar, then complete "
+                "Darkbloom’s read-only approval in your browser. No provider grant fallback is accepted.</p>"
+                '<p class="muted">This is not an empty fleet result. Other machines have not been queried.</p></section>'
+            )
     else:
         rows = inventory["providers"]
         count = str(len(rows)) + (" of " + str(inventory["reported_total"]) if inventory["reported_total"] is not None else "")
@@ -214,8 +224,85 @@ def render_fleet(
         )
         if inventory["partial"]:
             body += '<div class="callout warn"><p>Partial inventory: some records or pages are unavailable. Missing machines must not be treated as absent or healthy.</p></div>'
-        if inventory["connection"] != "connected":
-            body += '<div class="callout warn"><p>Account collection is disconnected or unavailable. These are cached records; reconnect for current reports. Heartbeat timestamps are historical evidence.</p></div>'
+        reader_stopped = lifecycle is not None and lifecycle.get("status") in {
+            "exited",
+            "stopped",
+            "terminal_failure",
+        }
+        if inventory["connection"] != "connected" or reader_stopped:
+            if preview:
+                warn_text = (
+                    "Read-only preview mode: account connection, saved-session recovery and provider controls are disabled. "
+                    "These are cached records. Heartbeat timestamps are historical evidence."
+                )
+            elif reader_stopped:
+                reason = lifecycle.get("exit_reason", "unknown")
+                if reason == "intentional_disconnect":
+                    warn_text = (
+                        "Account collection was disconnected by user intent. "
+                        "These are cached records; reconnect or resume saved sign-in for current reports. "
+                        "Heartbeat timestamps are historical evidence."
+                    )
+                elif reason == "intentional_quit":
+                    warn_text = (
+                        "Application was quit by user intent; account reader stopped cleanly. "
+                        "These are cached records; reopening Gargoyl will resume collection if a saved sign-in exists. "
+                        "Heartbeat timestamps are historical evidence."
+                    )
+                elif reason == "pipe_eof":
+                    warn_text = (
+                        "Supervising pipe closed (cause unknown). "
+                        "These are cached records; reopening Gargoyl will resume collection if a saved sign-in exists. "
+                        "Heartbeat timestamps are historical evidence."
+                    )
+                elif reason == "auth_required" or inventory["connection"] == "auth_required":
+                    warn_text = (
+                        "Account authorization was rejected (HTTP 401/403). Connect fleet to approve a new read-only session. "
+                        "These are cached records. Heartbeat timestamps are historical evidence."
+                    )
+                elif reason == "retry_exhausted" or lifecycle.get("status") == "terminal_failure":
+                    warn_text = (
+                        "Account reader recovery stopped after reaching retry budget. "
+                        "Saved sign-in is preserved; resume manually when available. "
+                        "These are cached records; no credential rejection is inferred. "
+                        "Heartbeat timestamps are historical evidence."
+                    )
+                else:
+                    warn_text = (
+                        f"Account reader has stopped ({reason}). "
+                        "These are cached records; no credential rejection is inferred. "
+                        "Heartbeat timestamps are historical evidence."
+                    )
+            elif (
+                lifecycle is not None
+                and lifecycle.get("status") == "transient_failure"
+            ):
+                warn_text = (
+                    "Temporary account communication failure; collection is retrying with backoff. "
+                    "These are cached records. Heartbeat timestamps are historical evidence."
+                )
+            elif inventory["connection"] == "auth_required":
+                warn_text = (
+                    "Account authorization was rejected (HTTP 401/403). Connect fleet to approve a new read-only session. "
+                    "These are cached records. Heartbeat timestamps are historical evidence."
+                )
+            elif lifecycle is not None and lifecycle.get("status") == "starting":
+                warn_text = (
+                    "Account reader is starting. "
+                    "These are cached records. Heartbeat timestamps are historical evidence."
+                )
+            elif lifecycle is not None and lifecycle.get("status") == "session_busy":
+                warn_text = (
+                    "Another account reader session is active. "
+                    "These are cached records. Heartbeat timestamps are historical evidence."
+                )
+            else:
+                warn_text = (
+                    "Account collection is not active (cause unknown). "
+                    "These are cached records; resume saved sign-in or connect fleet for current reports. "
+                    "Heartbeat timestamps are historical evidence."
+                )
+            body += '<div class="callout warn"><p>' + e(warn_text) + '</p></div>'
         if view.startswith("fleet-node-"):
             selected = [
                 r

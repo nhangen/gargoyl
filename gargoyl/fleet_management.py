@@ -11,7 +11,7 @@ from gargoyl.fleet_state import evidence_state, provider_key, validate_inventory
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
 
 
-def management_projection(inventory, local, evidence, now, local_host_id):
+def management_projection(inventory, local, evidence, now, local_host_id, preview=False, lifecycle=None):
     host_id(local_host_id)
     at = timestamp(now)
     samples = []
@@ -23,7 +23,7 @@ def management_projection(inventory, local, evidence, now, local_host_id):
         if any(item['host_id'] != local_host_id for item in samples):
             raise ValueError('collector host differs')
     if inventory is None:
-        return dict(inventory_available=False, partial=True, rows=[])
+        return dict(inventory_available=False, partial=True, rows=[], preview=preview, lifecycle=lifecycle)
     validate_inventory(inventory)
     try:
         matched = matching_provider(inventory, local, now)
@@ -48,7 +48,8 @@ def management_projection(inventory, local, evidence, now, local_host_id):
                          history_samples=len(samples) if associated and evidence is not None else None,
                          manual_restart='native_review' if associated else 'unavailable'))
     return dict(inventory_available=True, partial=inventory['partial'], rows=rows,
-                fetched_at=inventory['fetched_at'], connection=inventory['connection'])
+                fetched_at=inventory['fetched_at'], connection=inventory['connection'],
+                preview=preview, lifecycle=lifecycle)
 
 
 def management_html(projection, aliases):
@@ -60,9 +61,17 @@ def management_html(projection, aliases):
             'not an enrolled collector. Only a fresh unique public-identity match associates this '
             'Mac’s direct observations. Source names, local aliases and actual IDs stay distinct.</p>')
     if not projection['inventory_available']:
+        if projection.get('preview'):
+            return body + ('<p>Inventory unavailable in read-only preview mode — coverage is unknown. '
+                           'Account connection is disabled in preview mode.</p></section>')
         return body + ('<p>Inventory unavailable — coverage is unknown, not an empty fleet. '
                        'Use Account to inspect the saved session; no new sign-in is initiated here.</p></section>')
-    body += '<p>Account inventory read ' + e(projection['fetched_at']) + ' · session last reported ' + e(projection['connection']) + '. These are coordinator reports, not independent remote health.</p>'
+    session_status = e(projection['connection'])
+    if projection.get('preview'):
+        session_status += ' (read-only preview mode)'
+    elif projection.get('lifecycle'):
+        session_status += ' · reader ' + e(projection['lifecycle']['status'])
+    body += '<p>Account inventory read ' + e(projection['fetched_at']) + ' · session last reported ' + session_status + '. These are coordinator reports, not independent remote health.</p>'
     if projection['partial']:
         body += '<p>Partial inventory. Missing providers have unknown coverage.</p>'
     body += ('<div class="scroll" tabindex="0" role="region" aria-label="Provider management coverage">'

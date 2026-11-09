@@ -339,3 +339,74 @@ class MonitorControlTests(unittest.TestCase):
                 validate=lambda: Path("/synthetic/monitor.plist"),
             )
         self.assertEqual(runner.call_count, 1)
+
+    def test_native_view_plumbs_preview_environment(self):
+        from gargoyl.gui_runtime import native_view
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("gargoyl.gui_runtime.export_evidence", side_effect=OSError),
+            patch("socket.gethostname", return_value="MBP-2026.local"),
+        ):
+            tmp_path = Path(tmp).resolve()
+            with (
+                patch("gargoyl.gui_runtime.owner_home", return_value=tmp_path),
+                patch.dict(os.environ, {"GARGOYL_PREVIEW": "1"}),
+            ):
+                view_result = native_view("fleet")
+                self.assertEqual(view_result["kind"], "view")
+                self.assertEqual(view_result["view"], "fleet")
+                self.assertIn("Read-only preview mode", view_result["html"])
+                self.assertNotIn("Normal operator application is not running", view_result["html"])
+
+            with (
+                patch("gargoyl.gui_runtime.owner_home", return_value=tmp_path),
+                patch.dict(os.environ, {}, clear=True),
+            ):
+                normal_result = native_view("fleet")
+                self.assertNotIn("Read-only preview mode", normal_result["html"])
+
+
+class PreviewFleetRefusalTests(unittest.TestCase):
+    def test_preview_environment_refuses_fleet_modes_without_a_session(self):
+        from contextlib import ExitStack
+
+        from gargoyl.gui_runtime import main
+
+        for mode in ("fleet-session", "fleet-session-remember", "fleet-restore"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                incoming, writer = os.pipe()
+                outgoing, output = os.pipe()
+                run = Mock()
+                with ExitStack() as stack:
+                    stack.enter_context(os.fdopen(writer, "w"))
+                    stdin = stack.enter_context(os.fdopen(incoming, "r"))
+                    stack.enter_context(os.fdopen(outgoing, "r"))
+                    stdout = stack.enter_context(os.fdopen(output, "w"))
+                    stack.enter_context(patch.object(sys, "stdin", stdin))
+                    stack.enter_context(patch.object(sys, "stdout", stdout))
+                    stack.enter_context(
+                        patch.object(
+                            sys, "argv", ["gargoyl.gui_runtime", mode]
+                        )
+                    )
+                    stack.enter_context(
+                        patch.dict(os.environ, {"GARGOYL_PREVIEW": "1"})
+                    )
+                    stack.enter_context(
+                        patch(
+                            "gargoyl.gui_runtime.console_owner", return_value=True
+                        )
+                    )
+                    stack.enter_context(
+                        patch(
+                            "gargoyl.gui_runtime.owner_home",
+                            return_value=Path(tmp),
+                        )
+                    )
+                    stack.enter_context(
+                        patch("gargoyl.fleet_session.run_session", run)
+                    )
+                    result = main()
+                self.assertEqual(result, 1)
+                run.assert_not_called()

@@ -368,16 +368,22 @@ def native_view(mode):
         except (OSError, ValueError):
             journal_available = False
     extra = {}
+    preview = os.environ.get("GARGOYL_PREVIEW") == "1"
     if view.startswith("fleet") or view == "management":
         from gargoyl.fleet_aliases import AliasStore
         from gargoyl.fleet_identity import pilot_identity
-        from gargoyl.fleet_state import FleetCache, utc_now
+        from gargoyl.fleet_state import FleetCache, effective_lifecycle, utc_now
         home = owner_home()
         at = utc_now()
+        cache = FleetCache(home / "Library/Application Support/Gargoyl", os.getuid())
         try:
-            extra["inventory"] = FleetCache(home / "Library/Application Support/Gargoyl", os.getuid()).read(at)
+            extra["inventory"] = cache.read(at)
         except (OSError, ValueError):
             extra["inventory"] = None
+        try:
+            extra["lifecycle"] = effective_lifecycle(cache, at)
+        except (OSError, ValueError):
+            extra["lifecycle"] = None
         try:
             extra["local"] = pilot_identity(home, at)
         except (OSError, ValueError):
@@ -388,6 +394,7 @@ def native_view(mode):
             extra["aliases_available"] = False
         extra["local_alias"] = socket.gethostname()
     local_host_id = load_pilot_configuration(home=owner_home()).host_id
+    extra["preview"] = preview
     return dict(kind="view", view=view, local_host_id=local_host_id,
                 operation_state=(record["state"] if record is not None else "none") if journal_available else "unavailable",
                 html=render_view(
@@ -424,6 +431,11 @@ def main():
         return 1
     mode = sys.argv[1]
     try:
+        if (
+            mode in {"fleet-session", "fleet-session-remember", "fleet-restore"}
+            and os.environ.get("GARGOYL_PREVIEW") == "1"
+        ):
+            raise ValueError("preview mode cannot run a fleet session")
         if mode.startswith("view-"):
             payload = json.dumps(native_view(mode), ensure_ascii=False) + "\n"
             if len(payload.encode()) > 590000:
@@ -474,24 +486,56 @@ def main():
                 raise ValueError("private pipes required")
             restored = None
             duration = PERSISTENT_SESSION_SECONDS if mode == "fleet-session-remember" else SESSION_SECONDS
+            retry_count = 0
             if mode == "fleet-restore":
                 from gargoyl.fleet_account import decode_json, token_valid
-                request = read_confirmation(sys.stdin.buffer, timeout=15, decoder=decode_json)
-                if type(request) is not dict or set(request) != {"purpose", "token", "valid_until"} or request["purpose"] != "desktop_account" or not token_valid(request["token"]):
+
+                request = read_confirmation(
+                    sys.stdin.buffer, timeout=15, decoder=decode_json
+                )
+                keys = set(request) if type(request) is dict else set()
+                if (
+                    type(request) is not dict
+                    or keys
+                    not in (
+                        {"purpose", "token", "valid_until"},
+                        {"purpose", "token", "valid_until", "retry_count"},
+                    )
+                    or request["purpose"] != "desktop_account"
+                    or not token_valid(request["token"])
+                ):
                     raise ValueError("saved account scope unavailable")
+                if "retry_count" in request:
+                    rc = request["retry_count"]
+                    if type(rc) is not int or not 0 <= rc <= 5:
+                        raise ValueError("invalid retry count")
+                    retry_count = rc
                 import math
                 import time
-                until=request["valid_until"]
-                if type(until) not in {int,float} or not math.isfinite(until):
+
+                until = request["valid_until"]
+                if type(until) not in {int, float} or not math.isfinite(until):
                     raise ValueError("saved account expiry unavailable")
-                duration=until-time.time()
+                duration = until - time.time()
                 if not 0 < duration <= PERSISTENT_SESSION_SECONDS:
                     raise ValueError("saved account expired")
                 restored = request["token"]
             os.set_blocking(sys.stdout.fileno(), False)
-            run_session(FleetCache(owner_home() / "Library/Application Support/Gargoyl", os.getuid()),
-                        owner=console_owner, wait=lambda seconds: pipe_wait(sys.stdin.buffer, seconds, console_owner),
-                        send=private_send, initial_token=restored, remember=mode == "fleet-session-remember", session_seconds=duration)
+            run_session(
+                FleetCache(
+                    owner_home() / "Library/Application Support/Gargoyl",
+                    os.getuid(),
+                ),
+                owner=console_owner,
+                wait=lambda seconds: pipe_wait(
+                    sys.stdin.buffer, seconds, console_owner
+                ),
+                send=private_send,
+                initial_token=restored,
+                remember=mode == "fleet-session-remember",
+                session_seconds=duration,
+                retry_count=retry_count,
+            )
         elif mode == "reconcile":
             if not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode) or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode):
                 raise ValueError("private_pipes_required")
