@@ -21,8 +21,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CI_YML_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-EXPECTED_CI_GIT_SHA = "293d7359163fdbceb1026b91455579c9ac5efb18"
-EXPECTED_CI_SHA256 = "35a7429a2fd273414524e5df762e17508b58256138153ff0d777720c3bf64166"
+EXPECTED_CI_GIT_SHA = "f6eebc0e70045d4333cdd8bc611d7abce63011f3"
+EXPECTED_CI_SHA256 = "d43e5301610a1d318b5094c16bfa86d54d2915ec86ed89b35c9c7a9b08d700c4"
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -151,7 +151,7 @@ CHECKOUT = {
 }
 VENV_STEP = {
     "name": "Create job-local virtualenv",
-    "run": 'python -m venv "$RUNNER_TEMP/venv"\n'
+    "run": 'python -m venv --clear "$RUNNER_TEMP/venv"\n'
     'echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"\n',
 }
 
@@ -166,6 +166,10 @@ def setup_python(version):
 SAME_REPOSITORY_ONLY = (
     "${{ github.event_name == 'push' || "
     "github.event.pull_request.head.repo.full_name == github.repository }}"
+)
+EXPECTED_RELEASE_IF = (
+    "${{ always() && (github.event_name == 'push' || "
+    "github.event.pull_request.head.repo.full_name == github.repository) }}"
 )
 EXPECTED_TRIGGERS = {"pull_request": None, "push": {"branches": ["main"]}}
 EXPECTED_CONCURRENCY = {
@@ -235,7 +239,7 @@ EXPECTED_JOBS = {
     },
     "release-artifact": {
         "needs": ["lint-and-test", "macos-native", "dependency-audit"],
-        "if": "${{ always() }}",
+        "if": EXPECTED_RELEASE_IF,
         "runs-on": LINUX_RUNS_ON,
         "timeout-minutes": 15,
         "steps": [
@@ -255,8 +259,9 @@ EXPECTED_JOBS = {
             VENV_STEP,
             {"run": "python -m pip install -e '.[release]'"},
             {
-                "run": "python -m pip wheel --no-deps --no-build-isolation "
-                "--wheel-dir dist ."
+                "run": "rm -rf dist\n"
+                "python -m pip wheel --no-deps --no-build-isolation "
+                "--wheel-dir dist .\n"
             },
             {
                 "run": "python tools/verify_release_artifact.py "
@@ -760,7 +765,7 @@ class CIWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(doc["jobs"]["dependency-audit"]["runs-on"], linux)
         self.assertEqual(doc["jobs"]["release-artifact"]["runs-on"], linux)
-        self.assertEqual(doc["jobs"]["release-artifact"]["if"], "${{ always() }}")
+        self.assertEqual(doc["jobs"]["release-artifact"]["if"], EXPECTED_RELEASE_IF)
 
         # 2. Verify preflight tool's actual PROPOSED_LOCAL_ROUTING contract
         self.assertEqual(PROPOSED_LOCAL_ROUTING["profile"], "nhangen/local-ci")

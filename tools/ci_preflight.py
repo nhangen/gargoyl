@@ -49,8 +49,8 @@ EXIT_HELD_BLOCKED = 3
 
 EXPECTED_DIGESTS = {
     ".github/workflows/ci.yml": {
-        "sha256": "35a7429a2fd273414524e5df762e17508b58256138153ff0d777720c3bf64166",
-        "git": "293d7359163fdbceb1026b91455579c9ac5efb18",
+        "sha256": "d43e5301610a1d318b5094c16bfa86d54d2915ec86ed89b35c9c7a9b08d700c4",
+        "git": "f6eebc0e70045d4333cdd8bc611d7abce63011f3",
     },
     "pyproject.toml": {
         "sha256": "10f1a10cc95e3b8e2ec5b0931b91f580fe3061f7a00eeac2f4d4215555db3b69",
@@ -158,6 +158,10 @@ EXPECTED_CONCURRENCY = {
     "group": "ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}",
     "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
 }
+EXPECTED_RELEASE_IF = (
+    "${{ always() && (github.event_name == 'push' || "
+    "github.event.pull_request.head.repo.full_name == github.repository) }}"
+)
 
 
 def extract_declared_dependencies():
@@ -266,7 +270,7 @@ def verify_workflow_contracts():
         ),
         "release_needs_all_three": set(release_job.get("needs", []))
         == {"lint-and-test", "macos-native", "dependency-audit"},
-        "release_if_always": release_job.get("if") == "${{ always() }}",
+        "release_if_always": release_job.get("if") == EXPECTED_RELEASE_IF,
         "checkout_credentials_not_persisted": len(checkout_steps) == 4
         and all(
             (step.get("with") or {}).get("persist-credentials") is False

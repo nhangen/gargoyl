@@ -37,7 +37,7 @@ jobs:
       # The runner tool cache persists between jobs; install into a job-local venv.
       - name: Create job-local virtualenv
         run: |
-          python -m venv "$RUNNER_TEMP/venv"
+          python -m venv --clear "$RUNNER_TEMP/venv"
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
       - run: python -m pip install -e '.[dev]'
       - run: python -m ruff check .
@@ -63,7 +63,7 @@ jobs:
           python-version: '3.14'
       - name: Create job-local virtualenv
         run: |
-          python -m venv "$RUNNER_TEMP/venv"
+          python -m venv --clear "$RUNNER_TEMP/venv"
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
       - run: python -m pip install -e '.[dev]'
       # Strict file fixtures require the canonical temp path, not /var's symlink.
@@ -85,7 +85,7 @@ jobs:
           python-version: '3.14'
       - name: Create job-local virtualenv
         run: |
-          python -m venv "$RUNNER_TEMP/venv"
+          python -m venv --clear "$RUNNER_TEMP/venv"
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
       - run: python -m pip install pip-audit==2.10.1
       # The private root is not on PyPI. Audit its declared third-party graph,
@@ -100,7 +100,7 @@ jobs:
     needs: [lint-and-test, macos-native, dependency-audit]
     # A skipped required check can count as passing. Always run and explicitly
     # reject any failed/cancelled/skipped prerequisite before producing a wheel.
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: local-ci-b6b0a4fed6586b3a
     timeout-minutes: 15
     steps:
@@ -121,10 +121,12 @@ jobs:
           python-version: '3.12'
       - name: Create job-local virtualenv
         run: |
-          python -m venv "$RUNNER_TEMP/venv"
+          python -m venv --clear "$RUNNER_TEMP/venv"
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
       - run: python -m pip install -e '.[release]'
-      - run: python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
+      - run: |
+          rm -rf dist
+          python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
       - run: python tools/verify_release_artifact.py dist/gargoyl-0.1.0-py3-none-any.whl
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
