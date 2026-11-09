@@ -1376,9 +1376,9 @@ if CommandLine.arguments.contains("--self-test") {
         let discFinishApp = App(); discFinishApp.previewOverride = false
         discFinishApp.connectFleetButton = NSButton(); discFinishApp.disconnectFleetButton = NSButton()
         discFinishApp.readRemember = { true }; discFinishApp.fleetOwner = { true }
-        discFinishApp.lastFleetReason = "unavailable"
         discFinishApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
         discFinishApp.beginFleet(remember:false,restored:discFinishApp.savedFleetState.credential,retryCount:1)
+        discFinishApp.lastFleetReason = "unavailable"
         let preDiscGen = discFinishApp.fleetGeneration
         let activeWorker = discFinishApp.fleetWorker!
         discFinishApp.disconnectFleet()
@@ -1391,9 +1391,9 @@ if CommandLine.arguments.contains("--self-test") {
         let retryApp = App(); retryApp.previewOverride = false
         retryApp.connectFleetButton = NSButton(); retryApp.disconnectFleetButton = NSButton()
         retryApp.readRemember = { true }; retryApp.fleetOwner = { true }
-        retryApp.lastFleetReason = "unavailable"
         retryApp.savedFleetState.credential = SavedFleetCredential(token:"valid-tok",created:100,expires:Date().timeIntervalSince1970+3600)
         retryApp.beginFleet(remember:false,restored:retryApp.savedFleetState.credential,retryCount:1)
+        retryApp.lastFleetReason = "unavailable"
         let retryWorker = retryApp.fleetWorker!
         precondition(retryApp.fleetRecoveryTimer == nil)
         retryWorker.finished(retryWorker)
