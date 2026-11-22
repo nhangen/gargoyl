@@ -184,6 +184,7 @@
           </table>
         </div>
         <p class="muted">Aliases stay on this Mac. They never rename source records or change identity matching or action targets.</p>
+        <p class="muted">Coverage note: no other provider in this account has a verified direct collector association, so every inventory row is inventory-only, has no remote history here (absence is not zero activity), and grants no provider control — no enrollment, remote command or restart is ever initiated for one. Per-row differences are the reported status, heartbeat and version above.</p>
       </section>
 
       <section aria-labelledby="mac-title">
@@ -260,6 +261,7 @@
     <li><strong>Monitor:</strong> a label plus one action. The label states only what the app knows (it started or stopped the job), never "running" as a health claim.</li>
     <li><strong>Messages</strong> from native actions go to a status strip under the toolbar with a <em>Clear</em> button (native, so it survives the 30-second page refresh; the web view runs no scripts). Warnings computed from the data (disconnected, partial) stay in the page and can't be dismissed.</li>
     <li><strong>Table:</strong> full provider IDs stay in every row (selectable). The coordinator column shows report freshness (current / stale / unknown) as its glyph, the reported status as text, outlined when adverse. Heartbeat shows the full time, recency and age at read, or the specific reason when there is none. Label source stays visible for aliases.</li>
+    <li><strong>Repeat text:</strong> identical-state providers must not repeat a wall of prose in every row. Each cell shows only its varying value (status, freshness, heartbeat, version); the invariants — inventory-only coverage, no remote history here, no provider-control grant — are hoisted into one shared coverage note below the table (also in the production <em>Fleet management</em> view). A provider that differs (e.g. the associated "This Mac" row) is visually distinct at a glance.</li>
     <li><strong>Duplicate labels</strong> get <em>Set alias…</em>, a <code>gargoyl-view://</code> link the app intercepts to open the alias sheet with that provider preselected.</li>
     <li><strong>This Mac</strong> becomes a facts grid with source and time per observation and keeps the alias and association honesty text. No new navigation route.</li>
     <li><strong>Narrow windows</strong> (the app's minimum width is 390 px) keep the sideways-scroll hint.</li>

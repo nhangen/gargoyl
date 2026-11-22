@@ -41,9 +41,9 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual((rows[1]['collection'], rows[1]['history_samples'], rows[1]['manual_restart']),
                          ('inventory_only', None, 'unavailable'))
         page = self.page()
-        self.assertIn('No direct', page.replace('no verified direct', 'No direct'))
+        self.assertIn('no verified association', page)
         self.assertIn('no remote history', page)
-        self.assertIn('Fresh preflight may refuse', page)
+        self.assertIn('no enrollment, remote command or restart is initiated', page)
         self.assertIn('Account inventory read ' + NOW, page)
         self.assertIn('local report', page)
         self.assertIn('<br><span class="mono">provider-real-format-test-only</span>', page)
