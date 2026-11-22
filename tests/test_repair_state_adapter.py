@@ -5,10 +5,10 @@ import json
 import os
 import tempfile
 import threading
-import time
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -368,22 +368,49 @@ class StateRefreshTests(unittest.TestCase):
             records[0]["fields"]["requests_total"]["timestamp"], "2025-12-31T23:59:01Z"
         )
 
-    def test_real_clock_source_expires_during_sub_budget_commit_delay(self):
-        now = datetime.now(timezone.utc).timestamp()
-        self.write(dict(fixture(), written_at=now - 59.2, started_at=now - 100))
-        self.adapter._wall_clock = lambda: datetime.now(timezone.utc).isoformat()
+    def test_source_expires_during_sub_budget_commit_delay(self):
+        self.write(dict(fixture(), written_at=EPOCH - 59.5))
+        origin = datetime.fromtimestamp(EPOCH, timezone.utc)
+        elapsed = 0.0
+
+        def monotonic():
+            return elapsed
+
+        def wall_clock():
+            return (origin + timedelta(seconds=elapsed)).isoformat()
+
+        self.adapter._clock = monotonic
+        self.adapter._wall_clock = wall_clock
         accept = self.store.accept
 
         def delayed(*args, **kwargs):
-            time.sleep(1.2)
-            return accept(*args, **kwargs)
+            nonlocal elapsed
+            # Commit real evidence, then model time spent in acceptance. The
+            # source has crossed its TTL, but the adapter still has budget.
+            accepted = accept(*args, **kwargs)
+            elapsed = 1.25
+            return accepted
 
-        with patch.object(self.store, "accept", side_effect=delayed):
+        with (
+            patch(
+                "gargoyl.repair_state_adapter.time", SimpleNamespace(monotonic=monotonic)
+            ),
+            patch.object(self.store, "accept", side_effect=delayed) as publish,
+        ):
             result = self.execute()
-        self.assertEqual(result.outcome, "outcome_unknown")
-        self.assertIn(result.reason, {"invalid_result", "deadline_exceeded"})
-        records = self.store.snapshots(now=datetime.now(timezone.utc).isoformat())
-        self.assertEqual(len(records), 1)
+        publish.assert_called_once()
+        self.assertEqual(
+            (result.outcome, result.reason), ("outcome_unknown", "invalid_result")
+        )
+        self.assertEqual(len(self.store.snapshots(now=wall_clock())), 1)
+
+    def test_wall_clock_rollback_after_acceptance_retains_record(self):
+        self.adapter._wall_clock = iter((NOW, NOW, BEFORE)).__next__
+        result = self.execute()
+        self.assertEqual(
+            (result.outcome, result.reason), ("outcome_unknown", "clock_invalid")
+        )
+        self.assertEqual(len(self.store.snapshots(now=NOW)), 1)
 
     def test_storage_failure_or_false_acceptance_never_claims_success(self):
         self.store._db.execute("PRAGMA query_only=ON")
