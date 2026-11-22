@@ -69,8 +69,8 @@ EXPECTED_DIGESTS = {
         "git": "ed3bff4559b8bd9e6cc879247a9e256b38aaf806",
     },
     "tools/build_macos_app.py": {
-        "sha256": "9627562a2ac1ac3ccf909fd75b07ae8844034d7065fc1e0a6d85434893d375f5",
-        "git": "a502c81700737257a7ba0562353bb56537621d29",
+        "sha256": "6f5ca22a688266cb29aac0b4b2ca7734d3cc28558c54981d682524046f57fb60",
+        "git": "b07ba14359e135fa46ee90a377663d3cd7cee7e3",
     },
     "tools/offline_acceptance_evidence.py": {
         "sha256": "1447cd6f98336efa34d23e6bfc411d2ae6498c011c7abd0f76aa6b5e8f2c8734",
