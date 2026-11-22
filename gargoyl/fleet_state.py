@@ -257,10 +257,9 @@ def validate_inventory(value):
     return value
 
 
-def evidence_state(inventory, row, now):
-    """Fetch freshness and heartbeat freshness are distinct from reported status."""
+def account_report_state(inventory, now):
     fetch_age = (timestamp(now) - timestamp(inventory["fetched_at"])).total_seconds()
-    report = (
+    return (
         "unknown"
         if fetch_age < 0
         else (
@@ -269,11 +268,18 @@ def evidence_state(inventory, row, now):
             else "stale"
         )
     )
-    heartbeat = "unknown"
-    if row["heartbeat_at"] is not None:
-        age = (timestamp(now) - timestamp(row["heartbeat_at"])).total_seconds()
-        heartbeat = "unknown" if age < 0 else ("recent" if age <= TTL else "older")
-    return report, heartbeat
+
+
+def heartbeat_state(row, now):
+    if row["heartbeat_at"] is None:
+        return "unknown"
+    age = (timestamp(now) - timestamp(row["heartbeat_at"])).total_seconds()
+    return "unknown" if age < 0 else ("recent" if age <= TTL else "older")
+
+
+def evidence_state(inventory, row, now):
+    """Fetch freshness and heartbeat freshness are distinct from reported status."""
+    return account_report_state(inventory, now), heartbeat_state(row, now)
 
 
 def _directory(path, uid, create=False):

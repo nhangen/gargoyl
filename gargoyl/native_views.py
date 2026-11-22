@@ -14,7 +14,10 @@ VIEWS = ("fleet", "management", "tools", "evidence", "history", "operation", "de
 LABELS = ("Your fleet", "Fleet management", "Operator tools", "Local evidence", "Local traffic", "Manual operation", "Local details")
 
 
-NATIVE_STYLE = """<style>@media (max-width:600px) {
+NATIVE_STYLE = """<style>
+.management-table th:nth-child(2), .management-table th:nth-child(3),
+.management-table th:nth-child(4), .management-table td { min-width:88px; }
+@media (max-width:600px) {
 .topbar { padding:8px 12px; gap:6px 12px; }
 .nav ul { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); padding:4px 8px; gap:2px; }
 .nav a { min-height:30px; padding:3px 5px; font-size:12px; white-space:normal; }

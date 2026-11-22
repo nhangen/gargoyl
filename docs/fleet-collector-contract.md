@@ -31,7 +31,8 @@ with honest unavailable reasons. This boundary does not block current local tool
 ## Table presentation
 
 Rows must stay distinguishable: each cell shows only a value that can vary per
-row (reported status, report and heartbeat freshness, version, coverage state).
+row (reported status, heartbeat freshness, version, coverage state). Account
+report freshness belongs in the account summary because it comes from one read.
 The invariants that are true of every inventory row — no verified direct
 collector association, no remote history in this app (absence is not zero
 activity), and no provider-control grant, so no enrollment, remote command or

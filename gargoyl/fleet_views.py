@@ -115,15 +115,21 @@ def _adverse(row):
     return bool(status) and status.lower() in ADVERSE_STATUSES
 
 
-def _report_cell(row, report):
-    # The reported value is plain text (outlined when adverse); the freshness glyph describes
-    # the report, so it sits on the freshness line, never beside the status as a health light.
+def reported_status_html(row):
     status = row["reported_status"]
     text = e(status) if status else '<span class="faint">status not reported</span>'
     if _adverse(row):
         text = '<span class="adv">' + text + "</span>"
-    return ('<span class="fleet-status">' + text + '</span><span class="fleet-sub"><span class="ev '
-            + GLYPH[report] + '">report ' + e(report) + "</span></span>")
+    return text
+
+
+def _report_cell(row, report):
+    return ('<span class="fleet-status">' + reported_status_html(row)
+            + '</span><span class="fleet-sub">' + report_freshness_html(report) + "</span>")
+
+
+def report_freshness_html(report):
+    return '<span class="ev ' + GLYPH[report] + '">report ' + e(report) + "</span>"
 
 
 def render_fleet(

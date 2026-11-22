@@ -7,7 +7,13 @@ remote collector or provider operation. Remote transport/enrollment is absent.
 from html import escape
 
 from gargoyl.fleet_identity import matching_provider
-from gargoyl.fleet_state import evidence_state, provider_key, validate_inventory
+from gargoyl.fleet_state import (
+    account_report_state,
+    heartbeat_state,
+    provider_key,
+    validate_inventory,
+)
+from gargoyl.fleet_views import report_freshness_html, reported_status_html
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
 
 
@@ -31,7 +37,6 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
         matched = None
     rows = []
     for item in inventory['providers']:
-        report, heartbeat = evidence_state(inventory, item, now)
         associated = matched == item['id']
         process_state = 'unknown'
         if associated and samples and timestamp(samples[-1]['collected_at']) <= at:
@@ -44,26 +49,15 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
                          source_kind=item['name_kind'], key=provider_key(item['id']),
                          reported_status=item['reported_status'],
                          version=item['version'],
-                         account_state=report, heartbeat_state=heartbeat,
+                         heartbeat_state=heartbeat_state(item, now),
                          collection='local_associated' if associated else 'inventory_only',
                          process_state=process_state,
                          history_samples=len(samples) if associated and evidence is not None else None,
                          manual_restart='native_review' if associated else 'unavailable'))
     return dict(inventory_available=True, partial=inventory['partial'], rows=rows,
                 fetched_at=inventory['fetched_at'], connection=inventory['connection'],
+                report_state=account_report_state(inventory, now),
                 preview=preview, lifecycle=lifecycle)
-
-
-ADVERSE_STATUSES = {"offline", "stopped", "error", "failed", "unhealthy", "ineligible", "disconnected"}
-
-
-def _report_text(status):
-    # The reported value is plain text, outlined when adverse; the glyph describes report
-    # freshness, so the two channels never share meaning (evidence doctrine).
-    text = escape(status, quote=True) if status else '<span class="faint">status not reported</span>'
-    if status is not None and status.lower() in ADVERSE_STATUSES:
-        text = '<span class="adv">' + text + "</span>"
-    return text
 
 
 def management_html(projection, aliases):
@@ -85,13 +79,16 @@ def management_html(projection, aliases):
         session_status += ' (read-only preview mode)'
     elif projection.get('lifecycle'):
         session_status += ' · reader ' + e(projection['lifecycle']['status'])
-    body += '<p>Account inventory read ' + e(projection['fetched_at']) + ' · session last reported ' + session_status + '. These are coordinator reports, not independent remote health.</p>'
+    body += ('<p>Account inventory read ' + e(projection['fetched_at']) + ' · '
+             + report_freshness_html(projection['report_state']) + ' · session last reported '
+             + session_status + '. These are coordinator reports, not independent remote health.</p>')
     if projection['partial']:
         body += '<p>Partial inventory. Missing providers have unknown coverage.</p>'
-    body += ('<div class="scroll" tabindex="0" role="region" aria-label="Provider management coverage">'
-             '<table><thead><tr><th>Provider / actual ID</th><th>Report</th><th>Heartbeat</th>'
-             '<th>Version</th><th>Evidence coverage</th><th>History</th>'
-             '<th>Operator workflow</th></tr></thead><tbody>')
+    body += ('<div class="scroll management-table" tabindex="0" role="region" aria-label="Provider management coverage" '
+             'aria-describedby="management-coverage">'
+             '<table><thead><tr><th scope="col">Provider / actual ID</th><th scope="col">Report</th>'
+             '<th scope="col">Heartbeat</th><th scope="col">Version</th><th scope="col">Evidence coverage</th>'
+             '<th scope="col">History</th><th scope="col">Operator workflow</th></tr></thead><tbody>')
     for row in projection['rows']:
         label = aliases.get(row['provider_id'], row['source_name'])
         identity = ('<a href="gargoyl-view://fleet-node-' + row['key'] + '/">' + e(label)
@@ -99,30 +96,34 @@ def management_html(projection, aliases):
         if row['provider_id'] in aliases:
             identity += '<br><span class="muted">Local alias · source: ' + e(row['source_name']) + '</span>'
         if row['collection'] == 'local_associated':
-            identity += '<br><span class="muted">This Mac · unique identity match</span>'
-        coverage = ('<span class="muted">Direct observations: </span>' + e(row['process_state'])
-                    if row['collection'] == 'local_associated'
-                    else '<span class="muted">Direct observations: </span><span class="faint">none (no verified association)</span>')
-        history = ('<a href="gargoyl-view://history/">Open local history</a> · '
-                   + (e(row['history_samples']) + ' retained samples' if row['history_samples'] is not None
-                      else 'unavailable') if row['collection'] == 'local_associated'
-                   else '<span class="faint">none here</span>')
-        workflow = ('<a href="gargoyl-view://operation/">Restart local…</a> · '
-                    '<a href="gargoyl-view://operation/">status</a>' if row['collection'] == 'local_associated'
-                    else '<span class="faint">unavailable</span>')
+            identity += '<br><strong>This Mac · unique identity match</strong>'
+            coverage = 'Native process evidence: ' + e(row['process_state'])
+            sample_count = row['history_samples']
+            retained = 'Monitor history unavailable'
+            if sample_count is not None:
+                retained = f"{sample_count} retained " + ('sample' if sample_count == 1 else 'samples')
+            history = '<a href="gargoyl-view://history/">Open local history</a><br>' + retained
+            workflow = '<a href="gargoyl-view://operation/">Operation status</a>'
+            if not projection.get('preview'):
+                workflow = 'Use <strong>Restart local…</strong> in the toolbar<br>' + workflow
+        else:
+            coverage = 'Inventory only'
+            history = '<span class="faint">None here</span>'
+            workflow = '<span class="faint">Unavailable</span>'
         body += ('<tr><th scope="row">' + identity + '</th>'
-                 '<td>' + _report_text(row['reported_status']) + '<br><span class="muted">report '
-                 + e(row['account_state']) + '</span></td>'
+                 '<td>' + reported_status_html(row) + '</td>'
                  '<td>' + e(row['heartbeat_state']) + '</td>'
                  '<td>' + ('<span class="mono">' + e(row['version']) + '</span>' if row['version']
                            else '<span class="faint">not reported</span>') + '</td>'
                  '<td>' + coverage + '</td><td>' + history + '</td><td>' + workflow + '</td></tr>')
     body += '</tbody></table></div>'
-    body += ('<p>Inventory rows differ only in their reported fields. No verified direct collector '
-             'association exists for them: this view holds no remote history (its absence is not zero '
-             'activity) and the account grant has no provider control, so no enrollment, remote command '
-             'or restart is initiated for an inventory row. The Restart local… link applies to this Mac '
-             'only and needs a fresh preflight plus your Mac’s confirmation; this view grants nothing.</p>')
+    body += ('<p id="management-coverage">Inventory-only rows have no verified direct collector '
+             'association. There is no remote history here, so activity is unknown. The account grant '
+             'has no provider control, so no enrollment, remote command or restart is initiated for '
+             'an inventory row.')
+    if not projection.get('preview') and any(row['manual_restart'] == 'native_review' for row in projection['rows']):
+        body += ' A local restart requires fresh preflight and confirmation on this Mac.'
+    body += '</p>'
     if not projection['rows']:
         body += '<p>No usable returned provider records; check account connection and partial coverage.</p>'
     return body + ('</section><section><h2>Available graphical tools</h2><p>Use <strong>Aliases…</strong> '
