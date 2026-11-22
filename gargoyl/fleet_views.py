@@ -115,8 +115,8 @@ def _adverse(row):
     return bool(status) and status.lower() in ADVERSE_STATUSES
 
 
-def reported_status_html(row):
-    status = row["reported_status"]
+def reported_status_html(row, *, display_value=None):
+    status = row["reported_status"] if display_value is None else display_value
     text = e(status) if status else '<span class="faint">status not reported</span>'
     if _adverse(row):
         text = '<span class="adv">' + text + "</span>"

@@ -17,6 +17,13 @@ from gargoyl.fleet_views import report_freshness_html, reported_status_html
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
 
 
+def _compact_report_value(value):
+    if value is not None and len(escape(value).encode()) > 88:
+        # Fourteen characters plus an ellipsis fit even when each expands to six bytes.
+        return value[:9] + '…' + value[-5:]
+    return value
+
+
 def management_projection(inventory, local, evidence, now, local_host_id, preview=False, lifecycle=None):
     host_id(local_host_id)
     at = timestamp(now)
@@ -89,7 +96,11 @@ def management_html(projection, aliases):
              '<table><thead><tr><th scope="col">Provider / actual ID</th><th scope="col">Report</th>'
              '<th scope="col">Heartbeat</th><th scope="col">Version</th><th scope="col">Evidence coverage</th>'
              '<th scope="col">History</th><th scope="col">Operator workflow</th></tr></thead><tbody>')
+    shortened = False
     for row in projection['rows']:
+        status = _compact_report_value(row['reported_status'])
+        version = _compact_report_value(row['version'])
+        shortened |= status != row['reported_status'] or version != row['version']
         label = aliases.get(row['provider_id'], row['source_name'])
         identity = ('<a href="gargoyl-view://fleet-node-' + row['key'] + '/">' + e(label)
                     + '</a><br><span class="mono">' + e(row['provider_id']) + '</span>')
@@ -108,14 +119,16 @@ def management_html(projection, aliases):
                 workflow = 'Use <strong>Restart local…</strong> in the toolbar<br>' + workflow
         else:
             coverage = 'Inventory only'
-            history = '<span class="faint">None here</span>'
-            workflow = '<span class="faint">Unavailable</span>'
+            history = 'None here'
+            workflow = 'Unavailable'
+        unavailable = ' class="faint"' if row['collection'] == 'inventory_only' else ''
         body += ('<tr><th scope="row">' + identity + '</th>'
-                 '<td>' + reported_status_html(row) + '</td>'
+                 '<td>' + reported_status_html(row, display_value=status) + '</td>'
                  '<td>' + e(row['heartbeat_state']) + '</td>'
-                 '<td>' + ('<span class="mono">' + e(row['version']) + '</span>' if row['version']
+                 '<td>' + ('<span class="mono">' + e(version) + '</span>' if version
                            else '<span class="faint">not reported</span>') + '</td>'
-                 '<td>' + coverage + '</td><td>' + history + '</td><td>' + workflow + '</td></tr>')
+                 '<td>' + coverage + '</td><td' + unavailable + '>' + history
+                 + '</td><td' + unavailable + '>' + workflow + '</td></tr>')
     body += '</tbody></table></div>'
     body += ('<p id="management-coverage">Inventory-only rows have no verified direct collector '
              'association. There is no remote history here, so activity is unknown. The account grant '
@@ -123,6 +136,8 @@ def management_html(projection, aliases):
              'an inventory row.')
     if not projection.get('preview') and any(row['manual_restart'] == 'native_review' for row in projection['rows']):
         body += ' A local restart requires fresh preflight and confirmation on this Mac.'
+    if shortened:
+        body += ' Select a provider to see its full report values.'
     body += '</p>'
     if not projection['rows']:
         body += '<p>No usable returned provider records; check account connection and partial coverage.</p>'

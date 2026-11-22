@@ -1,7 +1,9 @@
 """Management views consume existing evidence only; no enrollment or lifecycle."""
 import copy
+import json
 import re
 import unittest
+from html import escape
 
 from test_dashboard import HOST, snapshot
 from test_fleet_state import NOW, response
@@ -101,6 +103,35 @@ class ManagementTests(unittest.TestCase):
         self.assertIn('This Mac · unique identity match', table)
         self.assertIn('href="gargoyl-view://operation/">Operation status</a>', table)
         self.assertNotIn('Restart local…', page)
+
+    def test_large_inventory_fits_native_limits_and_provider_details_keep_full_values(self):
+        for count, punctuation, value_length, alias_count in ((200, '"', 64, 0), (256, '&', 64, 0),
+                                                               (229, '"', 16, 15)):
+            with self.subTest(count=count, punctuation=punctuation, value_length=value_length):
+                status = punctuation * value_length
+                version = "'" * value_length if punctuation == '"' else punctuation * value_length
+                raw = {'providers': [
+                    {'id': punctuation * 125 + f'{index:03d}', 'name': punctuation * 128,
+                     'status': status, 'version': version}
+                    for index in range(count)
+                ]}
+                inventory = normalize_inventory(raw, NOW)
+                aliases = {provider['id']: punctuation * 64 for provider in raw['providers'][:alias_count]}
+                if aliases:
+                    inventory['connection'] = 'disconnected'
+                page = self.page(inventory=inventory, local=None, evidence=None, aliases=aliases)
+                self.assertLessEqual(len(page.encode()), 500_000)
+                self.assertLessEqual(len(json.dumps({'html': page}, ensure_ascii=False).encode()), 590_000)
+                self.assertEqual(page.count('<tr><th scope="row">'), count)
+                self.assertIn('Select a provider to see its full report values.', page)
+                self.assertNotIn('<td>' + escape(status) + '</td>', page)
+                self.assertNotIn('<td><span class="mono">' + escape(version) + '</span></td>', page)
+                provider_id = raw['providers'][-1]['id']
+                self.assertIn(escape(provider_id), page)
+                link = re.search(r'href="gargoyl-view://(fleet-node-[a-f0-9]+)/"', page)
+                detail = render_view(link.group(1), None, None, inventory=inventory, now=NOW)
+                self.assertIn(escape(status), detail)
+                self.assertIn(escape(version), detail)
 
     def test_names_and_aliases_never_supply_association_or_action_authority(self):
         page = self.page(local=None, aliases={'second-provider-test-only':'MBP-2026.local'})
