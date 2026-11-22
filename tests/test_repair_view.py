@@ -6,6 +6,7 @@ from unittest.mock import patch
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from test_telemetry import snapshot
 
+from gargoyl.dashboard.favicon import FAVICON_DATA_URL
 from gargoyl.repair_catalog import SIGNING_CONTEXT, RunbookCatalog
 from gargoyl.repair_contract import (
     RUNBOOK_IDS,
@@ -59,9 +60,9 @@ class RepairViewTests(unittest.TestCase):
     def assert_read_only(self, page):
         for tag in ('<form', '<button', '<input', '<script', 'onclick='):
             self.assertNotIn(tag, page)
-        # The shared presentation shell permits only navigation within this
-        # document, never a repair route, external resource or action link.
-        self.assertEqual(set(re.findall(r'href="([^"]*)"', page)), {'#main'})
+        favicon = f'<link rel="icon" type="image/svg+xml" href="{FAVICON_DATA_URL}">'
+        self.assertEqual(page.count(favicon), 1)
+        self.assertEqual(set(re.findall(r'href="([^"]*)"', page.replace(favicon, ''))), {'#main'})
         self.assertIn('id="main"', page)
 
     def test_exact_bindings_and_intent_are_not_authorization(self):

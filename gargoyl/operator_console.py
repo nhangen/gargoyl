@@ -56,7 +56,7 @@ class Refused(Exception):
     """A request was refused; the message is safe to show."""
 
 
-CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 NONCE_SECONDS = 600
 MAX_NONCES = 64
 MAX_BODY = 2048

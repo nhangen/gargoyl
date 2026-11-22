@@ -3,11 +3,13 @@
 import argparse
 import platform
 import plistlib
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 from gargoyl.native_app import SWIFT  # noqa: E402
 from gargoyl.pilot_configuration import load_pilot_configuration  # noqa: E402
 
@@ -55,12 +57,17 @@ def build(output, python, *, preview=True):
         ],
         check=True,
     )
+    icon = ROOT / "assets/icon/gargoyl.icns"
+    resources = contents / "Resources"
+    resources.mkdir()
+    shutil.copyfile(icon, resources / icon.name)
     info = dict(
         CFBundleExecutable="Gargoyl",
         CFBundleIdentifier="dev.gargoyl.app",
         CFBundleName="Gargoyl",
         CFBundleDisplayName="Gargoyl",
         CFBundlePackageType="APPL",
+        CFBundleIconFile=icon.name,
         CFBundleVersion="1",
         CFBundleShortVersionString="0.1.0",
         LSMinimumSystemVersion="13.0",

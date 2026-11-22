@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from struct import unpack_from
 from unittest.mock import Mock, patch
 
 
@@ -46,9 +47,21 @@ class NativeBundleTests(unittest.TestCase):
         app = self.build()
         subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)], check=True, capture_output=True)
         info = app / 'Contents/Info.plist'
-        values = plistlib.loads(info.read_bytes())
+        metadata = info.read_bytes()
+        values = plistlib.loads(metadata)
         self.assertTrue(values['GargoylReadOnlyPreview'])
+        self.assertEqual(values['CFBundleIconFile'], 'gargoyl.icns')
+        icon = app / 'Contents/Resources' / values['CFBundleIconFile']
+        data = icon.read_bytes()
+        self.assertEqual(unpack_from('>4sI4sI', data), (b'icns', len(data), b'ic09', len(data) - 8))
+        subprocess.run(['/usr/bin/sips', '-s', 'format', 'png', str(icon),
+                        '--out', str(self.root / 'decoded.png')], check=True, capture_output=True)
+        self.assertTrue((self.root / 'decoded.png').is_file())
         values['CFBundleName'] = 'tampered fixture'
         info.write_bytes(plistlib.dumps(values))
+        check = subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)], capture_output=True)
+        self.assertNotEqual(check.returncode, 0)
+        info.write_bytes(metadata)
+        icon.write_bytes(data + b'tampered fixture')
         check = subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)], capture_output=True)
         self.assertNotEqual(check.returncode, 0)

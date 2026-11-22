@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 SITE = Path(__file__).resolve().parent
+ICONS = SITE.parent / "assets" / "icon"
 PLACEHOLDER = "REPLACE_ME"
 TOKEN = re.compile(r"\{\{link:([a-z0-9_]+)\}\}")
 
@@ -43,6 +44,7 @@ def build(src: Path, out: Path, links: dict[str, str]) -> None:
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(src, out)
+    shutil.copytree(ICONS, out / "icon", dirs_exist_ok=True)
     for page in out.rglob("*.html"):
         page.write_text(render(page.read_text(encoding="utf-8"), links), encoding="utf-8")
 

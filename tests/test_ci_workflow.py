@@ -701,7 +701,7 @@ class CIWorkflowTests(unittest.TestCase):
                 "eec6c171586a8acb7b52914e04b1209e01a929a2dbd6afd5bdeee65ffbe264a7"
             ),
             "tools/build_macos_app.py": (
-                "9627562a2ac1ac3ccf909fd75b07ae8844034d7065fc1e0a6d85434893d375f5"
+                "6f5ca22a688266cb29aac0b4b2ca7734d3cc28558c54981d682524046f57fb60"
             ),
             "tools/offline_acceptance_evidence.py": (
                 "1447cd6f98336efa34d23e6bfc411d2ae6498c011c7abd0f76aa6b5e8f2c8734"
