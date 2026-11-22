@@ -1,10 +1,13 @@
 import contextlib
 import http.client
 import io
+import re
 import socket
 import threading
 import time
 import unittest
+from base64 import b64decode
+from pathlib import Path
 from unittest.mock import patch
 
 from test_dashboard import HOST, NOW, snapshot
@@ -59,6 +62,17 @@ class ViewerTests(unittest.TestCase):
             self.assertIn('daemon_state: unknown', page)
             self.assertIn('stale (reported: observed)', page)
             self.assertEqual(reader.calls, [NOW, clock[0]])
+
+    def test_page_serves_bundled_favicon_without_an_asset_route(self):
+        with EvidenceViewer(Reader(), [HOST], clock=lambda: NOW) as viewer:
+            status, headers, page = self.request(viewer)
+            self.assertEqual(status, 200)
+            self.assertIn("img-src data:", headers["Content-Security-Policy"])
+            icon = re.search(r'<link rel="icon" type="image/svg\+xml" href="data:image/svg\+xml;base64,([^"]+)"', page)
+            self.assertIsNotNone(icon)
+            expected = Path(__file__).resolve().parents[1] / "assets/icon/favicon.svg"
+            self.assertEqual(b64decode(icon[1], validate=True), expected.read_bytes())
+            self.assertEqual(self.request(viewer, path="/favicon.svg")[0], 404)
 
     def test_new_evidence_visible_on_next_refresh_within_minute(self):
         reader = Reader([snapshot()])

@@ -5,23 +5,27 @@ from html.parser import HTMLParser
 from test_dashboard import HOST, NOW, snapshot
 
 from gargoyl.dashboard import ADVERSE_VALUES, render_dashboard
+from gargoyl.dashboard.favicon import FAVICON_DATA_URL
 from gargoyl.dashboard.theme import STYLE
 from gargoyl.repair_view import render_restart_unavailable
 
 OTHER = '00000000-0000-4000-8000-0000000000aa'
+FAVICON_LINK = {'rel': 'icon', 'type': 'image/svg+xml', 'href': FAVICON_DATA_URL}
 
 
 class Structure(HTMLParser):
     def __init__(self):
         super().__init__()
-        self.ids, self.links, self.tags = [], [], []
+        self.ids, self.links, self.tags, self.head_links = [], [], [], []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         self.tags.append(tag)
         if 'id' in attrs:
             self.ids.append(attrs['id'])
-        if 'href' in attrs:
+        if tag == 'link':
+            self.head_links.append(attrs)
+        elif 'href' in attrs:
             self.links.append(attrs['href'])
         if 'src' in attrs:
             self.links.append(attrs['src'])
@@ -40,7 +44,8 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn('daemon · ' + NOW, page)
         self.assertIn('coordinator · ' + NOW, page)
         self.assertIn('Protocol confidence: <strong>unknown</strong>', page)
-        self.assertFalse(set(parser.tags) & {'script', 'form', 'button', 'input', 'link', 'iframe'})
+        self.assertEqual(parser.head_links, [FAVICON_LINK])
+        self.assertFalse(set(parser.tags) & {'script', 'form', 'button', 'input', 'iframe'})
 
     def test_host_navigation_and_mobile_jump_resolve_for_every_inventory(self):
         for data, hosts in (([snapshot()], [HOST]), ([], [HOST]), ([], [])):
@@ -52,6 +57,7 @@ class ConsoleTests(unittest.TestCase):
                 self.assertIn('<a href="#needs-attention">Needs attention</a>', page)
                 self.assertTrue({'fleet-overview', 'needs-attention'} <= set(parser.ids))
                 self.assertTrue(all(link[1:] in parser.ids for link in parser.links))
+                self.assertEqual(parser.head_links, [FAVICON_LINK])
         page = render_dashboard([snapshot(), snapshot(value='stopped', source='coordinator')], [HOST, OTHER], NOW)
         regions = re.findall(r'role="region" aria-label="([^"]+)"', page)
         self.assertGreater(len(regions), 2)

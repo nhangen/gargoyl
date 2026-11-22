@@ -79,7 +79,7 @@ class EvidenceViewer(HTTPServer):
 class _Handler(BaseHTTPRequestHandler):
     server_version = 'Gargoyl'
     sys_version = ''
-    csp = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    csp = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     referrer_policy = 'no-referrer'
 
     def setup(self):

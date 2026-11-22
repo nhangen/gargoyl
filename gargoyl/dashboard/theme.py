@@ -1,5 +1,7 @@
 """Self-contained operator-console styling, adapted from design/app. No assets or I/O."""
 
+from gargoyl.dashboard.favicon import FAVICON_DATA_URL
+
 STYLE = r"""/* Gargoyl operator console: design prototype styles.
    No scripts: everything here must survive a server-rendered, script-free viewer. */
 
@@ -386,6 +388,7 @@ def page_start(title, *, host_navigation=False, extra_nav=(), badge=None):
     from html import escape
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<link rel="icon" type="image/svg+xml" href="{FAVICON_DATA_URL}">'
             '<title>' + escape(title, quote=True) + '</title><style>' + STYLE + '</style></head>'
             '<body><a class="skip-link" href="#main">Skip to content</a><div class="shell">'
             '<header class="topbar"><a class="brand" href="#main" aria-label="Gargoyl evidence">'
