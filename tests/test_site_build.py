@@ -37,6 +37,25 @@ class SiteTest(unittest.TestCase):
             self.assertIn('href="https://github.com/nhangen/gargoyl"', page)
             self.assertTrue((out / "fonts" / "archivo-latin-variable.woff2").is_file())
 
+    def test_build_includes_icon_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "dist"
+            self.assertEqual(site_build.main(["--out", str(out)]), 0)
+            page = (out / "index.html").read_text(encoding="utf-8")
+            self.assertIn('href="icon/favicon.svg"', page)
+            self.assertIn('href="icon/apple-touch-icon.png"', page)
+            self.assertIn('href="icon/manifest.webmanifest"', page)
+            for name in (
+                "icon/favicon.svg",
+                "icon/apple-touch-icon.png",
+                "icon/icon-192.png",
+                "icon/icon-512.png",
+                "icon/icon-maskable-512.png",
+                "icon/manifest.webmanifest",
+            ):
+                with self.subTest(icon=name):
+                    self.assertTrue((out / name).is_file())
+
     def test_strict_fails_while_placeholders_remain(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "dist"
