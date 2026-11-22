@@ -1,7 +1,9 @@
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import urljoin
 
 SITE = Path(__file__).resolve().parent.parent / "site"
 spec = importlib.util.spec_from_file_location("site_build", SITE / "build.py")
@@ -37,24 +39,29 @@ class SiteTest(unittest.TestCase):
             self.assertIn('href="https://github.com/nhangen/gargoyl"', page)
             self.assertTrue((out / "fonts" / "archivo-latin-variable.woff2").is_file())
 
-    def test_build_includes_icon_set(self):
+    def test_built_page_and_manifest_resolve_to_published_icons(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "dist"
             self.assertEqual(site_build.main(["--out", str(out)]), 0)
             page = (out / "index.html").read_text(encoding="utf-8")
-            self.assertIn('href="icon/favicon.svg"', page)
-            self.assertIn('href="icon/apple-touch-icon.png"', page)
-            self.assertIn('href="icon/manifest.webmanifest"', page)
-            for name in (
-                "icon/favicon.svg",
-                "icon/apple-touch-icon.png",
-                "icon/icon-192.png",
-                "icon/icon-512.png",
-                "icon/icon-maskable-512.png",
-                "icon/manifest.webmanifest",
-            ):
-                with self.subTest(icon=name):
-                    self.assertTrue((out / name).is_file())
+            for href in ("icon/favicon.svg", "icon/apple-touch-icon.png",
+                         "icon/icon-192.png", "icon/icon-512.png", "icon/manifest.webmanifest"):
+                with self.subTest(href=href):
+                    self.assertIn(f'href="{href}"', page)
+                    self.assertTrue((out / href).is_file())
+
+            manifest_url = "/icon/manifest.webmanifest"
+            manifest = json.loads((out / manifest_url.lstrip("/")).read_text(encoding="utf-8"))
+            self.assertCountEqual(
+                [(icon["sizes"], icon["purpose"]) for icon in manifest["icons"]],
+                [("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")],
+            )
+            for icon in manifest["icons"]:
+                url = urljoin(manifest_url, icon["src"])
+                data = (out / url.lstrip("/")).read_bytes()
+                size = int(icon["sizes"].split("x")[0])
+                self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+                self.assertEqual(data[16:24], size.to_bytes(4, "big") * 2)
 
     def test_strict_fails_while_placeholders_remain(self):
         with tempfile.TemporaryDirectory() as tmp:

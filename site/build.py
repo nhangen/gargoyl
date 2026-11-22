@@ -44,10 +44,7 @@ def build(src: Path, out: Path, links: dict[str, str]) -> None:
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(src, out)
-    # Copy the icon set from the canonical assets location.
-    if ICONS.exists():
-        dest = out / "icon"
-        shutil.copytree(ICONS, dest, dirs_exist_ok=True)
+    shutil.copytree(ICONS, out / "icon", dirs_exist_ok=True)
     for page in out.rglob("*.html"):
         page.write_text(render(page.read_text(encoding="utf-8"), links), encoding="utf-8")
 

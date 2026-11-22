@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <!-- The Gargoyl mark. Single source of truth for the logo across the
        operator console (design/app/*), the site (site/src), and the
-       rendered app icons in assets/icon/. The two eye shapes are the
+       rendered app icons. The two eye shapes are the
        accent; everything else is currentColor. -->
   <path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
   <path class="eyes" d="M21 31l8 3-8 1z M43 31l-8 3 8 1z"/>

@@ -6,11 +6,13 @@
   (`.eyes`). Inline this path data in HTML, or reference the file from
   `assets/` directly.
 - `icon/` — rendered icon set for browsers and packaged app surfaces:
-  - `favicon.svg` — favicon (rounded dark plate + mark)
+  - `favicon.svg` — browser favicon
   - `apple-touch-icon.png` — 180×180, iOS home screen
   - `icon-192.png` / `icon-512.png` — PWA / manifest icons
   - `icon-maskable-512.png` — PWA maskable icon (safe-zone padded)
   - `gargoyl.icns` — macOS application icon
 
-`icon/` is generated from `gargoyle.svg` by `assets/render_icons.py`;
-re-render with `python assets/render_icons.py` after changing the mark.
+The renderer reads `gargoyle.svg` and writes `icon/` and
+`gargoyl/dashboard/favicon.py` for the self-contained operator console.
+Install librsvg to provide `rsvg-convert`, then run
+`python assets/render_icons.py` after changing the mark.
