@@ -140,7 +140,7 @@
       <section aria-labelledby="inv-title">
         <div class="section-head">
           <h2 id="inv-title">Owned providers</h2>
-          <p>4 of 4 reported records · read 2026-11-01 15:56:05Z · session connected. Account-reported, not independent remote checks.</p>
+          <p>4 of 4 reported records · read 2026-11-01 15:56:05Z · <span class="ev ev-observed">report current</span> · session connected. Account-reported, not independent remote checks.</p>
         </div>
 
         <ul class="filters" aria-label="Filter by heartbeat">
@@ -152,31 +152,31 @@
 
         <p class="muted" style="font-size:13px">1 reported offline or failing · 1 with no reported status · 1 with an older heartbeat · 1 with an unknown heartbeat</p>
         <p class="scroll-hint">Scroll the table sideways to see all evidence.</p>
-        <div class="table-wrap" tabindex="0" role="region" aria-label="Owned providers">
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Owned providers" aria-describedby="inventory-coverage">
           <table class="fleet">
             <thead><tr><th scope="col">Provider</th><th scope="col">Coordinator report</th><th scope="col">Last heartbeat</th><th scope="col">Version</th></tr></thead>
             <tbody>
               <tr>
                 <th scope="row" class="prov"><a href="#">Studio · office</a><span class="id">6d18aa14-0000-4000-8000-00000000ef01</span><span class="src">Local alias · hardware model “Mac14,13”</span></th>
-                <td>online<span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td>online</td>
                 <td><span class="ev ev-observed mono">2026-11-01 15:56:03Z</span><span class="cell-sub">recent</span></td>
                 <td class="mono">0.10.6</td>
               </tr>
               <tr>
                 <th scope="row" class="prov"><a href="#">MBP-26</a><span class="id">9b07cc22-0000-4000-8000-0000000041a8</span><span class="src">Local alias · source name “mbp-provider”</span><span class="here">This Mac</span><span class="cell-sub">unique identity match</span></th>
-                <td>online<span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td>online</td>
                 <td><span class="ev ev-observed mono">2026-11-01 15:55:58Z</span><span class="cell-sub">recent</span></td>
                 <td class="mono">0.10.6</td>
               </tr>
               <tr>
                 <th scope="row" class="prov"><a href="#">Mac13,1</a><span class="id">4532bb55-0000-4000-8000-00000000d60f</span><span class="src">Hardware model</span><span class="dup">Same label as another record · <a href="#">Set alias…</a></span></th>
-                <td><span class="adv">offline</span><span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td><span class="adv">offline</span></td>
                 <td><span class="ev ev-stale mono">2026-09-28 14:07:33Z</span><span class="cell-sub">older · 34 days ago</span></td>
                 <td class="mono">0.10.5</td>
               </tr>
               <tr>
                 <th scope="row" class="prov"><a href="#">Mac13,1</a><span class="id">c2e1dd90-0000-4000-8000-00000000a3b2</span><span class="src">Hardware model</span><span class="dup">Same label as another record · <a href="#">Set alias…</a></span></th>
-                <td><span class="faint">status not reported</span><span class="cell-sub"><span class="ev ev-observed">report current</span></span></td>
+                <td><span class="faint">status not reported</span></td>
                 <td><span class="ev ev-unknown">Invalid timestamp</span><span class="cell-sub">unknown</span></td>
                 <td class="faint">not reported</td>
               </tr>
@@ -184,6 +184,7 @@
           </table>
         </div>
         <p class="muted">Aliases stay on this Mac. They never rename source records or change identity matching or action targets.</p>
+        <p class="muted" id="inventory-coverage">Only the row marked “This Mac” has a verified collector association. Other providers have no remote history here, so their activity is unknown. The account grant has no provider control.</p>
       </section>
 
       <section aria-labelledby="mac-title">
@@ -259,7 +260,8 @@
     <li><strong>Toolbar (NSToolbar):</strong> one row instead of 11 buttons in 4 rows. <em>Account</em> is a menu item that shows the connection state and enables only valid actions (menu validation). <em>Local aliases…</em> is its own item because aliases are local, not account data. Labels keep "local": <em>Export local report…</em>, <em>Restart local provider…</em>. Restart is a standard button set apart at the trailing edge; its confirmation sheet does the safety work. NSToolbar overflow handles narrow windows.</li>
     <li><strong>Monitor:</strong> a label plus one action. The label states only what the app knows (it started or stopped the job), never "running" as a health claim.</li>
     <li><strong>Messages</strong> from native actions go to a status strip under the toolbar with a <em>Clear</em> button (native, so it survives the 30-second page refresh; the web view runs no scripts). Warnings computed from the data (disconnected, partial) stay in the page and can't be dismissed.</li>
-    <li><strong>Table:</strong> full provider IDs stay in every row (selectable). The coordinator column shows report freshness (current / stale / unknown) as its glyph, the reported status as text, outlined when adverse. Heartbeat shows the full time, recency and age at read, or the specific reason when there is none. Label source stays visible for aliases.</li>
+    <li><strong>Table:</strong> full provider IDs stay in every row (selectable). The account summary shows report freshness (current / stale / unknown) with its glyph. The coordinator column shows each provider’s reported status as text, outlined when adverse. Heartbeat shows the full time, recency and age at read, or the specific reason when there is none. Label source stays visible for aliases.</li>
+    <li><strong>Coverage:</strong> the “This Mac” badge marks the verified association. One note below the table explains the coverage limits that apply to the other providers. The production <em>Fleet management</em> view also lists local process evidence, history and the operator workflow for the matched Mac.</li>
     <li><strong>Duplicate labels</strong> get <em>Set alias…</em>, a <code>gargoyl-view://</code> link the app intercepts to open the alias sheet with that provider preselected.</li>
     <li><strong>This Mac</strong> becomes a facts grid with source and time per observation and keeps the alias and association honesty text. No new navigation route.</li>
     <li><strong>Narrow windows</strong> (the app's minimum width is 390 px) keep the sideways-scroll hint.</li>

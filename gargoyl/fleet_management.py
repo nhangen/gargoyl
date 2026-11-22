@@ -7,8 +7,21 @@ remote collector or provider operation. Remote transport/enrollment is absent.
 from html import escape
 
 from gargoyl.fleet_identity import matching_provider
-from gargoyl.fleet_state import evidence_state, provider_key, validate_inventory
+from gargoyl.fleet_state import (
+    account_report_state,
+    heartbeat_state,
+    provider_key,
+    validate_inventory,
+)
+from gargoyl.fleet_views import report_freshness_html, reported_status_html
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
+
+
+def _compact_report_value(value):
+    if value is not None and len(escape(value).encode()) > 88:
+        # Fourteen characters plus an ellipsis fit even when each expands to six bytes.
+        return value[:9] + '…' + value[-5:]
+    return value
 
 
 def management_projection(inventory, local, evidence, now, local_host_id, preview=False, lifecycle=None):
@@ -31,7 +44,6 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
         matched = None
     rows = []
     for item in inventory['providers']:
-        report, heartbeat = evidence_state(inventory, item, now)
         associated = matched == item['id']
         process_state = 'unknown'
         if associated and samples and timestamp(samples[-1]['collected_at']) <= at:
@@ -42,13 +54,16 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
                     process_state = 'unknown'
         rows.append(dict(provider_id=item['id'], source_name=item['name'],
                          source_kind=item['name_kind'], key=provider_key(item['id']),
-                         account_state=report, heartbeat_state=heartbeat,
+                         reported_status=item['reported_status'],
+                         version=item['version'],
+                         heartbeat_state=heartbeat_state(item, now),
                          collection='local_associated' if associated else 'inventory_only',
                          process_state=process_state,
                          history_samples=len(samples) if associated and evidence is not None else None,
                          manual_restart='native_review' if associated else 'unavailable'))
     return dict(inventory_available=True, partial=inventory['partial'], rows=rows,
                 fetched_at=inventory['fetched_at'], connection=inventory['connection'],
+                report_state=account_report_state(inventory, now),
                 preview=preview, lifecycle=lifecycle)
 
 
@@ -71,35 +86,59 @@ def management_html(projection, aliases):
         session_status += ' (read-only preview mode)'
     elif projection.get('lifecycle'):
         session_status += ' · reader ' + e(projection['lifecycle']['status'])
-    body += '<p>Account inventory read ' + e(projection['fetched_at']) + ' · session last reported ' + session_status + '. These are coordinator reports, not independent remote health.</p>'
+    body += ('<p>Account inventory read ' + e(projection['fetched_at']) + ' · '
+             + report_freshness_html(projection['report_state']) + ' · session last reported '
+             + session_status + '. These are coordinator reports, not independent remote health.</p>')
     if projection['partial']:
         body += '<p>Partial inventory. Missing providers have unknown coverage.</p>'
-    body += ('<div class="scroll" tabindex="0" role="region" aria-label="Provider management coverage">'
-             '<table><thead><tr><th>Provider / actual ID</th><th>Evidence coverage</th><th>History</th>'
-             '<th>Operator workflow</th></tr></thead><tbody>')
+    body += ('<div class="scroll management-table" tabindex="0" role="region" aria-label="Provider management coverage" '
+             'aria-describedby="management-coverage">'
+             '<table><thead><tr><th scope="col">Provider / actual ID</th><th scope="col">Report</th>'
+             '<th scope="col">Heartbeat</th><th scope="col">Version</th><th scope="col">Evidence coverage</th>'
+             '<th scope="col">History</th><th scope="col">Operator workflow</th></tr></thead><tbody>')
+    shortened = False
     for row in projection['rows']:
+        status = _compact_report_value(row['reported_status'])
+        version = _compact_report_value(row['version'])
+        shortened |= status != row['reported_status'] or version != row['version']
         label = aliases.get(row['provider_id'], row['source_name'])
         identity = ('<a href="gargoyl-view://fleet-node-' + row['key'] + '/">' + e(label)
                     + '</a><br><span class="mono">' + e(row['provider_id']) + '</span>')
         if row['provider_id'] in aliases:
             identity += '<br><span class="muted">Local alias · source: ' + e(row['source_name']) + '</span>'
         if row['collection'] == 'local_associated':
-            coverage = ('This Mac · identity matched<br>Native process evidence: ' + e(row['process_state'])
-                        + '<br>Account report: ' + e(row['account_state']))
-            history = ('<a href="gargoyl-view://history/">Open local history</a><br>'
-                       + (e(row['history_samples']) + ' retained samples' if row['history_samples'] is not None
-                          else 'Monitor history unavailable'))
-            workflow = ('Use <strong>Restart local…</strong> in the native toolbar to review '
-                        'the exact target and interruption, then confirm with your Mac. Fresh preflight '
-                        'may refuse; this view grants nothing. <a href="gargoyl-view://operation/">Operation status</a>')
+            identity += '<br><strong>This Mac · unique identity match</strong>'
+            coverage = 'Native process evidence: ' + e(row['process_state'])
+            sample_count = row['history_samples']
+            retained = 'Monitor history unavailable'
+            if sample_count is not None:
+                retained = f"{sample_count} retained " + ('sample' if sample_count == 1 else 'samples')
+            history = '<a href="gargoyl-view://history/">Open local history</a><br>' + retained
+            workflow = '<a href="gargoyl-view://operation/">Operation status</a>'
+            if not projection.get('preview'):
+                workflow = 'Use <strong>Restart local…</strong> in the toolbar<br>' + workflow
         else:
-            coverage = ('Inventory only · no verified direct collector association<br>Account report: '
-                        + e(row['account_state']) + ' · heartbeat: ' + e(row['heartbeat_state']))
-            history = 'Not collected here — no remote history is available. This is not zero activity.'
-            workflow = ('Remote restart unavailable: account metadata grants no provider control. '
-                        'Remote collection is not configured. No enrollment or remote command is initiated.')
-        body += '<tr><th scope="row">' + identity + '</th><td>' + coverage + '</td><td>' + history + '</td><td>' + workflow + '</td></tr>'
+            coverage = 'Inventory only'
+            history = 'None here'
+            workflow = 'Unavailable'
+        unavailable = ' class="faint"' if row['collection'] == 'inventory_only' else ''
+        body += ('<tr><th scope="row">' + identity + '</th>'
+                 '<td>' + reported_status_html(row, display_value=status) + '</td>'
+                 '<td>' + e(row['heartbeat_state']) + '</td>'
+                 '<td>' + ('<span class="mono">' + e(version) + '</span>' if version
+                           else '<span class="faint">not reported</span>') + '</td>'
+                 '<td>' + coverage + '</td><td' + unavailable + '>' + history
+                 + '</td><td' + unavailable + '>' + workflow + '</td></tr>')
     body += '</tbody></table></div>'
+    body += ('<p id="management-coverage">Inventory-only rows have no verified direct collector '
+             'association. There is no remote history here, so activity is unknown. The account grant '
+             'has no provider control, so no enrollment, remote command or restart is initiated for '
+             'an inventory row.')
+    if not projection.get('preview') and any(row['manual_restart'] == 'native_review' for row in projection['rows']):
+        body += ' A local restart requires fresh preflight and confirmation on this Mac.'
+    if shortened:
+        body += ' Select a provider to see its full report values.'
+    body += '</p>'
     if not projection['rows']:
         body += '<p>No usable returned provider records; check account connection and partial coverage.</p>'
     return body + ('</section><section><h2>Available graphical tools</h2><p>Use <strong>Aliases…</strong> '
