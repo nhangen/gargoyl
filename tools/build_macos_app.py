@@ -15,6 +15,10 @@ from gargoyl.pilot_configuration import load_pilot_configuration  # noqa: E402
 
 
 def build(output, python, *, preview=True):
+    if preview:
+        build_mode = "preview"
+    else:
+        build_mode = "native-actions"
     if sys.platform != "darwin":
         raise ValueError("native macOS only")
     python = Path(python).absolute()
@@ -47,8 +51,8 @@ def build(output, python, *, preview=True):
             "WebKit",
             "-framework",
             "LocalAuthentication",
-                    "-framework",
-                    "Security",
+            "-framework",
+            "Security",
             "-framework",
             "SystemConfiguration",
             str(source),
@@ -72,6 +76,7 @@ def build(output, python, *, preview=True):
         CFBundleShortVersionString="0.1.0",
         LSMinimumSystemVersion="13.0",
         GargoylPython=str(python),
+        GargoylBuildMode=build_mode,
         GargoylReadOnlyPreview=preview,
         NSAppTransportSecurity={
             "NSExceptionDomains": {
@@ -86,8 +91,12 @@ def build(output, python, *, preview=True):
     # swiftc seals the executable before Info.plist exists. Seal the completed
     # bundle too, so its resource envelope includes the final application metadata.
     app = output / "Gargoyl.app"
-    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True)
-    subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)], check=True)
+    subprocess.run(
+        ["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True
+    )
+    subprocess.run(
+        ["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)], check=True
+    )
     print(output / "Gargoyl.app")
     return output / "Gargoyl.app"
 

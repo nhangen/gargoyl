@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -69,8 +70,8 @@ EXPECTED_DIGESTS = {
         "git": "ed3bff4559b8bd9e6cc879247a9e256b38aaf806",
     },
     "tools/build_macos_app.py": {
-        "sha256": "6f5ca22a688266cb29aac0b4b2ca7734d3cc28558c54981d682524046f57fb60",
-        "git": "b07ba14359e135fa46ee90a377663d3cd7cee7e3",
+        "sha256": "dbde43749c11f3229b9acae666bcf0d410d1bfc220a67793040bfc4fce153a54",
+        "git": "2996bcb2b028142ffa2b7403854530b7c6d9d759",
     },
     "tools/offline_acceptance_evidence.py": {
         "sha256": "1447cd6f98336efa34d23e6bfc411d2ae6498c011c7abd0f76aa6b5e8f2c8734",
@@ -236,6 +237,81 @@ def inspect_environment():
     }
 
 
+def _builder_stamps_build_mode() -> bool:
+    """Verify the builder source still names the GargoylBuildMode Info.plist key.
+
+    The builder writes the key on every build ('preview' by default,
+    'native-actions' with --enable-native-actions). This is a coarse backstop
+    to the EXPECTED_DIGESTS pin on the builder; the per-mode value is asserted
+    by tests/test_native_bundle.py.
+    """
+    builder_path = REPO_ROOT / "tools" / "build_macos_app.py"
+    if not builder_path.is_file():
+        return False
+    try:
+        source = builder_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "GargoylBuildMode" in source
+
+
+_SHELL_SEPARATORS = frozenset(";&|")
+
+
+def _shell_commands(line: str):
+    """Split one shell line into commands, dropping a trailing comment.
+
+    Non-POSIX shlex keeps quotes on tokens, so only an unquoted word that
+    starts with '#' begins a comment, as in the shell; '$#' and a quoted '#'
+    stay literal. Raises ValueError on an unbalanced quote.
+    """
+    lexer = shlex.shlex(line, posix=False, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    command = []
+    for token in lexer:
+        if token.startswith("#"):
+            break
+        if set(token) <= _SHELL_SEPARATORS:
+            if command:
+                yield command
+            command = []
+            continue
+        command.append(token.strip("\"'"))
+    if command:
+        yield command
+
+
+def _release_builder_uses_native_actions(workflow_doc: dict) -> bool:
+    """Verify each builder command in the release-artifact job passes --enable-native-actions.
+
+    Other jobs may build preview bundles. Each shell command is judged on its
+    own, after joining backslash continuations and dropping comments, so a
+    flag in a comment, an echo, or another command cannot vouch for a builder
+    call; an unparseable line fails closed. Passes vacuously while ci.yml
+    builds only a wheel. Builder calls hidden behind a script, a composite
+    action, or a non-shell step are not visible to this check.
+    """
+    release_job = workflow_doc.get("jobs", {}).get("release-artifact", {})
+    if not isinstance(release_job, dict):
+        return False
+    for step in release_job.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        script = str(step.get("run", "")).replace("\\\n", " ")
+        for line in script.splitlines():
+            try:
+                commands = list(_shell_commands(line))
+            except ValueError:
+                return False
+            for command in commands:
+                if not any("build_macos_app" in token for token in command):
+                    continue
+                if "--enable-native-actions" not in command:
+                    return False
+    return True
+
+
 def verify_workflow_contracts():
     """Verify production workflow contract invariants."""
     if not CI_YML_PATH.is_file():
@@ -277,6 +353,10 @@ def verify_workflow_contracts():
             for step in checkout_steps
         ),
         "main_validation_not_cancelled": raw.get("concurrency") == EXPECTED_CONCURRENCY,
+        "builder_stamps_build_mode": _builder_stamps_build_mode(),
+        "release_builder_uses_native_actions": _release_builder_uses_native_actions(
+            raw
+        ),
     }
     all_passed = all(checks.values())
     return all_passed, checks

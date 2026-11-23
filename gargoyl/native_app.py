@@ -492,7 +492,12 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         #if GARGOYL_NATIVE_TESTS
         if let value=previewOverride { return value }
         #endif
-        return Bundle.main.object(forInfoDictionaryKey:"GargoylReadOnlyPreview") as? Bool ?? true
+        return App.previewOnly(buildMode:Bundle.main.object(forInfoDictionaryKey:"GargoylBuildMode"),
+                               legacyPreview:Bundle.main.object(forInfoDictionaryKey:"GargoylReadOnlyPreview"))
+    }
+    static func previewOnly(buildMode:Any?, legacyPreview:Any?) -> Bool {
+        if buildMode != nil { return buildMode as? String != "native-actions" }
+        return legacyPreview as? Bool ?? true
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1543,6 +1548,10 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(deniedFlag && deniedRestore.connectFleetButton.isEnabled && !deniedRestore.disconnectFleetButton.isEnabled)
     let previewApp = App(); previewApp.previewOverride = true; previewApp.connectFleetButton = NSButton(); previewApp.disconnectFleetButton = NSButton()
     precondition(previewApp.previewOnly)
+    precondition(!App.previewOnly(buildMode:"native-actions", legacyPreview:true))
+    for mode in ["preview","Preview","native_actions","",42] as [Any] { precondition(App.previewOnly(buildMode:mode, legacyPreview:false)) }
+    precondition(App.previewOnly(buildMode:nil, legacyPreview:nil) && App.previewOnly(buildMode:nil, legacyPreview:true))
+    precondition(!App.previewOnly(buildMode:nil, legacyPreview:false))
     precondition(endedFleetStatus("status", disconnected: false, preview: previewApp.previewOnly).contains("Read-only preview"))
     let windowCloseApp = App()
     precondition(!windowCloseApp.applicationShouldTerminateAfterLastWindowClosed(NSApp))
