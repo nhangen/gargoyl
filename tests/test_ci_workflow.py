@@ -1055,20 +1055,12 @@ class CIWorkflowTests(unittest.TestCase):
         original = builder_path.read_text(encoding="utf-8")
         stripped = original.replace("GargoylBuildMode", "GargoylRemovedKey")
         with tempfile.TemporaryDirectory() as tmpdir:
-            fake_builder = Path(tmpdir) / "build_macos_app.py"
-            fake_builder.write_text(stripped, encoding="utf-8")
-            with mock.patch.object(preflight_mod, "REPO_ROOT", Path(tmpdir) / ".."):
-                # REPO_ROOT is resolved relative to the fake path; override directly
-                pass
-        # Direct function-level check
-        with tempfile.TemporaryDirectory() as tmpdir:
             fake_repo = Path(tmpdir) / "repo"
             fake_tools = fake_repo / "tools"
             fake_tools.mkdir(parents=True)
             (fake_tools / "build_macos_app.py").write_text(stripped, encoding="utf-8")
             with mock.patch.object(preflight_mod, "REPO_ROOT", fake_repo):
                 self.assertFalse(preflight_mod._builder_stamps_build_mode())
-        # Positive: real builder passes
         self.assertTrue(preflight_mod._builder_stamps_build_mode())
 
 
