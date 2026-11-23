@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -254,13 +255,42 @@ def _builder_stamps_build_mode() -> bool:
     return "GargoylBuildMode" in source
 
 
-def _release_builder_uses_native_actions(workflow_doc: dict) -> bool:
-    """Verify each builder invocation in the release-artifact job passes --enable-native-actions.
+_SHELL_SEPARATORS = frozenset(";&|")
 
-    Other jobs may build preview bundles. Each command line is judged on its
-    own, after joining backslash continuations and dropping shell comments, so
-    a flag on one invocation or in a comment cannot vouch for another. Passes
-    vacuously while ci.yml builds only a wheel.
+
+def _shell_commands(line: str):
+    """Split one shell line into commands, dropping a trailing comment.
+
+    Non-POSIX shlex keeps quotes on tokens, so only an unquoted word that
+    starts with '#' begins a comment, as in the shell; '$#' and a quoted '#'
+    stay literal. Raises ValueError on an unbalanced quote.
+    """
+    lexer = shlex.shlex(line, posix=False, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    command = []
+    for token in lexer:
+        if token.startswith("#"):
+            break
+        if set(token) <= _SHELL_SEPARATORS:
+            if command:
+                yield command
+            command = []
+            continue
+        command.append(token.strip("\"'"))
+    if command:
+        yield command
+
+
+def _release_builder_uses_native_actions(workflow_doc: dict) -> bool:
+    """Verify each builder command in the release-artifact job passes --enable-native-actions.
+
+    Other jobs may build preview bundles. Each shell command is judged on its
+    own, after joining backslash continuations and dropping comments, so a
+    flag in a comment, an echo, or another command cannot vouch for a builder
+    call; an unparseable line fails closed. Passes vacuously while ci.yml
+    builds only a wheel. Builder calls hidden behind a script, a composite
+    action, or a non-shell step are not visible to this check.
     """
     release_job = workflow_doc.get("jobs", {}).get("release-artifact", {})
     if not isinstance(release_job, dict):
@@ -270,11 +300,15 @@ def _release_builder_uses_native_actions(workflow_doc: dict) -> bool:
             continue
         script = str(step.get("run", "")).replace("\\\n", " ")
         for line in script.splitlines():
-            command = line.split("#", 1)[0]
-            if "build_macos_app" not in command:
-                continue
-            if "--enable-native-actions" not in command.split():
+            try:
+                commands = list(_shell_commands(line))
+            except ValueError:
                 return False
+            for command in commands:
+                if not any("build_macos_app" in token for token in command):
+                    continue
+                if "--enable-native-actions" not in command:
+                    return False
     return True
 
 

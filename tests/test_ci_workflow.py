@@ -1035,6 +1035,11 @@ class CIWorkflowTests(unittest.TestCase):
                 "  --python /tmp/py --enable-native-actions\n",
             )
         )
+        self.assertTrue(
+            verdict(
+                "release-artifact", builder + ' "--enable-native-actions" | tee log\n'
+            )
+        )
         rejected = {
             "flag_only_in_comment": builder + "  # --enable-native-actions\n",
             "flag_only_in_echo": "echo --enable-native-actions\n" + builder + "\n",
@@ -1044,6 +1049,10 @@ class CIWorkflowTests(unittest.TestCase):
             + "\n",
             "module_invocation": "python -m tools.build_macos_app --output /tmp/app --python /tmp/py\n",
             "flag_prefix_only": builder + " --enable-native-actions-later\n",
+            "quoted_hash_before_call": 'echo "#"; ' + builder + "\n",
+            "dollar_hash_before_call": "[ $# -eq 0 ] && " + builder + "\n",
+            "flag_on_later_command": builder + "; echo --enable-native-actions\n",
+            "unbalanced_quote": builder + ' --enable-native-actions "\n',
         }
         for name, run in rejected.items():
             with self.subTest(case=name):
