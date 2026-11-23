@@ -972,7 +972,7 @@ class CIWorkflowTests(unittest.TestCase):
             ] = True
 
         def add_preview_builder_step(doc):
-            steps = doc["jobs"]["macos-native"]["steps"]
+            steps = doc["jobs"]["release-artifact"]["steps"]
             steps.append(
                 {
                     "run": "python tools/build_macos_app.py --output /tmp/app --python /tmp/py\n"
@@ -1015,6 +1015,39 @@ class CIWorkflowTests(unittest.TestCase):
                             self._run_main_in_process(["--check-source"]),
                             EXIT_CONTRACT_FAILED,
                         )
+
+    def test_release_builder_check_scopes_to_release_job_and_each_invocation(self):
+        def verdict(job, run):
+            doc = load_workflow()
+            doc["jobs"][job]["steps"].append({"run": run})
+            return preflight_mod._release_builder_uses_native_actions(doc)
+
+        builder = "python tools/build_macos_app.py --output /tmp/app --python /tmp/py"
+        self.assertTrue(verdict("macos-native", builder + "\n"))
+        self.assertTrue(verdict("lint-and-test", builder + "\n"))
+        self.assertTrue(
+            verdict("release-artifact", builder + " --enable-native-actions\n")
+        )
+        self.assertTrue(
+            verdict(
+                "release-artifact",
+                "python tools/build_macos_app.py --output /tmp/app \\\n"
+                "  --python /tmp/py --enable-native-actions\n",
+            )
+        )
+        rejected = {
+            "flag_only_in_comment": builder + "  # --enable-native-actions\n",
+            "flag_only_in_echo": "echo --enable-native-actions\n" + builder + "\n",
+            "second_call_unflagged": builder
+            + " --enable-native-actions\n"
+            + builder
+            + "\n",
+            "module_invocation": "python -m tools.build_macos_app --output /tmp/app --python /tmp/py\n",
+            "flag_prefix_only": builder + " --enable-native-actions-later\n",
+        }
+        for name, run in rejected.items():
+            with self.subTest(case=name):
+                self.assertFalse(verdict("release-artifact", run))
 
     def test_builder_stamps_build_mode_fails_closed(self):
         """Verify that removing GargoylBuildMode from the builder fails the preflight gate."""

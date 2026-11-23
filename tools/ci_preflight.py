@@ -255,21 +255,25 @@ def _builder_stamps_build_mode() -> bool:
 
 
 def _release_builder_uses_native_actions(workflow_doc: dict) -> bool:
-    """Verify every release workflow step that invokes the builder passes --enable-native-actions.
+    """Verify each builder invocation in the release-artifact job passes --enable-native-actions.
 
-    A preview-mode bundle must never be produced in a release pipeline.
-    If no step invokes the builder this check passes vacuously (the current
-    ci.yml builds a wheel, not a macOS bundle).
+    Other jobs may build preview bundles. Each command line is judged on its
+    own, after joining backslash continuations and dropping shell comments, so
+    a flag on one invocation or in a comment cannot vouch for another. Passes
+    vacuously while ci.yml builds only a wheel.
     """
-    jobs = workflow_doc.get("jobs", {})
-    for job in jobs.values():
-        if not isinstance(job, dict):
+    release_job = workflow_doc.get("jobs", {}).get("release-artifact", {})
+    if not isinstance(release_job, dict):
+        return False
+    for step in release_job.get("steps") or []:
+        if not isinstance(step, dict):
             continue
-        for step in job.get("steps", []):
-            if not isinstance(step, dict):
+        script = str(step.get("run", "")).replace("\\\n", " ")
+        for line in script.splitlines():
+            command = line.split("#", 1)[0]
+            if "build_macos_app" not in command:
                 continue
-            run = str(step.get("run", ""))
-            if "build_macos_app.py" in run and "--enable-native-actions" not in run:
+            if "--enable-native-actions" not in command.split():
                 return False
     return True
 
