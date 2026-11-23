@@ -492,6 +492,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         #if GARGOYL_NATIVE_TESTS
         if let value=previewOverride { return value }
         #endif
+        if let mode=Bundle.main.object(forInfoDictionaryKey:"GargoylBuildMode") as? String {
+            return mode=="preview"
+        }
         return Bundle.main.object(forInfoDictionaryKey:"GargoylReadOnlyPreview") as? Bool ?? true
     }
 

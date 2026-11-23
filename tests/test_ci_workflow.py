@@ -701,7 +701,7 @@ class CIWorkflowTests(unittest.TestCase):
                 "eec6c171586a8acb7b52914e04b1209e01a929a2dbd6afd5bdeee65ffbe264a7"
             ),
             "tools/build_macos_app.py": (
-                "6f5ca22a688266cb29aac0b4b2ca7734d3cc28558c54981d682524046f57fb60"
+                "dbde43749c11f3229b9acae666bcf0d410d1bfc220a67793040bfc4fce153a54"
             ),
             "tools/offline_acceptance_evidence.py": (
                 "1447cd6f98336efa34d23e6bfc411d2ae6498c011c7abd0f76aa6b5e8f2c8734"
@@ -971,6 +971,14 @@ class CIWorkflowTests(unittest.TestCase):
                 "persist-credentials"
             ] = True
 
+        def add_preview_builder_step(doc):
+            steps = doc["jobs"]["macos-native"]["steps"]
+            steps.append(
+                {
+                    "run": "python tools/build_macos_app.py --output /tmp/app --python /tmp/py\n"
+                }
+            )
+
         mutations = {
             "permissions_read_only": lambda doc: doc.update(
                 permissions={"contents": "write"}
@@ -986,6 +994,7 @@ class CIWorkflowTests(unittest.TestCase):
             "main_validation_not_cancelled": lambda doc: doc["concurrency"].update(
                 {"cancel-in-progress": True}
             ),
+            "release_builder_uses_native_actions": add_preview_builder_step,
         }
         for contract_key, mutate in mutations.items():
             with self.subTest(contract_key=contract_key):
@@ -1006,6 +1015,28 @@ class CIWorkflowTests(unittest.TestCase):
                             self._run_main_in_process(["--check-source"]),
                             EXIT_CONTRACT_FAILED,
                         )
+
+    def test_builder_stamps_build_mode_fails_closed(self):
+        """Verify that removing GargoylBuildMode from the builder fails the preflight gate."""
+        builder_path = REPO_ROOT / "tools" / "build_macos_app.py"
+        original = builder_path.read_text(encoding="utf-8")
+        stripped = original.replace("GargoylBuildMode", "GargoylRemovedKey")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_builder = Path(tmpdir) / "build_macos_app.py"
+            fake_builder.write_text(stripped, encoding="utf-8")
+            with mock.patch.object(preflight_mod, "REPO_ROOT", Path(tmpdir) / ".."):
+                # REPO_ROOT is resolved relative to the fake path; override directly
+                pass
+        # Direct function-level check
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_repo = Path(tmpdir) / "repo"
+            fake_tools = fake_repo / "tools"
+            fake_tools.mkdir(parents=True)
+            (fake_tools / "build_macos_app.py").write_text(stripped, encoding="utf-8")
+            with mock.patch.object(preflight_mod, "REPO_ROOT", fake_repo):
+                self.assertFalse(preflight_mod._builder_stamps_build_mode())
+        # Positive: real builder passes
+        self.assertTrue(preflight_mod._builder_stamps_build_mode())
 
 
 if __name__ == "__main__":

@@ -69,8 +69,8 @@ EXPECTED_DIGESTS = {
         "git": "ed3bff4559b8bd9e6cc879247a9e256b38aaf806",
     },
     "tools/build_macos_app.py": {
-        "sha256": "6f5ca22a688266cb29aac0b4b2ca7734d3cc28558c54981d682524046f57fb60",
-        "git": "b07ba14359e135fa46ee90a377663d3cd7cee7e3",
+        "sha256": "dbde43749c11f3229b9acae666bcf0d410d1bfc220a67793040bfc4fce153a54",
+        "git": "2996bcb2b028142ffa2b7403854530b7c6d9d759",
     },
     "tools/offline_acceptance_evidence.py": {
         "sha256": "1447cd6f98336efa34d23e6bfc411d2ae6498c011c7abd0f76aa6b5e8f2c8734",
@@ -236,6 +236,44 @@ def inspect_environment():
     }
 
 
+def _builder_stamps_build_mode() -> bool:
+    """Verify the builder stamps GargoylBuildMode into Info.plist.
+
+    A release bundle built without --enable-native-actions would lack this
+    key or carry the value 'preview'; either way CI must reject it.  This
+    static check ensures the builder source itself contains the stamp, so
+    every bundle it produces carries a mode CI can assert on.
+    """
+    builder_path = REPO_ROOT / "tools" / "build_macos_app.py"
+    if not builder_path.is_file():
+        return False
+    try:
+        source = builder_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "GargoylBuildMode" in source
+
+
+def _release_builder_uses_native_actions(workflow_doc: dict) -> bool:
+    """Verify every release workflow step that invokes the builder passes --enable-native-actions.
+
+    A preview-mode bundle must never be produced in a release pipeline.
+    If no step invokes the builder this check passes vacuously (the current
+    ci.yml builds a wheel, not a macOS bundle).
+    """
+    jobs = workflow_doc.get("jobs", {})
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        for step in job.get("steps", []):
+            if not isinstance(step, dict):
+                continue
+            run = str(step.get("run", ""))
+            if "build_macos_app.py" in run and "--enable-native-actions" not in run:
+                return False
+    return True
+
+
 def verify_workflow_contracts():
     """Verify production workflow contract invariants."""
     if not CI_YML_PATH.is_file():
@@ -277,6 +315,10 @@ def verify_workflow_contracts():
             for step in checkout_steps
         ),
         "main_validation_not_cancelled": raw.get("concurrency") == EXPECTED_CONCURRENCY,
+        "builder_stamps_build_mode": _builder_stamps_build_mode(),
+        "release_builder_uses_native_actions": _release_builder_uses_native_actions(
+            raw
+        ),
     }
     all_passed = all(checks.values())
     return all_passed, checks
