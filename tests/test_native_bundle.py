@@ -2,6 +2,7 @@
 import io
 import plistlib
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,14 +23,23 @@ class NativeBundleTests(unittest.TestCase):
         self.python.write_text('synthetic path; never executed')
         self.builder = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tools/build_macos_app.py'))['build']
 
-    def build(self, runner=None):
+    def build(self, runner=None, **options):
         replacements = dict(load_pilot_configuration=Mock(return_value=Mock()),
                             SWIFT='import Foundation\nprint("synthetic; never executed")\n')
         with patch.dict(self.builder.__globals__, replacements), patch('sys.platform', 'darwin'):
             if runner is not None:
                 with patch('subprocess.run', runner):
-                    return self.builder(self.root / 'output', self.python)
-            return self.builder(self.root / 'output', self.python)
+                    return self.builder(self.root / 'output', self.python, **options)
+            return self.builder(self.root / 'output', self.python, **options)
+
+    def test_build_mode_stamp_matches_requested_mode(self):
+        for options, mode, legacy in (({}, 'preview', True), ({'preview': False}, 'native-actions', False)):
+            with self.subTest(mode=mode):
+                shutil.rmtree(self.root / 'output', ignore_errors=True)
+                with redirect_stdout(io.StringIO()):
+                    app = self.build(Mock(), **options)
+                values = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+                self.assertEqual((values['GargoylBuildMode'], values['GargoylReadOnlyPreview']), (mode, legacy))
 
     def test_metadata_exists_before_sealing_and_failure_never_reports_success(self):
         def run(command, **options):
