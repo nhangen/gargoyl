@@ -237,12 +237,12 @@ def inspect_environment():
 
 
 def _builder_stamps_build_mode() -> bool:
-    """Verify the builder stamps GargoylBuildMode into Info.plist.
+    """Verify the builder source still names the GargoylBuildMode Info.plist key.
 
-    A release bundle built without --enable-native-actions would lack this
-    key or carry the value 'preview'; either way CI must reject it.  This
-    static check ensures the builder source itself contains the stamp, so
-    every bundle it produces carries a mode CI can assert on.
+    The builder writes the key on every build ('preview' by default,
+    'native-actions' with --enable-native-actions). This is a coarse backstop
+    to the EXPECTED_DIGESTS pin on the builder; the per-mode value is asserted
+    by tests/test_native_bundle.py.
     """
     builder_path = REPO_ROOT / "tools" / "build_macos_app.py"
     if not builder_path.is_file():
