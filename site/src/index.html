@@ -3,22 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gargoyl — Darkbloom fleet monitoring you can inspect</title>
-  <meta name="description" content="Gargoyl is an in-development project for privacy-first evidence on inference-provider fleets, starting with Darkbloom: per-field state for routing, model residency and verification, with confirm-each-host repairs in development.">
+  <title>Gargoyl: inspect your Darkbloom fleet, one host at a time</title>
+  <meta name="description" content="Gargoyl turns each Darkbloom host's routing, model and verification reports into an evidence dashboard that shows you which state to trust and which to recheck. In development now, with confirm-each-host repairs on the way.">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0c0e0d">
   <link rel="canonical" href="https://gargoyl.dev/">
   <meta property="og:title" content="Gargoyl">
-  <meta property="og:description" content="Know what your Darkbloom fleet is really doing.">
+  <meta property="og:description" content="See which Darkbloom host reports to trust, which to recheck, and the evidence behind each state.">
   <meta property="og:url" content="https://gargoyl.dev/">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://gargoyl.dev/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Gargoyl: Know what your Darkbloom fleet is really doing.">
+  <meta property="og:image:alt" content="Gargoyl: an evidence dashboard for a Darkbloom fleet">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Gargoyl">
-  <meta name="twitter:description" content="Know what your Darkbloom fleet is really doing.">
+  <meta name="twitter:description" content="See which Darkbloom host reports to trust, which to recheck, and the evidence behind each state.">
   <meta name="twitter:image" content="https://gargoyl.dev/og.png">
   <meta name="twitter:creator" content="@nathan_hangen">
   <link rel="icon" href="icon/favicon.svg" type="image/svg+xml">
@@ -59,8 +59,8 @@
       <div class="hero-grid" aria-hidden="true"></div>
       <div class="wrap hero-inner">
         <div class="hero-copy">
-          <h1 id="hero-title">Know what your Darkbloom fleet is <em>really</em> doing.</h1>
-          <p class="lede">Built to show which hosts are up but not routed, missing a model, or past verification, with evidence behind every state. Repairs you confirm host by host are in development.</p>
+          <h1 id="hero-title">See which Darkbloom host reports to trust, and which to recheck.</h1>
+          <p class="lede">Gargoyl reads each host's routing, model and verification reports and shows the evidence behind every state, so a stale or blocked reading tells you exactly what to look at. Repairs you approve host by host are in development.</p>
           <div class="cta-row">
             <a class="btn btn-primary" {{link:github}}>
               View on GitHub
@@ -128,7 +128,7 @@
             </table>
 
             <figcaption class="panel-foot">
-              Every field carries its own state. Missing or conflicting evidence becomes unknown, never rounded up.
+              Every field keeps its own state. A field reads unknown if its evidence is missing or conflicting, and you know what to recheck.
             </figcaption>
           </figure>
         </div>
@@ -141,7 +141,7 @@
         <article class="principle">
           <div class="principle-text">
             <h3>Evidence over assumptions</h3>
-            <p>Every field carries its own source, timestamp, freshness window, and state: observed, stale, unknown, or blocked. Missing or conflicting evidence becomes unknown instead of being rounded up to “fine.”</p>
+            <p>Each field keeps its source, timestamp, freshness window and state: observed, stale, unknown, or blocked. A field reads unknown when evidence is missing or sources disagree, so you see what to recheck instead of a smoothed verdict.</p>
           </div>
           <figure class="snippet">
             <figcaption>One field, as a host reports it (example)</figcaption>
@@ -158,7 +158,7 @@
         <article class="principle">
           <div class="principle-text">
             <h3>Privacy by design</h3>
-            <p>The telemetry schema rejects prompts, completions, credentials, raw logs, customer identifiers, IP addresses, hostnames, and model names, with no export override. Only allowlisted aggregate fields, keyed to an assigned opaque host ID, can leave a host.</p>
+            <p>A host can only send the small set of aggregate fields on an allowlist, each one tied to a short ID you can treat as a label. Prompts, completions, credentials, raw logs, names, IPs, hostnames and model names are rejected by the schema itself.</p>
           </div>
           <figure class="snippet">
             <figcaption>What a host may send (example)</figcaption>
@@ -177,7 +177,7 @@
         <article class="principle">
           <div class="principle-text">
             <h3>Repairs under your control <span class="badge">In development</span></h3>
-            <p>Repairs come from a short list of approved actions. Each is checked before it runs, targets one host, and waits for your confirmation. Nothing runs on its own. Tested in simulation so far, not yet on live hosts.</p>
+            <p>Repairs draw from a short, approved action list. Each repair checks its target first, touches one host, and waits for your confirmation. It has run in simulation so far, and live-host support is still ahead.</p>
           </div>
           <figure class="snippet">
             <figcaption>Sketch of the flow, simulated hosts only</figcaption>
@@ -195,8 +195,8 @@
       <div class="wrap status-inner">
         <svg class="status-mark" aria-hidden="true"><use href="#mark"/></svg>
         <div>
-          <h2 id="status-title">Actively being built.</h2>
-          <p>Darkbloom is the first integration. The telemetry schema, privacy checks, and evidence dashboard are in progress; host enrollment and validation on live hosts are still ahead.</p>
+          <h2 id="status-title">We are building this now.</h2>
+          <p>Darkbloom is the first integration. The telemetry schema, privacy checks and evidence dashboard are in progress; host enrollment and live-host validation come next.</p>
         </div>
         <a class="btn btn-ghost" {{link:github}}>Follow on GitHub</a>
       </div>
