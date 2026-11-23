@@ -192,22 +192,23 @@ a { color: inherit; text-underline-offset: 3px; }
 
 h1 {
   margin: 0;
-  max-width: 15ch;
   font-family: var(--display);
-  font-size: clamp(2.375rem, 5.6vw, 3.875rem);
+  font-size: clamp(2.125rem, 1.8rem + 1.4vw, 3.5rem);
   font-stretch: 108%;
   font-weight: 760;
-  line-height: 1.02;
-  letter-spacing: -0.035em;
-  text-wrap: balance;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
 }
+/* Authored composition: the two lines are spans, so they break on meaning
+   at every width instead of wherever the viewport allows. */
+h1 span { display: block; }
 h1 em {
   font-style: normal;
   color: var(--accent);
 }
 
 .lede {
-  max-width: 36ch;
+  max-width: 46ch;
   margin: 24px 0 0;
   color: var(--text-muted);
   font-size: clamp(1.0625rem, 1.6vw, 1.1875rem);

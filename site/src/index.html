@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Gargoyl: inspect your Darkbloom fleet, one host at a time</title>
-  <meta name="description" content="Gargoyl turns each Darkbloom host's routing, model and verification reports into an evidence dashboard that shows you which state to trust and which to recheck. In development now, with confirm-each-host repairs on the way.">
+  <meta name="description" content="Gargoyl turns each Darkbloom host's routing, model and verification reports into an evidence dashboard. Every state keeps its source, timestamp and freshness window, so you know which host to trust and which to recheck. Confirm-each-host repairs are on the way.">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0c0e0d">
   <link rel="canonical" href="https://gargoyl.dev/">
@@ -15,7 +15,7 @@
   <meta property="og:image" content="https://gargoyl.dev/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Gargoyl: See which host reports to trust, and which to recheck.">
+  <meta property="og:image:alt" content="Gargoyl: Know what to trust. See the evidence.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Gargoyl">
   <meta name="twitter:description" content="See which Darkbloom host reports to trust, which to recheck, and the evidence behind each state.">
@@ -59,8 +59,8 @@
       <div class="hero-grid" aria-hidden="true"></div>
       <div class="wrap hero-inner">
         <div class="hero-copy">
-          <h1 id="hero-title">See which Darkbloom host reports to trust, and which to recheck.</h1>
-          <p class="lede">Gargoyl reads each host's routing, model and verification reports and shows the evidence behind every state, so a stale or blocked reading shows you which field to look at. Repairs you approve host by host are in development.</p>
+          <h1 id="hero-title"><span>Know what to trust.</span> <span>See the evidence.</span></h1>
+          <p class="lede">Gargoyl reads each Darkbloom host's routing, model and verification reports and keeps the evidence behind every state: source, timestamp, freshness window. The dashboard names the field and the host to recheck when a reading goes stale or blocked. Host-by-host repairs you approve are in development.</p>
           <div class="cta-row">
             <a class="btn btn-primary" {{link:github}}>
               View on GitHub
