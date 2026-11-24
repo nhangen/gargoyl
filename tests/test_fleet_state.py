@@ -8,7 +8,9 @@ from pathlib import Path
 from gargoyl.fleet_account import FleetError
 from gargoyl.fleet_state import (
     FleetCache,
+    display_name,
     evidence_state,
+    friendly_machine_name,
     normalize_inventory,
     validate_inventory,
 )
@@ -60,6 +62,65 @@ class FleetStateTests(unittest.TestCase):
         value = normalize_inventory(raw, NOW)
         self.assertEqual(value["providers"][0]["name"], raw["providers"][0]["id"])
         self.assertEqual(value["providers"][0]["name_kind"], "provider_id")
+
+    def test_known_apple_model_ids_get_friendly_names_unknown_ids_keep_raw_value(self):
+        self.assertEqual(friendly_machine_name("Mac13,1"), "Mac Studio (2022, M1 Max)")
+        self.assertIsNone(friendly_machine_name("unknown-model"))
+        self.assertIsNone(friendly_machine_name("Mac Studio"))
+        self.assertIsNone(friendly_machine_name(None))
+        self.assertIsNone(friendly_machine_name(13))
+        raw = response()
+        del raw["providers"][0]["name"]
+        raw["providers"][0]["hardware"]["machine_model"] = "Mac13,1"
+        value = normalize_inventory(raw, NOW)
+        row = value["providers"][0]
+        # The stored label stays the raw identifier; translation is a display
+        # concern, so cached rows pick up table corrections without a refetch.
+        self.assertEqual(row["name"], "Mac13,1")
+        self.assertEqual(row["name_kind"], "hardware_label")
+        self.assertEqual(display_name(row), "Mac Studio (2022, M1 Max)")
+        raw["providers"][0]["hardware"]["machine_model"] = "Mac99,9"
+        row = normalize_inventory(raw, NOW)["providers"][0]
+        self.assertEqual(display_name(row), "Mac99,9")
+
+    def test_source_names_win_over_a_translatable_hardware_model(self):
+        for field in ("name", "provider_name"):
+            with self.subTest(field=field):
+                raw = response()
+                del raw["providers"][0]["name"]
+                raw["providers"][0][field] = "Rack Studio"
+                raw["providers"][0]["hardware"]["machine_model"] = "Mac13,1"
+                row = normalize_inventory(raw, NOW)["providers"][0]
+                self.assertEqual(row["name_kind"], "source_name")
+                self.assertEqual(display_name(row), "Rack Studio")
+        self.assertEqual(
+            display_name(dict(name="Mac13,1", name_kind="source_name")), "Mac13,1"
+        )
+
+    def test_model_names_match_apple_identification_pages(self):
+        # Hand-copied from support.apple.com 102231 (Mac Studio), 102852
+        # (Mac mini), 108052 (MacBook Pro), 102869 (MacBook Air) and
+        # 108054 (iMac), not from APPLE_MODEL_NAMES.
+        expected = {
+            "Mac13,2": "Mac Studio (2022, M1 Ultra)",
+            "Mac14,13": "Mac Studio (2023, M2 Max)",
+            "Mac14,14": "Mac Studio (2023, M2 Ultra)",
+            "Mac15,14": "Mac Studio (2025, M3 Ultra)",
+            "Mac16,9": "Mac Studio (2025, M4 Max)",
+            "Mac17,14": "Mac Studio (M5 Max)",
+            "Mac14,12": "Mac mini (2023, M2 Pro)",
+            "Mac16,10": "Mac mini (2024)",
+            "Mac14,2": "MacBook Air (M2, 2022)",
+            "Mac14,7": "MacBook Pro (13-inch, M2, 2022)",
+            "Mac15,12": "MacBook Air (13-inch, M3, 2024)",
+            "Mac16,6": "MacBook Pro (14-inch, 2024)",
+            "Mac17,3": "MacBook Air (13-inch, M5)",
+            "Mac17,6": "MacBook Pro (16-inch, M5 Pro or M5 Max)",
+            "Mac16,3": "iMac (24-inch, 2024, Four ports)",
+        }
+        for identifier, name in expected.items():
+            with self.subTest(identifier=identifier):
+                self.assertEqual(friendly_machine_name(identifier), name)
 
     def test_duplicate_identity_rejected_and_missing_records_are_partial(self):
         raw = response()
