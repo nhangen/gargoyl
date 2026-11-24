@@ -28,21 +28,15 @@ FONT_FACE = re.compile(
 def _playwright_dir() -> Path | None:
     """The node_modules directory holding playwright, or None."""
     try:
-        subprocess.run(
-            ["node", "-e", "process.stdout.write(require('playwright/package.json').name)"],
+        module = subprocess.run(
+            ["node", "-e", "process.stdout.write(require.resolve('playwright/package.json'))"],
+            cwd=SITE / "og",
             capture_output=True,
             text=True,
             check=True,
-        )
+        ).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
-    # playwright/package.json resolves through node_modules/<pkg>/package.json.
-    module = subprocess.run(
-        ["node", "-e", "process.stdout.write(require.resolve('playwright/package.json'))"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
     path = Path(module)
     for parent in path.parents:
         if parent.name == "node_modules":
@@ -110,10 +104,9 @@ class OgRenderTest(unittest.TestCase):
             shutil.copytree(SITE, root / "site", symlinks=True)
             og = root / "site" / "og" / "og.html"
             text = og.read_text(encoding="utf-8")
-            # Replace Archivo with a fallback in the h1 rule only.
             modified, count = re.subn(
                 r'(h1\s*\{[^}]*font-family:\s*)"Archivo"',
-                r'\1"ArchivoFallback"',
+                r'\1"Archivo Typo"',
                 text,
                 count=1,
             )
@@ -124,10 +117,29 @@ class OgRenderTest(unittest.TestCase):
             self.assertIn("og render failed:", proc.stderr)
             self.assertIn("h1 font-family does not resolve to Archivo", proc.stderr)
 
+    def test_h1_fallback_family_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(SITE, root / "site", symlinks=True)
+            og = root / "site" / "og" / "og.html"
+            text = og.read_text(encoding="utf-8")
+            modified, count = re.subn(
+                r'(h1\s*\{[^}]*font-family:\s*)"Archivo"',
+                r'\1Arial, "Archivo"',
+                text,
+                count=1,
+            )
+            self.assertEqual(count, 1)
+            og.write_text(modified, encoding="utf-8")
+            proc = self._render(root, self._env())
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertIn("h1 font-family does not resolve to Archivo", proc.stderr)
+
     def test_intact_site_renders_successfully(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             shutil.copytree(SITE, root / "site", symlinks=True)
+            (root / "site" / "src" / "og.png").unlink()
             proc = self._render(root, self._env())
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue((root / "site" / "src" / "og.png").is_file())
