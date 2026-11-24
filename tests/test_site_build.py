@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,6 +30,26 @@ class RenderTest(unittest.TestCase):
             site_build.render("<a {{link:missing}}>", {})
 
 
+class DocTokenTest(unittest.TestCase):
+    LINKS = {"docs_base": "https://example.com/docs/", "gh": "https://github.com/a/b"}
+
+    def test_renders_doc_href_with_base_and_noopener(self):
+        out = site_build.render("<a {{doc:cli.md}}>", self.LINKS)
+        self.assertEqual(out, '<a href="https://example.com/docs/cli.md" rel="noopener">')
+
+    def test_missing_docs_base_fails_clearly(self):
+        with self.assertRaisesRegex(KeyError, "docs_base"):
+            site_build.render("<a {{doc:cli.md}}>", {})
+
+    def test_doc_token_does_not_affect_link_token(self):
+        out = site_build.render("<a {{link:gh}}> <a {{doc:a-b_c.md}}>", self.LINKS)
+        self.assertIn('<a href="https://github.com/a/b" rel="noopener">', out)
+        self.assertIn('href="https://example.com/docs/a-b_c.md"', out)
+
+    def test_link_without_docs_base_still_renders(self):
+        self.assertIn("https://github.com/a/b", site_build.render("<a {{link:gh}}>", {"gh": "https://github.com/a/b"}))
+
+
 class SiteTest(unittest.TestCase):
     def test_build_resolves_every_link(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -38,6 +59,23 @@ class SiteTest(unittest.TestCase):
             self.assertNotIn("{{", page)
             self.assertIn('href="https://github.com/nhangen/gargoyl"', page)
             self.assertTrue((out / "fonts" / "archivo-latin-variable.woff2").is_file())
+
+    def test_docs_page_builds_with_resolved_doc_links_and_assets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "dist"
+            self.assertEqual(site_build.main(["--out", str(out)]), 0)
+            page = (out / "docs" / "index.html").read_text(encoding="utf-8")
+            self.assertNotIn("{{", page)
+            base = site_build.json.loads((SITE / "links.json").read_text(encoding="utf-8"))["docs_base"]
+            self.assertIn(f'href="{base}contract.md" rel="noopener"', page)
+            docs_dir = SITE.parent / "docs"
+            for name in set(re.findall(re.escape(base) + r"([a-z0-9_.-]+)\"", page)):
+                with self.subTest(doc=name):
+                    self.assertTrue((docs_dir / name).is_file())
+            for ref in re.findall(r'(?:href|src)="(/(?:styles\.css|fonts/[^"]+|icon/[^"]+))"', page):
+                with self.subTest(ref=ref):
+                    self.assertTrue((out / ref.lstrip("/")).is_file())
+            self.assertIn('href="/docs/"', (out / "index.html").read_text(encoding="utf-8"))
 
     def test_built_page_and_manifest_resolve_to_published_icons(self):
         with tempfile.TemporaryDirectory() as tmp:

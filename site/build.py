@@ -1,7 +1,8 @@
 """Build the gargoyl.dev static site into site/dist.
 
 External links live only in site/links.json. Templates reference them as
-{{link:<name>}}, which renders to an href attribute. A URL still containing
+{{link:<name>}}, which renders to an href attribute. Doc pages are written as
+{{doc:<file>}} and resolve against docs_base in links.json. A URL still containing
 REPLACE_ME renders with a data-placeholder attribute so the page marks it
 visibly; --strict refuses to build until every placeholder is replaced.
 """
@@ -18,6 +19,7 @@ SITE = Path(__file__).resolve().parent
 ICONS = SITE.parent / "assets" / "icon"
 PLACEHOLDER = "REPLACE_ME"
 TOKEN = re.compile(r"\{\{link:([a-z0-9_]+)\}\}")
+DOC_TOKEN = re.compile(r"\{\{doc:([a-z0-9_.-]+)\}\}")
 
 
 def render(template: str, links: dict[str, str]) -> str:
@@ -33,7 +35,13 @@ def render(template: str, links: dict[str, str]) -> str:
             attrs += " data-placeholder"
         return attrs
 
-    return TOKEN.sub(replace, template)
+    def replace_doc(match: re.Match) -> str:
+        if "docs_base" not in links:
+            raise KeyError("docs_base is missing; add it to links.json")
+        url = links["docs_base"] + match.group(1)
+        return f'href="{html.escape(url, quote=True)}" rel="noopener"'
+
+    return DOC_TOKEN.sub(replace_doc, TOKEN.sub(replace, template))
 
 
 def placeholders(links: dict[str, str]) -> list[str]:

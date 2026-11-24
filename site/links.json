@@ -4,5 +4,6 @@
   "x": "https://x.com/natehangen",
   "pilot": "https://github.com/nhangen/gargoyl/issues/new?title=Darkbloom%20pilot%20interest",
   "linkedin": "https://linkedin.com/in/nathanhangen",
-  "install": "https://github.com/nhangen/gargoyl/releases/latest"
+  "install": "https://github.com/nhangen/gargoyl/releases/latest",
+  "docs_base": "https://github.com/nhangen/gargoyl/blob/main/docs/"
 }
