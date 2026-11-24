@@ -28,13 +28,6 @@
   <link rel="manifest" href="icon/manifest.webmanifest">
   <link rel="preload" href="fonts/archivo-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-TC0R2KF0H9"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-TC0R2KF0H9', { page_referrer: document.referrer ? new URL(document.referrer).origin : '' });
-  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -291,32 +284,6 @@ gargoyl monitor</code></pre>
         });
       });
     });
-
-    document.addEventListener('click', trackClick, true);
-    document.addEventListener('auxclick', trackClick, true);
-    function trackClick(event) {
-      var target = event.target instanceof Element ? event.target.closest('a, button') : null;
-      if (!target || typeof window.gtag !== 'function') return;
-      if (event.type === 'auxclick' && (!(target instanceof HTMLAnchorElement) || event.button !== 1)) return;
-      if (event.type === 'click' && event.button !== 0) return;
-      var destination;
-      if (target instanceof HTMLAnchorElement) {
-        var url = new URL(target.href, window.location.href);
-        if (url.protocol === 'http:' || url.protocol === 'https:') {
-          destination = url.origin === window.location.origin
-            ? url.pathname + url.hash
-            : url.hostname + url.pathname;
-        }
-      }
-      var section = target.closest('section, header, footer');
-      var parameters = {
-        element_type: target instanceof HTMLAnchorElement ? 'link' : 'button',
-        element_label: (target.getAttribute('aria-label') || target.textContent || '').trim().slice(0, 80)
-      };
-      if (section && section.id) parameters.section_id = section.id;
-      if (destination) parameters.destination = destination;
-      window.gtag('event', 'site_click', parameters);
-    }
   </script>
 </body>
 </html>
