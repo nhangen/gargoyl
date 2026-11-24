@@ -7,6 +7,7 @@ display face (Archivo, SIL OFL 1.1) is self-hosted.
 - `src/`: page source. Links are written as `{{link:<name>}}` in `src/index.html`
 - `src/docs/`: the developer docs page, served at `/docs/`. It links to repository docs with
   `{{doc:<file>}}`, which resolves against `docs_base` in `links.json`
+  (lowercase file names in `docs/`; an unresolved token fails the build)
 - `build.py`: renders `src/` into `dist/` (gitignored) with links filled in
 - `og/`: source for the 1200×630 link-preview image `src/og.png`;
   re-render with `node site/og/render.js` (needs Playwright) after changing it

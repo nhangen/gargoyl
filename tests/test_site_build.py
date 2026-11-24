@@ -38,8 +38,20 @@ class DocTokenTest(unittest.TestCase):
         self.assertEqual(out, '<a href="https://example.com/docs/cli.md" rel="noopener">')
 
     def test_missing_docs_base_fails_clearly(self):
-        with self.assertRaisesRegex(KeyError, "docs_base"):
+        with self.assertRaisesRegex(KeyError, "docs_base is missing; add it to links.json"):
             site_build.render("<a {{doc:cli.md}}>", {})
+
+    def test_docs_base_without_trailing_slash_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "must end with"):
+            site_build.render("<a {{doc:cli.md}}>", {"docs_base": "https://example.com/docs"})
+
+    def test_placeholder_docs_base_marks_doc_links(self):
+        out = site_build.render("<a {{doc:cli.md}}>", {"docs_base": "https://REPLACE_ME/"})
+        self.assertIn("data-placeholder", out)
+
+    def test_unresolved_token_fails_the_build(self):
+        with self.assertRaisesRegex(ValueError, "unresolved tokens"):
+            site_build.render("<a {{doc:CLI.md}}>", self.LINKS)
 
     def test_doc_token_does_not_affect_link_token(self):
         out = site_build.render("<a {{link:gh}}> <a {{doc:a-b_c.md}}>", self.LINKS)
@@ -69,7 +81,9 @@ class SiteTest(unittest.TestCase):
             base = site_build.json.loads((SITE / "links.json").read_text(encoding="utf-8"))["docs_base"]
             self.assertIn(f'href="{base}contract.md" rel="noopener"', page)
             docs_dir = SITE.parent / "docs"
-            for name in set(re.findall(re.escape(base) + r"([a-z0-9_.-]+)\"", page)):
+            names = set(re.findall(re.escape(base) + r"([a-z0-9_.-]+)\"", page))
+            self.assertGreaterEqual(len(names), 13)
+            for name in names:
                 with self.subTest(doc=name):
                     self.assertTrue((docs_dir / name).is_file())
             for ref in re.findall(r'(?:href|src)="(/(?:styles\.css|fonts/[^"]+|icon/[^"]+))"', page):

@@ -22,26 +22,37 @@ TOKEN = re.compile(r"\{\{link:([a-z0-9_]+)\}\}")
 DOC_TOKEN = re.compile(r"\{\{doc:([a-z0-9_.-]+)\}\}")
 
 
+LEFTOVER = re.compile(r"\{\{(?:link|doc):[^}]*\}\}")
+
+
+def _href(url: str) -> str:
+    attrs = f'href="{html.escape(url, quote=True)}"'
+    if url.startswith(("http://", "https://")):
+        attrs += ' rel="noopener"'
+    if PLACEHOLDER in url:
+        attrs += " data-placeholder"
+    return attrs
+
+
 def render(template: str, links: dict[str, str]) -> str:
     def replace(match: re.Match) -> str:
         name = match.group(1)
         if name not in links:
             raise KeyError(f"unknown link {name!r}; add it to links.json")
-        url = links[name]
-        attrs = f'href="{html.escape(url, quote=True)}"'
-        if url.startswith(("http://", "https://")):
-            attrs += ' rel="noopener"'
-        if PLACEHOLDER in url:
-            attrs += " data-placeholder"
-        return attrs
+        return _href(links[name])
 
     def replace_doc(match: re.Match) -> str:
         if "docs_base" not in links:
             raise KeyError("docs_base is missing; add it to links.json")
-        url = links["docs_base"] + match.group(1)
-        return f'href="{html.escape(url, quote=True)}" rel="noopener"'
+        if not links["docs_base"].endswith("/"):
+            raise ValueError("docs_base must end with '/'")
+        return _href(links["docs_base"] + match.group(1))
 
-    return DOC_TOKEN.sub(replace_doc, TOKEN.sub(replace, template))
+    out = DOC_TOKEN.sub(replace_doc, TOKEN.sub(replace, template))
+    leftover = LEFTOVER.findall(out)
+    if leftover:
+        raise ValueError(f"unresolved tokens: {', '.join(sorted(set(leftover)))}")
+    return out
 
 
 def placeholders(links: dict[str, str]) -> list[str]:
