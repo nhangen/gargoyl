@@ -3,24 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gargoyl: inspect your Darkbloom fleet, one host at a time</title>
-  <meta name="description" content="Gargoyl turns each Darkbloom host's routing, model and verification reports into an evidence dashboard that shows you which state to trust and which to recheck. In development now, with confirm-each-host repairs on the way.">
+  <title>Gargoyl: private fleet monitoring for Darkbloom</title>
+  <meta name="description" content="Gargoyl is a private desktop monitor for Darkbloom node operators. The app runs locally on your machine, tracking request traffic, model residency, and host health with zero cloud telemetry.">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0c0e0d">
   <link rel="canonical" href="https://gargoyl.dev/">
   <meta property="og:title" content="Gargoyl">
-  <meta property="og:description" content="See which Darkbloom host reports to trust, which to recheck, and the evidence behind each state.">
+  <meta property="og:description" content="Gargoyl is a private desktop monitor for Darkbloom node operators. The app runs locally on your machine, tracking request traffic, model residency, and host health with zero cloud telemetry.">
   <meta property="og:url" content="https://gargoyl.dev/">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://gargoyl.dev/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Gargoyl: See which host reports to trust, and which to recheck.">
+  <meta property="og:image:alt" content="Gargoyl: Monitor your Darkbloom inference fleet.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Gargoyl">
-  <meta name="twitter:description" content="See which Darkbloom host reports to trust, which to recheck, and the evidence behind each state.">
+  <meta name="twitter:description" content="Gargoyl is a private desktop monitor for Darkbloom node operators. The app runs locally on your machine, tracking request traffic, model residency, and host health with zero cloud telemetry.">
   <meta name="twitter:image" content="https://gargoyl.dev/og.png">
-  <meta name="twitter:creator" content="@nathan_hangen">
+  <meta name="twitter:creator" content="@natehangen">
   <link rel="icon" href="icon/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon/apple-touch-icon.png" sizes="180x180">
   <link rel="icon" href="icon/icon-192.png" sizes="192x192" type="image/png">
@@ -59,14 +59,14 @@
       <div class="hero-grid" aria-hidden="true"></div>
       <div class="wrap hero-inner">
         <div class="hero-copy">
-          <h1 id="hero-title">See which Darkbloom host reports to trust, and which to recheck.</h1>
-          <p class="lede">Gargoyl reads each host's routing, model and verification reports and shows the evidence behind every state, so a stale or blocked reading shows you which field to look at. Repairs you approve host by host are in development.</p>
+          <h1 id="hero-title">Monitor your Darkbloom inference fleet.</h1>
+          <p class="lede">Gargoyl is a private desktop monitor for Darkbloom node operators. The app runs locally on your machine, tracking request traffic, model residency, and host health with zero cloud telemetry.</p>
           <div class="cta-row">
             <a class="btn btn-primary" {{link:github}}>
               View on GitHub
               <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
-            <a class="btn btn-ghost" {{link:pilot}}>Join the Darkbloom pilot</a>
+            <a class="btn btn-ghost" href="#install">Install Gargoyl</a>
           </div>
         </div>
 
@@ -84,7 +84,7 @@
             <div class="panel-head">
               <div class="panel-title">
                 <svg class="panel-mark" aria-hidden="true"><use href="#mark"/></svg>
-                <span>fleet / evidence</span>
+                <span>fleet / telemetry</span>
               </div>
               <span class="example-tag">Example data, not live</span>
             </div>
@@ -128,9 +128,62 @@
             </table>
 
             <figcaption class="panel-foot">
-              Every field keeps its own state. A field reads unknown if its evidence is missing or a source contradicts itself, and you know what to recheck.
+              Every host tracks its own freshness and telemetry state. Clear alerts tell you exactly why a host stopped routing, so you never guess at node health.
             </figcaption>
           </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="install" class="install-section" aria-labelledby="install-title">
+      <div class="wrap">
+        <div class="install-grid">
+          <div class="install-copy">
+            <span class="section-kicker">install / local</span>
+            <h2 id="install-title">Run it on your Mac.</h2>
+            <p class="install-lede">Clone, install, start. Gargoyl stays on your machine: no account, no cloud, and no host enrolled by installing.</p>
+            <p class="install-meta">Python 3.11+ · macOS for the optional app</p>
+            <div class="install-actions">
+              <a class="btn btn-primary" href="https://github.com/nhangen/gargoyl/tree/main/docs">
+                Developer Docs
+                <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </a>
+              <a class="btn btn-ghost" {{link:github}}>View on GitHub</a>
+            </div>
+          </div>
+
+          <div class="install-cards">
+            <figure class="install-card">
+              <div class="card-head">
+                <span class="card-label">terminal</span>
+                <button class="copy-btn" type="button" aria-label="Copy terminal commands">
+                  <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H11" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <pre tabindex="0" aria-label="Terminal installation steps"><code><span class="comment"># 1. get the code</span>
+git clone https://github.com/nhangen/gargoyl
+cd gargoyl
+
+<span class="comment"># 2. install into a virtual environment</span>
+python -m venv .venv &amp;&amp; source .venv/bin/activate
+python -m pip install -e .
+
+<span class="comment"># 3. start the local monitor</span>
+gargoyl monitor</code></pre>
+            </figure>
+
+            <figure class="install-card">
+              <div class="card-head">
+                <span class="card-label">optional: native Mac app</span>
+                <button class="copy-btn" type="button" aria-label="Copy native app build command">
+                  <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H11" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <pre tabindex="0" aria-label="Command to build macOS app"><code>python tools/build_macos_app.py --output dist --python .venv/bin/python</code></pre>
+            </figure>
+          </div>
         </div>
       </div>
     </section>
@@ -140,11 +193,11 @@
         <h2 id="principles-title" class="sr-only">Principles</h2>
         <article class="principle">
           <div class="principle-text">
-            <h3>Evidence over assumptions</h3>
-            <p>Each field keeps its source, timestamp, freshness window and state: observed, stale, unknown, or blocked. A field reads unknown when its evidence is missing or a source contradicts itself, so you see what to recheck instead of a smoothed verdict.</p>
+            <h3>Clear telemetry, no guesswork</h3>
+            <p>Each host tracks its source, freshness window, and telemetry state: observed, stale, unknown, or blocked. Gargoyl flags the real issue instead of smoothing over an outage, so you know exactly which host needs attention.</p>
           </div>
           <figure class="snippet">
-            <figcaption>One field, as a host reports it (example)</figcaption>
+            <figcaption>One telemetry signal, as a host reports it (example)</figcaption>
 <pre tabindex="0" aria-label="Example field record"><code><span class="k">"model_state"</span>: {
   <span class="k">"value"</span>: <span class="v">"resident"</span>,
   <span class="k">"source"</span>: <span class="v">"daemon"</span>,
@@ -158,10 +211,10 @@
         <article class="principle">
           <div class="principle-text">
             <h3>Privacy by design</h3>
-            <p>A host can only send the small set of aggregate fields on an allowlist, each one tied to an opaque ID assigned to that host, never derived from its hostname. Prompts, completions, credentials, raw logs, customer identifiers, IP addresses, hostnames and model names are rejected by the schema, and no setting turns that off.</p>
+            <p>Host telemetry stays aggregate and private. A host only sends basic counters like request numbers and uptime tied to an opaque ID. Prompts, completions, API keys, raw logs, customer identifiers, IP addresses, and model names are rejected by the schema, and no setting turns that off.</p>
           </div>
           <figure class="snippet">
-            <figcaption>What a host may send (example)</figcaption>
+            <figcaption>Allowlisted telemetry fields vs rejected private data (example)</figcaption>
 <pre tabindex="0" aria-label="Fields that may leave a host and data the schema rejects"><code><span class="ok">may leave the host</span>
   <span class="k">host_id</span>          <span class="v">3f9a…c21e</span>
   <span class="k">requests_total</span>   <span class="v">1284</span>
@@ -177,11 +230,11 @@
         </article>
         <article class="principle">
           <div class="principle-text">
-            <h3>Repairs under your control <span class="badge">In development</span></h3>
-            <p>Repairs draw from a short, approved action list. Each repair checks its target first, touches one host, and waits for your confirmation. Nothing runs on its own. Repairs have been tested in simulation but not yet run on a live host.</p>
+            <h3>Fix problems with one click <span class="badge">In development</span></h3>
+            <p>Gargoyl helps you restart stuck host daemons or network connections safely. Each repair checks its target first and waits for your confirmation, so nothing changes on your machine without your permission.</p>
           </div>
           <figure class="snippet">
-            <figcaption>Sketch of the flow, simulated hosts only</figcaption>
+            <figcaption>Safe restart confirmation (example)</figcaption>
 <pre tabindex="0" aria-label="Sketch of a planned repair confirmation"><code><span class="k">target</span>     <span class="v">b07d…41a8 only</span>
 <span class="k">evidence</span>   <span class="v">model_state</span> <span class="warn">stale</span><span class="v">, 43m</span>
 <span class="k">action</span>     <span class="v">from the approved list</span>
@@ -195,23 +248,42 @@
     <section class="status" aria-labelledby="status-title">
       <div class="wrap status-inner">
         <svg class="status-mark" aria-hidden="true"><use href="#mark"/></svg>
-        <div>
-          <h2 id="status-title">We are building this now.</h2>
-          <p>Darkbloom is the first integration. The telemetry schema, privacy checks and evidence dashboard are in progress; host enrollment and live-host validation come next.</p>
+        <div class="status-text">
+          <h2 id="status-title">Gargoyl is Free &amp; Open Source.</h2>
+          <p>We're looking for beta testers! Join the group now by installing Gargoyl and following the repo on GitHub. Ideas, feedback,<br><span class="nowrap">and bug reports wanted.</span></p>
+          <div class="status-action">
+            <a class="github-button" {{link:github}} data-color-scheme="no-preference: dark; light: dark; dark: dark;" data-icon="octicon-star" data-size="large" aria-label="Star nhangen/gargoyl on GitHub">Star</a>
+          </div>
         </div>
-        <a class="btn btn-ghost" {{link:github}}>Follow on GitHub</a>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="wrap footer-inner">
-      <p>Built by Nathan Hangen</p>
+      <p>Built by <a {{link:linkedin}}>Nathan Hangen</a></p>
       <nav aria-label="Footer">
         <a {{link:github}}>GitHub</a>
         <a {{link:x}}>X</a>
+        <a {{link:linkedin}}>LinkedIn</a>
       </nav>
     </div>
   </footer>
+
+  <script async defer src="https://buttons.github.io/buttons.js"></script>
+  <script>
+    document.querySelectorAll('.copy-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var card = btn.closest('.install-card');
+        var code = card.querySelector('pre code').innerText;
+        navigator.clipboard.writeText(code).then(function() {
+          var label = btn.querySelector('span');
+          var orig = label.textContent;
+          label.textContent = 'Copied!';
+          setTimeout(function() { label.textContent = orig; }, 2000);
+        });
+      });
+    });
+  </script>
 </body>
 </html>
