@@ -39,7 +39,7 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
         return dict(inventory_available=False, partial=True, rows=[], preview=preview, lifecycle=lifecycle)
     validate_inventory(inventory)
     try:
-        matched = matching_provider(inventory, local, now)
+        matched = matching_provider(inventory, local, now, lifecycle=lifecycle)
     except (ValueError, KeyError, TypeError):
         matched = None
     rows = []

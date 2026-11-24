@@ -153,7 +153,7 @@ def render_fleet(
         raise ValueError("unsupported fleet view")
     if inventory is not None:
         validate_inventory(inventory)
-    matched = matching_provider(inventory, local, now)
+    matched = matching_provider(inventory, local, now, lifecycle=lifecycle)
     body = (
         '<div class="page-head"><div><h1>Your fleet</h1><p>Provider records reported by your Darkbloom '
         "account. Coordinator reports and this Mac’s own observations stay separate. Nothing here controls "
