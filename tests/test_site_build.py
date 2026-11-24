@@ -62,6 +62,28 @@ class DocTokenTest(unittest.TestCase):
         self.assertIn("https://github.com/a/b", site_build.render("<a {{link:gh}}>", {"gh": "https://github.com/a/b"}))
 
 
+class HeroCopyTest(unittest.TestCase):
+    """The h1, the OG card headline, and og:image:alt must stay in sync."""
+
+    H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S)
+    ALT_RE = re.compile(r'<meta property="og:image:alt" content="([^"]*)">')
+
+    def _h1(self, html: str) -> str:
+        match = self.H1_RE.search(html)
+        self.assertIsNotNone(match, "no h1 found")
+        return re.sub(r"\s+", " ", match.group(1)).strip()
+
+    def test_h1_matches_og_card_headline_and_image_alt(self):
+        index = (SITE / "src" / "index.html").read_text(encoding="utf-8")
+        og = (SITE / "og" / "og.html").read_text(encoding="utf-8")
+        alt_match = self.ALT_RE.search(index)
+        self.assertIsNotNone(alt_match, "no og:image:alt in index.html")
+        alt_text = alt_match.group(1)
+        headline = self._h1(og)
+        self.assertEqual(headline, self._h1(index))
+        self.assertEqual(headline, alt_text.removeprefix("Gargoyl: "))
+
+
 class SiteTest(unittest.TestCase):
     def test_build_resolves_every_link(self):
         with tempfile.TemporaryDirectory() as tmp:
