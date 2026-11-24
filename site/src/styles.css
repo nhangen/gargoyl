@@ -140,6 +140,8 @@ a { color: inherit; text-underline-offset: 3px; }
 .wordmark-mark { width: 24px; height: 24px; color: var(--text); }
 .mark-eyes { fill: var(--accent); }
 
+.header-actions { display: flex; align-items: center; gap: 8px; }
+
 .header-link {
   display: inline-flex;
   align-items: center;
@@ -154,6 +156,10 @@ a { color: inherit; text-underline-offset: 3px; }
   transition: color 0.2s, border-color 0.2s;
 }
 .header-link:hover { color: var(--text); border-color: var(--line-strong); }
+@media (max-width: 360px) {
+  .header-actions { gap: 6px; }
+  .header-actions .header-link { padding: 0 10px; gap: 6px; }
+}
 
 /* Hero */
 
@@ -695,7 +701,7 @@ h1 em {
 .crumbs { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .crumb-sep { color: var(--line-strong); }
 .crumb { color: var(--text-muted); font-family: var(--mono); font-size: 0.8125rem; }
-@media (max-width: 480px) { .crumb-sep, .crumb { display: none; } }
+@media (max-width: 500px) { .crumb-sep, .crumb { display: none; } }
 
 .docs-layout { display: grid; gap: 0 56px; align-items: start; }
 @media (min-width: 900px) { .docs-layout { grid-template-columns: 200px minmax(0, 1fr); } }

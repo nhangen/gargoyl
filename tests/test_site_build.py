@@ -90,6 +90,8 @@ class SiteTest(unittest.TestCase):
                 with self.subTest(ref=ref):
                     self.assertTrue((out / ref.lstrip("/")).is_file())
             self.assertIn('href="/docs/"', (out / "index.html").read_text(encoding="utf-8"))
+            self.assertIn('<a class="header-link" href="/">', page)
+            self.assertIn('<a href="/">Home</a>', page)
 
     def test_built_page_and_manifest_resolve_to_published_icons(self):
         with tempfile.TemporaryDirectory() as tmp:
