@@ -182,6 +182,7 @@ class TailscaleSecurityTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 urllib.request.urlopen(url, timeout=2)
             self.assertEqual(ctx.exception.code, 403)
+            ctx.exception.close()
         finally:
             server.shutdown()
             server.server_close()
@@ -452,6 +453,7 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 urllib.request.urlopen(req, timeout=2)
             self.assertEqual(ctx.exception.code, 400)
+            ctx.exception.close()
 
             # 2. Post confirmed preflight without handler -> 503
             req_valid = urllib.request.Request(
@@ -463,9 +465,11 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 urllib.request.urlopen(req_valid, timeout=2)
             self.assertEqual(ctx.exception.code, 503)
+            ctx.exception.close()
         finally:
             server.shutdown()
             server.server_close()
+            thread.join(timeout=2)
 
 
 if __name__ == "__main__":

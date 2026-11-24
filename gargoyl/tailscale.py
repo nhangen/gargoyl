@@ -435,6 +435,9 @@ class FleetTelemetryStore:
                     data = json.loads(resp.read().decode("utf-8"))
                     self.ingest(provider_id, data)
                     return data
+        except urllib.error.HTTPError as err:
+            err.close()
+            return None
         except Exception:
             return None
         return None
@@ -461,9 +464,12 @@ def remote_operator_restart(
             return data
     except urllib.error.HTTPError as err:
         try:
-            err_data = json.loads(err.read().decode("utf-8"))
-        except Exception:
-            err_data = {"error": f"HTTP {err.code}"}
+            try:
+                err_data = json.loads(err.read().decode("utf-8"))
+            except Exception:
+                err_data = {"error": f"HTTP {err.code}"}
+        finally:
+            err.close()
         return {"status": "rejected", "error": err_data}
     except Exception as exc:
         return {"status": "failed", "error": str(exc)}
