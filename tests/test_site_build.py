@@ -83,7 +83,7 @@ class HeroCopyTest(unittest.TestCase):
         alt_text = html.unescape(alt_match.group(1))
         headline = self._h1(og)
         self.assertEqual(headline, self._h1(index))
-        self.assertEqual(headline, alt_text.removeprefix("Gargoyl: "))
+        self.assertEqual(alt_text, f"Gargoyl: {headline}")
 
 
 class SiteTest(unittest.TestCase):
