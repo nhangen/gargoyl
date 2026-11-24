@@ -58,8 +58,8 @@ EXPECTED_DIGESTS = {
         "git": "643f86a81242779294bd52355060ab4be8efe214",
     },
     "README.md": {
-        "sha256": "db1efae68d13c78a7fa51de7ae257b6fb68c32b72d3721f51ff80b7ca0d12af2",
-        "git": "f48f773034ad6ccdd60ee721a24928c38ef36aca",
+        "sha256": "55aca4614bec89ce81cb992d3edfc09f59185184132ae9942c47f3c2bca78dc4",
+        "git": "ced6a4aeb1ae68d87fe2d7a345a98fcdbb84e33e",
     },
     "tools/run_tests.py": {
         "sha256": "522456210ef5c77d9109388e12088ab4695ed203af8f2f491327b8c9a3f9977f",
