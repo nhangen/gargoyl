@@ -182,6 +182,19 @@ class TailscaleSecurityTests(unittest.TestCase):
         self.assertFalse(is_tailscale_ip("not-an-ip"))
         self.assertFalse(is_tailscale_ip(None))
 
+    def test_is_tailscale_ip_subnet_boundaries(self):
+        self.assertTrue(is_tailscale_ip("100.64.0.0", allow_loopback=False))
+        self.assertTrue(is_tailscale_ip("100.127.255.255", allow_loopback=False))
+        self.assertFalse(is_tailscale_ip("100.63.255.255", allow_loopback=False))
+        self.assertFalse(is_tailscale_ip("100.128.0.0", allow_loopback=False))
+        self.assertTrue(is_tailscale_ip("fd7a:115c:a1e0:ffff::1", allow_loopback=False))
+        self.assertFalse(is_tailscale_ip("fd7a:115c:a1e1::1", allow_loopback=False))
+        self.assertFalse(is_tailscale_ip("::1", allow_loopback=False))
+
+    def test_parse_tailscale_status_bytes_input(self):
+        status = parse_tailscale_status(json.dumps(SAMPLE_TAILSCALE_STATUS).encode())
+        self.assertEqual(len(status["peers"]), 3)
+
     def test_unauthorized_interface_rejected_with_403(self):
         # Start server with allow_loopback=False, so localhost connects are rejected as non-Tailscale
         server = TailscaleTelemetryServer(
@@ -315,6 +328,11 @@ class TailscaleEndpointAndFederationTests(unittest.TestCase):
                 urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/telemetry", timeout=2)
         self.assertEqual(ctx.exception.code, 403)
         self.assertTrue(any("127.0.0.1" in line for line in logs.output))
+        post = urllib.request.Request(f"http://127.0.0.1:{port}/v1/telemetry", data=b"{}", method="POST")
+        with self.assertLogs("gargoyl.tailscale", level="WARNING"):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(post, timeout=2)
+        self.assertEqual(ctx.exception.code, 403)
 
 
 class PeerSnapshotValidationTests(unittest.TestCase):
