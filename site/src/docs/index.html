@@ -51,7 +51,7 @@
         <span class="crumb-sep" aria-hidden="true">/</span>
         <span class="crumb">developer docs</span>
       </div>
-      <a class="header-link" {{link:github}}>
+      <a class="header-link" target="_blank" {{link:github}}>
         <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         <span>GitHub</span>
       </a>
@@ -137,17 +137,17 @@ python tools/build_macos_app.py --output dist --python .venv/bin/python</code></
         <h2 id="start-title">Get started</h2>
         <p class="doc-blurb">Run the monitor on one host and learn the commands.</p>
         <div class="doc-grid">
-          <a class="doc-card" {{doc:local-monitor.md}}>
+          <a class="doc-card" target="_blank" {{doc:local-monitor.md}}>
             <span class="doc-title">Local monitor</span>
             <span class="doc-desc">Poll an owner-local daemon-state file and watch it on loopback. Start, stop and status.</span>
             <span class="doc-file">docs/local-monitor.md</span>
           </a>
-          <a class="doc-card" {{doc:cli.md}}>
+          <a class="doc-card" target="_blank" {{doc:cli.md}}>
             <span class="doc-title">CLI reference</span>
             <span class="doc-desc">Inspect, capture, monitor and status, with saved-input examples.</span>
             <span class="doc-file">docs/cli.md</span>
           </a>
-          <a class="doc-card" {{doc:pilot-configuration.md}}>
+          <a class="doc-card" target="_blank" {{doc:pilot-configuration.md}}>
             <span class="doc-title">Pilot configuration</span>
             <span class="doc-desc">The local installation policy.</span>
             <span class="doc-file">docs/pilot-configuration.md</span>
@@ -159,17 +159,17 @@ python tools/build_macos_app.py --output dist --python .venv/bin/python</code></
         <h2 id="contract-title">Contract and data</h2>
         <p class="doc-blurb">What a host may report, and in what shape.</p>
         <div class="doc-grid">
-          <a class="doc-card" {{doc:contract.md}}>
+          <a class="doc-card" target="_blank" {{doc:contract.md}}>
             <span class="doc-title">v1 contract</span>
             <span class="doc-desc">Schema, privacy rules, collector and dashboard integration, security boundaries.</span>
             <span class="doc-file">docs/contract.md</span>
           </a>
-          <a class="doc-card" {{doc:daemon-state-json.md}}>
+          <a class="doc-card" target="_blank" {{doc:daemon-state-json.md}}>
             <span class="doc-title">Daemon state JSON</span>
             <span class="doc-desc">The state file the collector reads.</span>
             <span class="doc-file">docs/daemon-state-json.md</span>
           </a>
-          <a class="doc-card" {{doc:diagnostic-confidence.md}}>
+          <a class="doc-card" target="_blank" {{doc:diagnostic-confidence.md}}>
             <span class="doc-title">Diagnostic confidence</span>
             <span class="doc-desc">How the dashboard keeps local reports, coordinator reports and protocol confidence apart. Missing evidence stays unknown.</span>
             <span class="doc-file">docs/diagnostic-confidence.md</span>
@@ -181,22 +181,22 @@ python tools/build_macos_app.py --output dist --python .venv/bin/python</code></
         <h2 id="fleet-title">Operating the fleet</h2>
         <p class="doc-blurb">Read-only fleet views, the Mac app, and deployment evidence.</p>
         <div class="doc-grid">
-          <a class="doc-card" {{doc:fleet-manager.md}}>
+          <a class="doc-card" target="_blank" {{doc:fleet-manager.md}}>
             <span class="doc-title">Fleet manager</span>
             <span class="doc-desc">Fleet operation, aliases and sign-in.</span>
             <span class="doc-file">docs/fleet-manager.md</span>
           </a>
-          <a class="doc-card" {{doc:native-operator-app.md}}>
+          <a class="doc-card" target="_blank" {{doc:native-operator-app.md}}>
             <span class="doc-title">Native Mac app</span>
             <span class="doc-desc">The desktop app and how it connects.</span>
             <span class="doc-file">docs/native-operator-app.md</span>
           </a>
-          <a class="doc-card" {{doc:operator-console.md}}>
+          <a class="doc-card" target="_blank" {{doc:operator-console.md}}>
             <span class="doc-title">Operator console</span>
             <span class="doc-desc">The read-only browser console and how it shows evidence.</span>
             <span class="doc-file">docs/operator-console.md</span>
           </a>
-          <a class="doc-card" {{doc:pilot-acceptance.md}}>
+          <a class="doc-card" target="_blank" {{doc:pilot-acceptance.md}}>
             <span class="doc-title">Pilot acceptance</span>
             <span class="doc-desc">Deployment and acceptance evidence.</span>
             <span class="doc-file">docs/pilot-acceptance.md</span>
@@ -208,17 +208,17 @@ python tools/build_macos_app.py --output dist --python .venv/bin/python</code></
         <h2 id="repairs-title">Repairs <span class="badge">In development</span></h2>
         <p class="doc-blurb">Allowlisted, preflighted and always confirmed per host. Never autonomous.</p>
         <div class="doc-grid">
-          <a class="doc-card" {{doc:repair-contract.md}}>
+          <a class="doc-card" target="_blank" {{doc:repair-contract.md}}>
             <span class="doc-title">Repair contract</span>
             <span class="doc-desc">What a repair may do and when.</span>
             <span class="doc-file">docs/repair-contract.md</span>
           </a>
-          <a class="doc-card" {{doc:repair-execution.md}}>
+          <a class="doc-card" target="_blank" {{doc:repair-execution.md}}>
             <span class="doc-title">Repair execution</span>
             <span class="doc-desc">The synthetic integration library that runs a confirmed repair with a local audit. Not active in the installed monitor.</span>
             <span class="doc-file">docs/repair-execution.md</span>
           </a>
-          <a class="doc-card" {{doc:repair-view.md}}>
+          <a class="doc-card" target="_blank" {{doc:repair-view.md}}>
             <span class="doc-title">Repair view</span>
             <span class="doc-desc">Read-only previews of repair plans. No buttons or actions.</span>
             <span class="doc-file">docs/repair-view.md</span>
@@ -232,18 +232,19 @@ python tools/build_macos_app.py --output dist --python .venv/bin/python</code></
           <h2 id="privacy-title">Privacy is part of the schema.</h2>
           <p>Prompts, completions, credentials, raw logs, customer identifiers, IP addresses and model names are rejected by the v1 contract. No setting turns that off.</p>
         </div>
-        <a class="btn btn-ghost" {{doc:contract.md}}>Read the contract</a>
+        <a class="btn btn-ghost" target="_blank" {{doc:contract.md}}>Read the contract</a>
       </aside>
     </main>
   </div>
 
   <footer class="site-footer">
     <div class="wrap footer-inner">
-      <p>Built by Nathan Hangen</p>
+      <p>Built by <a target="_blank" {{link:linkedin}}>Nathan Hangen</a></p>
       <nav aria-label="Footer">
-        <a href="/docs/">Docs</a>
-        <a {{link:github}}>GitHub</a>
-        <a {{link:x}}>X</a>
+        <a href="/docs/" target="_blank" rel="noopener">Docs</a>
+        <a target="_blank" {{link:github}}>GitHub</a>
+        <a target="_blank" {{link:x}}>X</a>
+        <a target="_blank" {{link:linkedin}}>LinkedIn</a>
       </nav>
     </div>
   </footer>

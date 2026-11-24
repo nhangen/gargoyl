@@ -418,11 +418,11 @@ h1 em {
 /* Install: 2-column grid matching hero and principles */
 
 .install-section {
-  padding: 56px 0 72px;
+  padding: 56px 0 48px;
   border-top: 1px solid var(--line);
 }
 @media (min-width: 960px) {
-  .install-section { padding: 72px 0 88px; }
+  .install-section { padding: 64px 0 48px; }
 }
 
 .install-grid {
@@ -558,8 +558,8 @@ h1 em {
 
 /* Principles: ruled rows, heading beside its explanation */
 
-.principles { padding: 48px 0 0; }
-@media (min-width: 960px) { .principles { padding: 64px 0 0; } }
+.principles { padding: 0; }
+@media (min-width: 960px) { .principles { padding: 0; } }
 
 .principle {
   display: grid;
