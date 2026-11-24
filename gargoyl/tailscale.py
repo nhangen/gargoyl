@@ -159,52 +159,37 @@ def _clean_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-def match_peers_to_providers(peers: list[dict], providers: list[dict]) -> dict[str, dict]:
-    """Associate discovered Tailscale peer nodes with Darkbloom provider identities.
+def _peer_names(peer: dict) -> set[str]:
+    names = {_clean_name(peer.get("hostname") or ""), _clean_name((peer.get("dns_name") or "").split(".")[0])}
+    names.discard("")
+    return names
 
-    Matches by exact or fuzzy hostname / source label.
+
+def match_peers_to_providers(peers: list[dict], providers: list[dict]) -> dict[str, dict]:
+    """Associate peers with Darkbloom providers by exact, unambiguous name only.
+
+    A provider matching several peers, or a peer matched by several providers, stays
+    unmatched: this mapping decides where telemetry is attributed.
     Returns: {provider_id: peer_dict}
     """
-    matches = {}
-    used_peers = set()
-
-    # Pass 1: exact match between provider name and peer hostname
+    candidates: dict[str, list[dict]] = {}
     for provider in providers:
         prov_id = provider.get("id")
-        prov_name = provider.get("name") or provider.get("source_name") or ""
-        prov_clean = _clean_name(prov_name)
+        prov_clean = _clean_name(provider.get("name") or provider.get("source_name") or "")
         if not prov_id or not prov_clean:
             continue
-        for peer in peers:
-            peer_id = peer.get("id") or peer.get("hostname")
-            if peer_id in used_peers:
-                continue
-            peer_host_clean = _clean_name(peer.get("hostname", ""))
-            peer_dns_clean = _clean_name(peer.get("dns_name", "").split(".")[0])
-            if prov_clean in (peer_host_clean, peer_dns_clean):
-                matches[prov_id] = peer
-                used_peers.add(peer_id)
-                break
+        candidates[prov_id] = [peer for peer in peers if prov_clean in _peer_names(peer)]
 
-    # Pass 2: prefix / substring match (e.g. mbp-provider <-> mbp-2026 or studio64-1 <-> studio64)
-    for provider in providers:
-        prov_id = provider.get("id")
-        if not prov_id or prov_id in matches:
-            continue
-        prov_name = provider.get("name") or provider.get("source_name") or ""
-        prov_clean = _clean_name(prov_name)
-        if not prov_clean:
-            continue
-        for peer in peers:
-            peer_id = peer.get("id") or peer.get("hostname")
-            if peer_id in used_peers:
-                continue
-            peer_host_clean = _clean_name(peer.get("hostname", ""))
-            if prov_clean in peer_host_clean or peer_host_clean in prov_clean:
-                matches[prov_id] = peer
-                used_peers.add(peer_id)
-                break
+    claims: dict[str, int] = {}
+    for found in candidates.values():
+        if len(found) == 1:
+            key = found[0].get("id") or found[0].get("hostname")
+            claims[key] = claims.get(key, 0) + 1
 
+    matches = {}
+    for prov_id, found in candidates.items():
+        if len(found) == 1 and claims[found[0].get("id") or found[0].get("hostname")] == 1:
+            matches[prov_id] = found[0]
     return matches
 
 

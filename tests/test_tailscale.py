@@ -113,7 +113,7 @@ class TailscaleDiscoveryTests(unittest.TestCase):
         self.assertEqual(len(peers), 3)
         self.assertEqual([p["hostname"] for p in peers], ["studio32-1", "studio64-1", "studio64-2"])
 
-    def test_match_peers_to_providers_exact_and_fuzzy(self):
+    def test_match_peers_to_providers_exact_only(self):
         peers = discover_peers(SAMPLE_TAILSCALE_STATUS)
         providers = [
             {"id": "prov-studio32-1", "name": "studio32-1"},
@@ -122,13 +122,22 @@ class TailscaleDiscoveryTests(unittest.TestCase):
             {"id": "prov-unmatched", "name": "other-device"},
         ]
         matched = match_peers_to_providers(peers, providers)
-        self.assertIn("prov-studio32-1", matched)
-        self.assertEqual(matched["prov-studio32-1"]["hostname"], "studio32-1")
-        self.assertIn("prov-studio64-1", matched)
-        self.assertEqual(matched["prov-studio64-1"]["hostname"], "studio64-1")
-        self.assertIn("prov-studio64-2", matched)
-        self.assertEqual(matched["prov-studio64-2"]["hostname"], "studio64-2")
-        self.assertNotIn("prov-unmatched", matched)
+        self.assertEqual({k: v["hostname"] for k, v in matched.items()},
+                         {"prov-studio32-1": "studio32-1", "prov-studio64-1": "studio64-1"})
+
+    def test_ambiguous_or_partial_names_stay_unmatched(self):
+        peers = discover_peers(SAMPLE_TAILSCALE_STATUS)
+        self.assertEqual(match_peers_to_providers(peers, [{"id": "p", "name": "studio64"}]), {})
+        self.assertEqual(match_peers_to_providers(peers, [{"id": "p", "name": "studio"}]), {})
+        twins = [{"id": "a", "name": "studio32-1"}, {"id": "b", "name": "studio32_1"}]
+        self.assertEqual(match_peers_to_providers(peers, twins), {})
+        dup_peers = peers + [dict(peers[0], id="node-dup")]
+        self.assertEqual(match_peers_to_providers(dup_peers, [{"id": "p", "name": "studio32-1"}]), {})
+
+    def test_match_uses_dns_label_when_hostname_differs(self):
+        peers = [{"id": "n1", "hostname": "Mac", "dns_name": "studio32-1.example.ts.net"}]
+        matched = match_peers_to_providers(peers, [{"id": "p", "name": "studio32-1"}])
+        self.assertEqual(matched["p"]["id"], "n1")
 
     def test_associate_peers_with_providers_auto_aliasing(self):
         peers = discover_peers(SAMPLE_TAILSCALE_STATUS)
