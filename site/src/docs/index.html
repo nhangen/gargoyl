@@ -102,15 +102,18 @@ python -m pip install -e .</code></pre>
             <span class="step-num" aria-hidden="true">2</span>
             <div>
               <h3>Start the local monitor</h3>
-              <p>The monitor opens a viewer on loopback only. Check on it, or stop it, from the same terminal.</p>
+              <p>The monitor reads one daemon-state file you name and serves a viewer on loopback only. Check it from a second terminal; stop it with Ctrl-C.</p>
             </div>
           </div>
           <figure class="snippet">
             <figcaption>Terminal</figcaption>
-<pre tabindex="0" aria-label="Run the local monitor"><code><span class="ok"># start the monitor</span>
-gargoyl monitor
+<pre tabindex="0" aria-label="Run the local monitor"><code><span class="ok"># start the monitor (use your own file and host id)</span>
+gargoyl monitor \
+  --input /absolute/path/to/daemon-state.json \
+  --owner-uid "$(id -u)" \
+  --host &lt;stable-host-uuid&gt;
 
-<span class="ok"># check the local viewer</span>
+<span class="ok"># in a second terminal, check the local viewer</span>
 gargoyl status</code></pre>
           </figure>
         </article>
@@ -141,7 +144,7 @@ python tools/build_macos_app.py --output dist --python .venv/bin/python</code></
           </a>
           <a class="doc-card" {{doc:cli.md}}>
             <span class="doc-title">CLI reference</span>
-            <span class="doc-desc">Every gargoyl command, with saved-input examples.</span>
+            <span class="doc-desc">Inspect, capture, monitor and status, with saved-input examples.</span>
             <span class="doc-file">docs/cli.md</span>
           </a>
           <a class="doc-card" {{doc:pilot-configuration.md}}>
