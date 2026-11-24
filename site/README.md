@@ -10,7 +10,8 @@ display face (Archivo, SIL OFL 1.1) is self-hosted.
   (lowercase file names in `docs/`; an unresolved token fails the build)
 - `build.py`: renders `src/` into `dist/` (gitignored) with links filled in
 - `og/`: source for the 1200×630 link-preview image `src/og.png`;
-  re-render with `node site/og/render.js` (needs Playwright) after changing it
+  re-render with `node site/og/render.js` (needs Playwright) after changing it;
+  it exits non-zero if the self-hosted Archivo font does not load
 
 ## Before publishing
 
