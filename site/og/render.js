@@ -28,6 +28,12 @@ const { chromium } = require("playwright");
     if (!archivoLoaded) {
       throw new Error("self-hosted Archivo font did not load");
     }
+    const h1Family = await page.evaluate(
+      () => getComputedStyle(document.querySelector("h1")).fontFamily
+    );
+    if (!/^(?:"Archivo"|'Archivo'|Archivo)(?:\s*,|$)/i.test(h1Family.trim())) {
+      throw new Error(`h1 font-family does not resolve to Archivo (got: ${h1Family})`);
+    }
     await page.screenshot({ path: path.join(__dirname, "..", "src", "og.png") });
   } finally {
     await browser.close();
