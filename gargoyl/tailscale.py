@@ -327,20 +327,32 @@ def validated_peer_map(peer_telemetry) -> dict[str, dict]:
         history = snapshot.get("recent_history")
         data["recent_history"] = list(history) if isinstance(history, list) else None
         error = snapshot.get("last_error")
-        data["last_error"] = error if isinstance(error, dict) else None
+        data["last_error"] = error if isinstance(error, dict) and isinstance(error.get("kind"), str) else None
+        received = snapshot.get("received_at")
+        data["received_at"] = received if isinstance(received, str) else None
         result[provider_id] = data
     return result
 
 
 def peer_freshness(snapshot: dict, now: str) -> str:
-    """current / stale / unknown, judged at read time like local evidence."""
-    collected = snapshot.get("collected_at")
-    if not collected:
+    """current / stale / unknown at read time.
+
+    Judged on received_at (this collector's clock) when the store set it, so peer
+    clock skew cannot make a row look fresh or permanently stale; a raw map without
+    it falls back to the peer's collected_at.
+    """
+    if snapshot.get("last_error"):
+        return "stale"
+    seen = snapshot.get("received_at") or snapshot.get("collected_at")
+    if not seen:
         return "unknown"
-    observed, current = timestamp(collected), timestamp(now)
+    try:
+        observed, current = timestamp(seen), timestamp(now)
+    except Exception:
+        return "unknown"
     if observed > current:
         return "unknown"
-    if snapshot.get("last_error") or (current - observed).total_seconds() > PEER_FRESHNESS_SECONDS:
+    if (current - observed).total_seconds() > PEER_FRESHNESS_SECONDS:
         return "stale"
     return "current"
 
@@ -422,14 +434,15 @@ class TailscaleTelemetryServer(HTTPServer):
 class FleetTelemetryStore:
     """Store aggregating validated peer telemetry and 64-sample rolling history per node."""
 
-    def __init__(self, max_history: int = MAX_HISTORY_PER_NODE):
+    def __init__(self, max_history: int = MAX_HISTORY_PER_NODE, clock=utc_now_iso):
         self.max_history = max_history
+        self._clock = clock
         self._nodes: dict[str, dict] = {}
         self._history: dict[str, deque] = {}
         self._errors: dict[str, dict] = {}
 
     def _record_error(self, provider_id: str, kind: str, detail: str):
-        self._errors[provider_id] = {"at": utc_now_iso(), "kind": kind, "detail": detail}
+        self._errors[provider_id] = {"at": self._clock(), "kind": kind, "detail": detail}
         log.warning("peer telemetry for %s rejected: %s (%s)", provider_id, kind, detail)
 
     def last_error(self, provider_id: str) -> dict | None:
@@ -444,6 +457,7 @@ class FleetTelemetryStore:
         except ValueError as exc:
             self._record_error(provider_id, "invalid_snapshot", str(exc))
             return False
+        data["received_at"] = self._clock()
         history = self._history.setdefault(provider_id, deque(maxlen=self.max_history))
         history.append({
             "collected_at": data["collected_at"],

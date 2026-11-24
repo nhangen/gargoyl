@@ -31,6 +31,7 @@ from gargoyl.tailscale import (
     make_telemetry_snapshot,
     match_peers_to_providers,
     parse_tailscale_status,
+    peer_freshness,
     validated_peer_map,
 )
 
@@ -276,7 +277,7 @@ class TailscaleEndpointAndFederationTests(unittest.TestCase):
         self.thread.start()
 
         # Query endpoint
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: NOW)
         result = store.poll_peer("127.0.0.1", provider_id="prov-1", port=port, allow_loopback=True)
         self.assertIsNotNone(result)
         self.assertEqual(result["node"]["hostname"], "studio32-1")
@@ -364,17 +365,17 @@ class PeerSnapshotValidationTests(unittest.TestCase):
             [],
         ]
         for bad in bad_cases:
-            store = FleetTelemetryStore()
+            store = FleetTelemetryStore(clock=lambda: NOW)
             self.assertFalse(store.ingest("prov-a", bad), bad)
             self.assertIsNone(store.get("prov-a"))
             self.assertIn("invalid", store.last_error("prov-a")["kind"])
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: NOW)
         self.assertTrue(store.ingest("prov-a", good))
         self.assertTrue(store.ingest("prov-a", {"daemon_state": "x"}) is False)
         self.assertEqual(store.get("prov-a")["daemon_state"]["value"], "running")
 
     def test_history_evicts_oldest_samples(self):
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: NOW)
         for i in range(70):
             store.ingest("prov-a", make_telemetry_snapshot(
                 {"hostname": "peer-a"}, daemon_state="running", running_requests=i, now=NOW))
@@ -410,7 +411,7 @@ class FailureObservabilityTests(unittest.TestCase):
         return server.server_port
 
     def test_poll_failures_are_recorded_and_keep_last_good_snapshot(self):
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: NOW)
         store.ingest("prov-a", make_telemetry_snapshot({"hostname": "peer-a"}, daemon_state="running", now=NOW))
         cases = [
             (self._free_port(), "unreachable"),
@@ -446,7 +447,7 @@ class FailureObservabilityTests(unittest.TestCase):
         self.addCleanup(thread.join, 2)
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: NOW)
         with self.assertLogs("gargoyl.tailscale", level="WARNING"):
             self.assertIsNone(store.poll_peer("127.0.0.1", "prov-a", port=server.server_port, allow_loopback=True))
         self.assertEqual(store.last_error("prov-a")["kind"], "http_error")
@@ -501,7 +502,7 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         self.assertIn("None here", html_unfederated)
 
         # Build mock peer telemetry for all remote nodes
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: NOW)
         nodes = [
             ("prov-studio32-1", "studio32-1", "100.80.1.2", "deepseek-coder-v2-lite", 18.5, 3, 250000),
             ("prov-studio64-1", "studio64-1", "100.80.1.3", "qwen2.5-coder-32b", 34.0, 5, 890000),
@@ -547,7 +548,7 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
             self.assertTrue(valid_view(href), href)
 
     def test_missing_peer_fields_render_as_unknown_and_values_are_escaped(self):
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: NOW)
         store.ingest("prov-studio32-1", make_telemetry_snapshot(
             {"hostname": "studio32-1"}, current_model="<b>m</b>", gpu_memory_active_gb=2.5, now=NOW))
         peer_map = store.as_provider_map()
@@ -578,11 +579,17 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
                              now=NOW, peer_telemetry=peer_map)
         return mgmt, fleet, detail
 
+    def _dead_port(self):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
     def test_old_snapshot_and_failed_poll_render_as_stale_not_live(self):
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: HOUR_BEFORE_NOW)
         store.ingest("prov-studio32-1", make_telemetry_snapshot(
             {"hostname": "studio32-1"}, daemon_state="running", running_requests=2, now=HOUR_BEFORE_NOW))
-        store.poll_peer("100.64.0.9", "prov-studio32-1", port=1, timeout=0.01)
+        with self.assertLogs("gargoyl.tailscale", level="WARNING"):
+            store.poll_peer("127.0.0.1", "prov-studio32-1", port=self._dead_port(), allow_loopback=True)
         pages = self._render(store.as_provider_map())
         for page in pages:
             for word in ("live telemetry", "Real-time", "streaming", "history stream"):
@@ -593,8 +600,33 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         self.assertIn(compact_time(HOUR_BEFORE_NOW), detail)
         self.assertIn("unreachable", detail)
 
+    def test_fresh_snapshot_then_failed_poll_is_stale(self):
+        store = FleetTelemetryStore(clock=lambda: NOW)
+        store.ingest("prov-a", make_telemetry_snapshot({"hostname": "a"}, daemon_state="running", now=NOW))
+        self.assertEqual(peer_freshness(store.get("prov-a"), NOW), "current")
+        with self.assertLogs("gargoyl.tailscale", level="WARNING"):
+            store.poll_peer("127.0.0.1", "prov-a", port=self._dead_port(), allow_loopback=True)
+        self.assertEqual(peer_freshness(store.get("prov-a"), NOW), "stale")
+
+    def test_freshness_uses_collector_clock_not_peer_clock(self):
+        ahead = (datetime.fromisoformat(NOW.replace("Z", "+00:00")) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for peer_clock in (ahead, HOUR_BEFORE_NOW):
+            store = FleetTelemetryStore(clock=lambda: NOW)
+            store.ingest("prov-a", make_telemetry_snapshot({"hostname": "a"}, daemon_state="running", now=peer_clock))
+            self.assertEqual(peer_freshness(store.get("prov-a"), NOW), "current", peer_clock)
+            self.assertEqual(store.get("prov-a")["received_at"], NOW)
+        later = (datetime.fromisoformat(NOW.replace("Z", "+00:00")) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertEqual(peer_freshness(store.get("prov-a"), later), "stale")
+
+    def test_raw_map_freshness_falls_back_to_collected_at(self):
+        ahead = (datetime.fromisoformat(NOW.replace("Z", "+00:00")) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        raw = {"p": make_telemetry_snapshot({"hostname": "a"}, daemon_state="running", now=ahead)}
+        self.assertEqual(peer_freshness(validated_peer_map(raw)["p"], NOW), "unknown")
+        raw["p"]["last_error"] = {"detail": "no kind"}
+        self.assertIsNone(validated_peer_map(raw)["p"]["last_error"])
+
     def test_fresh_snapshot_renders_current(self):
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: NOW)
         store.ingest("prov-studio32-1", make_telemetry_snapshot({"hostname": "studio32-1"}, daemon_state="running", now=NOW))
         mgmt, fleet, detail = self._render(store.as_provider_map())
         self.assertIn("current telemetry", fleet)
@@ -612,7 +644,7 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         self.assertNotIn("nan", mgmt.lower())
 
     def test_render_fleet_with_peer_telemetry(self):
-        store = FleetTelemetryStore()
+        store = FleetTelemetryStore(clock=lambda: NOW)
         snap = make_telemetry_snapshot(
             node_info={"hostname": "studio32-1", "tailscale_ipv4": "100.80.1.2"},
             daemon_state="running",

@@ -49,8 +49,10 @@ When peer telemetry is supplied, both renderers validate it again with
 then show the peer's hostname, daemon state, models, GPU memory, throughput at the last
 report, and retained sample count in place of `Inventory only` / `None here`.
 
-Each peer row carries a freshness label judged at read time: `current` within
-`PEER_FRESHNESS_SECONDS` (120) of `collected_at`, `stale` when older or when the last
-poll failed, and `unknown` when the timestamp is missing or in the future. The detail
+Each peer row carries a freshness label judged at read time: `stale` when the last
+poll failed, `current` within `PEER_FRESHNESS_SECONDS` (120) of when the store received
+the snapshot, `stale` when older, and `unknown` when there is no usable timestamp. The
+store stamps `received_at` with its own clock, so peer clock skew doesn't affect the
+label; a raw map without `received_at` falls back to the peer's `collected_at`. The detail
 view shows the last report time and the last poll error. Peer rows are telemetry only
 and offer no remote control.
