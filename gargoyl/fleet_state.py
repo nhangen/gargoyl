@@ -97,6 +97,40 @@ def provider_key(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+# Known Apple Darwin model identifiers (sysctl hw.model) translated to
+# friendly machine names. A missing entry intentionally keeps the raw
+# hardware identifier; nothing is invented for unknown models.
+APPLE_MODEL_NAMES = {
+    "Mac13,1": "Mac Studio",
+    "Mac13,2": "Mac mini (2023)",
+    "Mac14,2": "iMac (24-inch, 2021)",
+    "Mac14,7": "Mac Studio (2022)",
+    "Mac14,9": "Mac Studio (2025)",
+    "Mac14,12": "Mac mini (M4, 2024)",
+    "Mac14,13": "Mac mini (M4 Pro, 2024)",
+    "Mac15,3": "MacBook Air (M4, 2025)",
+    "Mac15,6": "MacBook Pro (14-inch, M4, 2024)",
+    "Mac15,12": "MacBook Pro (16-inch, M4, 2024)",
+    "Mac16,6": "MacBook Air (13-inch, M5, 2025)",
+    "Mac16,7": "MacBook Air (15-inch, M5, 2025)",
+    "Mac16,9": "iMac (24-inch, M4, 2024)",
+    "Mac16,10": "Mac mini (M4, 2024)",
+    "Mac17,3": "MacBook Pro (14-inch, M5, 2025)",
+    "Mac17,8": "MacBook Pro (16-inch, M5 Pro, 2025)",
+}
+
+
+def friendly_machine_name(value):
+    """Translate a known Apple Darwin model identifier to a friendly name.
+
+    Unknown or non-Apple values return None so callers keep the raw
+    hardware identifier; no model is ever invented.
+    """
+    if type(value) is not str:
+        return None
+    return APPLE_MODEL_NAMES.get(value)
+
+
 def normalize_inventory(value, fetched_at):
     timestamp(fetched_at)
     if (
@@ -116,7 +150,10 @@ def normalize_inventory(value, fetched_at):
         seen.add(identity)
         hardware = raw.get("hardware") if type(raw.get("hardware")) is dict else {}
         name = text(raw.get("name")) or text(raw.get("provider_name"))
-        label = name or text(hardware.get("machine_model"))
+        raw_model = text(hardware.get("machine_model"))
+        # A known Apple Darwin identifier becomes a friendly machine name;
+        # unknown identifiers and non-Apple labels keep the raw hardware value.
+        label = name or friendly_machine_name(raw_model) or raw_model
         label_kind = (
             "source_name" if name else ("hardware_label" if label else "provider_id")
         )

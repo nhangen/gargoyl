@@ -9,6 +9,7 @@ from gargoyl.fleet_account import FleetError
 from gargoyl.fleet_state import (
     FleetCache,
     evidence_state,
+    friendly_machine_name,
     normalize_inventory,
     validate_inventory,
 )
@@ -60,6 +61,26 @@ class FleetStateTests(unittest.TestCase):
         value = normalize_inventory(raw, NOW)
         self.assertEqual(value["providers"][0]["name"], raw["providers"][0]["id"])
         self.assertEqual(value["providers"][0]["name_kind"], "provider_id")
+
+    def test_known_apple_model_ids_get_friendly_names_unknown_ids_keep_raw_value(self):
+        self.assertEqual(friendly_machine_name("Mac13,1"), "Mac Studio")
+        self.assertEqual(friendly_machine_name("Mac17,8"), "MacBook Pro (16-inch, M5 Pro, 2025)")
+        self.assertIsNone(friendly_machine_name("unknown-model"))
+        self.assertIsNone(friendly_machine_name("Mac Studio"))
+        self.assertIsNone(friendly_machine_name(None))
+        self.assertIsNone(friendly_machine_name(13))
+        raw = response()
+        del raw["providers"][0]["name"]
+        raw["providers"][0]["hardware"]["machine_model"] = "Mac13,1"
+        value = normalize_inventory(raw, NOW)
+        row = value["providers"][0]
+        self.assertEqual(row["name"], "Mac Studio")
+        self.assertEqual(row["name_kind"], "hardware_label")
+        # Unknown identifiers keep the raw hardware value, never a guess.
+        raw["providers"][0]["hardware"]["machine_model"] = "Mac99,9"
+        value = normalize_inventory(raw, NOW)
+        self.assertEqual(value["providers"][0]["name"], "Mac99,9")
+        self.assertEqual(value["providers"][0]["name_kind"], "hardware_label")
 
     def test_duplicate_identity_rejected_and_missing_records_are_partial(self):
         raw = response()
