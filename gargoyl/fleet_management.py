@@ -14,6 +14,7 @@ from gargoyl.fleet_state import (
     validate_inventory,
 )
 from gargoyl.fleet_views import report_freshness_html, reported_status_html
+from gargoyl.tailscale import peer_freshness, validated_peer_map
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
 
 
@@ -27,6 +28,7 @@ def _compact_report_value(value):
 def management_projection(inventory, local, evidence, now, local_host_id, preview=False, lifecycle=None, peer_telemetry=None):
     host_id(local_host_id)
     at = timestamp(now)
+    peer_map = validated_peer_map(peer_telemetry)
     samples = []
     if evidence is not None:
         raw = evidence['snapshots']
@@ -52,7 +54,7 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
                 process_state = effective_state(process, now)
                 if process['value'] is None and process_state != 'blocked':
                     process_state = 'unknown'
-        peer_data = peer_telemetry.get(item['id']) if peer_telemetry else None
+        peer_data = peer_map.get(item['id'])
         if associated:
             collection = 'local_associated'
             p_state = process_state
@@ -61,17 +63,17 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
             peer_host = None
             models = None
             throughput = None
+            freshness = None
         elif peer_data:
             collection = 'tailscale_peer'
-            d_state = peer_data.get('daemon_state')
-            p_state = (d_state.get('value') if isinstance(d_state, dict) else None) or 'unknown'
-            history_list = peer_data.get('recent_history')
-            h_samples = len(history_list) if isinstance(history_list, list) else None
+            p_state = peer_data['daemon_state']['value'] or 'unknown'
+            history_list = peer_data['recent_history']
+            h_samples = len(history_list) if history_list is not None else None
             m_restart = 'unavailable'
-            node = peer_data.get('node')
-            peer_host = node.get('hostname') if isinstance(node, dict) else None
-            models = peer_data.get('models') if isinstance(peer_data.get('models'), dict) else None
-            throughput = peer_data.get('throughput') if isinstance(peer_data.get('throughput'), dict) else None
+            peer_host = peer_data['node']['hostname']
+            models = peer_data['models']
+            throughput = peer_data['throughput']
+            freshness = peer_freshness(peer_data, now)
         else:
             collection = 'inventory_only'
             p_state = 'unknown'
@@ -80,6 +82,7 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
             peer_host = None
             models = None
             throughput = None
+            freshness = None
 
         rows.append(dict(provider_id=item['id'], source_name=item['name'],
                          source_kind=item['name_kind'], key=provider_key(item['id']),
@@ -92,7 +95,8 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
                          manual_restart=m_restart,
                          peer_hostname=peer_host,
                          models=models,
-                         throughput=throughput))
+                         throughput=throughput,
+                         peer_freshness=freshness))
     return dict(inventory_available=True, partial=inventory['partial'], rows=rows,
                 fetched_at=inventory['fetched_at'], connection=inventory['connection'],
                 report_state=account_report_state(inventory, now),
@@ -160,9 +164,10 @@ def management_html(projection, aliases):
                 model_info = ' · ' + e(curr)
                 if gpu is not None:
                     model_info += ' (' + e(gpu) + ' GB GPU)'
-            coverage = 'Tailnet telemetry: ' + e(row['process_state']) + model_info
+            coverage = ('Tailnet telemetry (' + e(row['peer_freshness']) + '): '
+                        + e(row['process_state']) + model_info)
             sample_count = row.get('history_samples')
-            retained = 'Peer history stream'
+            retained = 'History not reported'
             if sample_count is not None:
                 retained = f"{sample_count} rolling " + ('sample' if sample_count == 1 else 'samples')
             history = retained

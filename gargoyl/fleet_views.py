@@ -14,6 +14,7 @@ from gargoyl.fleet_state import (
     timestamp,
     validate_inventory,
 )
+from gargoyl.tailscale import peer_freshness, validated_peer_map
 
 FLEET_FILTERS = {
     "fleet": None,
@@ -326,7 +327,7 @@ def render_fleet(
                     + e(aliases.get(row["id"], row["name"]))
                     + '</h3><dl class="facts">'
                 )
-                peer_info = peer_telemetry.get(row["id"]) if peer_telemetry else None
+                peer_info = validated_peer_map(peer_telemetry).get(row["id"])
                 node_facts = [
                     ("Actual provider ID", row["id"]),
                     ("Local friendly alias", aliases.get(row["id"], "not set")),
@@ -359,34 +360,32 @@ def render_fleet(
                     ),
                 ]
                 if peer_info:
-                    def _dict(value):
-                        return value if isinstance(value, dict) else {}
-
                     def _shown(value):
                         return "not reported" if value is None else str(value)
 
-                    p_node = _dict(peer_info.get("node"))
-                    p_host = p_node.get("hostname") or "unknown"
-                    p_ip = p_node.get("tailscale_ipv4") or "not reported"
-                    d_val = _dict(peer_info.get("daemon_state")).get("value") or "unknown"
-                    models = _dict(peer_info.get("models"))
-                    curr_m = models.get("current_model") or "none"
-                    resident = models.get("resident_models")
-                    res_m = ", ".join(str(m) for m in resident) if isinstance(resident, list) and resident else "none"
-                    gpu_mem = models.get("gpu_memory_active_gb")
-                    t_put = _dict(peer_info.get("throughput"))
-                    reqs = _shown(t_put.get("running_requests"))
-                    tokens = _shown(t_put.get("tokens_generated"))
-                    history_list = peer_info.get("recent_history")
-                    hist_len = str(len(history_list)) if isinstance(history_list, list) else "0"
+                    p_host = peer_info["node"]["hostname"] or "unknown"
+                    p_ip = _shown(peer_info["node"]["tailscale_ipv4"])
+                    d_val = peer_info["daemon_state"]["value"] or "unknown"
+                    models = peer_info["models"]
+                    curr_m = _shown(models["current_model"])
+                    res_m = ", ".join(models["resident_models"]) or "not reported"
+                    gpu_mem = models["gpu_memory_active_gb"]
+                    reqs = _shown(peer_info["throughput"]["running_requests"])
+                    tokens = _shown(peer_info["throughput"]["tokens_generated"])
+                    history_list = peer_info["recent_history"]
+                    hist_len = f"{len(history_list)} samples" if history_list is not None else "not reported"
+                    last_error = peer_info["last_error"]
                     node_facts.extend([
                         ("Tailscale peer", f"{p_host} ({p_ip})"),
                         ("Peer native daemon", d_val),
                         ("Current active model", curr_m),
                         ("Resident models", res_m),
                         ("Active GPU memory", f"{gpu_mem} GB" if gpu_mem is not None else "unknown"),
-                        ("Real-time throughput", f"{reqs} running requests · {tokens} tokens"),
-                        ("Rolling history", f"{hist_len} samples streaming"),
+                        ("Throughput at last report", f"{reqs} running requests · {tokens} tokens"),
+                        ("Rolling history", hist_len),
+                        ("Last reported", compact_time(peer_info["collected_at"]) or "not reported"),
+                        ("Telemetry freshness", peer_freshness(peer_info, now)),
+                        ("Last poll error", last_error["kind"] if last_error else "none"),
                         ("Operator workflow", "Telemetry only · no remote control"),
                     ])
                 for label, value in node_facts:
@@ -403,6 +402,7 @@ def render_fleet(
                     body += '</dl><p>No restart, enrollment or remote command authority is granted by this record. <a href="gargoyl-view://management/">Inspect management and collector coverage</a>.</p>'
         else:
             states = {r["id"]: evidence_state(inventory, r, now) for r in rows}
+            peer_map = validated_peer_map(peer_telemetry)
             counts = {key: sum(1 for r in rows if FLEET_FILTERS[key] is None or states[r["id"]][1] == FLEET_FILTERS[key])
                       for key in FLEET_FILTERS}
             body += (
@@ -455,11 +455,11 @@ def render_fleet(
                 if matched == row["id"]:
                     peer_badge = ('<span class="fleet-here">This Mac</span><span class="fleet-sub">' + e(alias)
                                   + " · unique identity match</span>")
-                elif peer_telemetry and row["id"] in peer_telemetry:
-                    peer_node = peer_telemetry[row["id"]].get("node")
-                    peer_h = (peer_node.get("hostname") if isinstance(peer_node, dict) else None) or "peer"
+                elif row["id"] in peer_map:
+                    peer_h = peer_map[row["id"]]["node"]["hostname"] or "peer"
                     peer_badge = ('<span class="fleet-here">Tailscale peer</span><span class="fleet-sub">'
-                                  + e(peer_h) + " · live telemetry</span>")
+                                  + e(peer_h) + " · " + e(peer_freshness(peer_map[row["id"]], now))
+                                  + " telemetry</span>")
                 body += (
                     '<tr><th scope="row"><a href="gargoyl-view://fleet-node-' + provider_key(row["id"]) + '/">'
                     + e(label) + '</a><span class="fleet-id">' + e(row["id"]) + '</span><span class="fleet-src">'

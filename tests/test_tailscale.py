@@ -11,6 +11,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta
 
 from test_dashboard import HOST, snapshot
 from test_fleet_state import NOW, response
@@ -18,6 +19,7 @@ from test_fleet_state import NOW, response
 from gargoyl import tailscale
 from gargoyl.fleet_management import management_html, management_projection
 from gargoyl.fleet_state import normalize_inventory, provider_key
+from gargoyl.fleet_views import compact_time
 from gargoyl.native_views import render_view, valid_view
 from gargoyl.tailscale import (
     FleetTelemetryStore,
@@ -29,7 +31,10 @@ from gargoyl.tailscale import (
     make_telemetry_snapshot,
     match_peers_to_providers,
     parse_tailscale_status,
+    validated_peer_map,
 )
+
+HOUR_BEFORE_NOW = (datetime.fromisoformat(NOW.replace("Z", "+00:00")) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 SAMPLE_TAILSCALE_STATUS = {
     "Version": "1.76.0",
@@ -272,7 +277,7 @@ class TailscaleEndpointAndFederationTests(unittest.TestCase):
 
         # Query endpoint
         store = FleetTelemetryStore()
-        result = store.poll_peer("127.0.0.1", provider_id="prov-1", port=port)
+        result = store.poll_peer("127.0.0.1", provider_id="prov-1", port=port, allow_loopback=True)
         self.assertIsNotNone(result)
         self.assertEqual(result["node"]["hostname"], "studio32-1")
         self.assertEqual(result["models"]["current_model"], "qwen2.5-coder-7b")
@@ -355,6 +360,7 @@ class PeerSnapshotValidationTests(unittest.TestCase):
             dict(good, models={"resident_models": ["ok", 3]}),
             dict(good, throughput={"running_requests": "3"}),
             dict(good, collected_at="yesterday"),
+            dict(good, models={"gpu_memory_active_gb": float("inf")}),
             [],
         ]
         for bad in bad_cases:
@@ -414,9 +420,36 @@ class FailureObservabilityTests(unittest.TestCase):
         ]
         for port, kind in cases:
             with self.assertLogs("gargoyl.tailscale", level="WARNING"):
-                self.assertIsNone(store.poll_peer("127.0.0.1", "prov-a", port=port, timeout=2))
+                self.assertIsNone(store.poll_peer("127.0.0.1", "prov-a", port=port, timeout=2, allow_loopback=True))
             self.assertEqual(store.last_error("prov-a")["kind"], kind)
             self.assertEqual(store.get("prov-a")["daemon_state"]["value"], "running")
+        with self.assertLogs("gargoyl.tailscale", level="WARNING"):
+            self.assertIsNone(store.poll_peer("192.168.1.5", "prov-a", port=1))
+        self.assertEqual(store.last_error("prov-a")["kind"], "non_tailscale_address")
+
+    def test_poll_does_not_follow_redirects(self):
+        target = self._serve_raw(200, json.dumps(make_telemetry_snapshot({"hostname": "x"}, now=NOW)).encode())
+
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{target}/v1/telemetry")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 2)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        store = FleetTelemetryStore()
+        with self.assertLogs("gargoyl.tailscale", level="WARNING"):
+            self.assertIsNone(store.poll_peer("127.0.0.1", "prov-a", port=server.server_port, allow_loopback=True))
+        self.assertEqual(store.last_error("prov-a")["kind"], "http_error")
 
     def _fake_cli(self, script):
         directory = tempfile.mkdtemp()
@@ -520,7 +553,7 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         peer_map = store.as_provider_map()
         html = management_html(management_projection(
             self.inventory, self.local, self.evidence, NOW, HOST, peer_telemetry=peer_map), {})
-        self.assertIn("Tailnet telemetry: unknown · &lt;b&gt;m&lt;/b&gt; (2.5 GB GPU)", html)
+        self.assertIn("Tailnet telemetry (current): unknown · &lt;b&gt;m&lt;/b&gt; (2.5 GB GPU)", html)
         self.assertNotIn("<b>m</b>", html)
         raw = {"prov-studio32-1": {"node": {"hostname": "studio32-1"}, "daemon_state": {"value": "running"},
                                    "models": {"current_model": "m", "gpu_memory_active_gb": "<i>x</i>"},
@@ -534,6 +567,49 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         self.assertIn("studio32-1 (not reported)", detail)
         self.assertIn("not reported running requests", detail)
         self.assertNotIn("100.x", detail)
+
+    def _render(self, peer_map):
+        mgmt = management_html(management_projection(
+            self.inventory, self.local, self.evidence, NOW, HOST, peer_telemetry=peer_map), {})
+        fleet = render_view("fleet", self.evidence, None, inventory=self.inventory, local=self.local,
+                            local_alias="mbp-2026", now=NOW, peer_telemetry=peer_map)
+        detail = render_view("fleet-node-" + provider_key("prov-studio32-1"), self.evidence, None,
+                             inventory=self.inventory, local=self.local, local_alias="mbp-2026",
+                             now=NOW, peer_telemetry=peer_map)
+        return mgmt, fleet, detail
+
+    def test_old_snapshot_and_failed_poll_render_as_stale_not_live(self):
+        store = FleetTelemetryStore()
+        store.ingest("prov-studio32-1", make_telemetry_snapshot(
+            {"hostname": "studio32-1"}, daemon_state="running", running_requests=2, now=HOUR_BEFORE_NOW))
+        store.poll_peer("100.64.0.9", "prov-studio32-1", port=1, timeout=0.01)
+        pages = self._render(store.as_provider_map())
+        for page in pages:
+            for word in ("live telemetry", "Real-time", "streaming", "history stream"):
+                self.assertNotIn(word, page)
+        mgmt, fleet, detail = pages
+        self.assertIn("stale", mgmt)
+        self.assertIn("stale telemetry", fleet)
+        self.assertIn(compact_time(HOUR_BEFORE_NOW), detail)
+        self.assertIn("unreachable", detail)
+
+    def test_fresh_snapshot_renders_current(self):
+        store = FleetTelemetryStore()
+        store.ingest("prov-studio32-1", make_telemetry_snapshot({"hostname": "studio32-1"}, daemon_state="running", now=NOW))
+        mgmt, fleet, detail = self._render(store.as_provider_map())
+        self.assertIn("current telemetry", fleet)
+        self.assertIn("not reported", detail)
+
+    def test_raw_peer_map_is_validated_before_rendering(self):
+        raw = {
+            "prov-studio32-1": {"node": "studio32-1", "daemon_state": {"value": "running"}},
+            "prov-studio64-1": "not a snapshot",
+            "prov-studio64-2": {"models": {"gpu_memory_active_gb": float("nan")}, "collected_at": NOW},
+        }
+        self.assertEqual(validated_peer_map(raw), {})
+        mgmt, fleet, detail = self._render(raw)
+        self.assertNotIn("Tailscale peer", mgmt)
+        self.assertNotIn("nan", mgmt.lower())
 
     def test_render_fleet_with_peer_telemetry(self):
         store = FleetTelemetryStore()
@@ -563,7 +639,7 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         # Peer badge should be present
         self.assertIn("Tailscale peer", page)
         self.assertIn("studio32-1", page)
-        self.assertIn("live telemetry", page)
+        self.assertIn("current telemetry", page)
 
         # Detail view for peer node
         detail_view = "fleet-node-" + provider_key("prov-studio32-1")

@@ -7,6 +7,7 @@ owner-confirmed (docs/hardening-decisions.md) until authenticated transport exis
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -25,6 +26,7 @@ DEFAULT_TAILSCALE_PATH = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 DEFAULT_TELEMETRY_PORT = 8342
 MAX_HISTORY_PER_NODE = 64
 MAX_SNAPSHOT_BYTES = 256 * 1024
+PEER_FRESHNESS_SECONDS = 120
 
 log = logging.getLogger(__name__)
 
@@ -254,6 +256,13 @@ def _optional(value, kinds, field):
     return value
 
 
+def _finite(value, field):
+    value = _optional(value, (int, float), field)
+    if value is not None and not math.isfinite(value):
+        raise ValueError(f"invalid {field}")
+    return value
+
+
 def _section(snapshot: dict, name: str) -> dict:
     value = snapshot.get(name)
     if value is None:
@@ -293,7 +302,7 @@ def validate_peer_snapshot(snapshot) -> dict:
         "models": {
             "current_model": _optional(models.get("current_model"), str, "models.current_model"),
             "resident_models": list(resident),
-            "gpu_memory_active_gb": _optional(models.get("gpu_memory_active_gb"), (int, float), "models.gpu_memory_active_gb"),
+            "gpu_memory_active_gb": _finite(models.get("gpu_memory_active_gb"), "models.gpu_memory_active_gb"),
         },
         "throughput": {
             "running_requests": _optional(throughput.get("running_requests"), int, "throughput.running_requests"),
@@ -302,6 +311,46 @@ def validate_peer_snapshot(snapshot) -> dict:
         "memory_headroom_bytes": _optional(snapshot.get("memory_headroom_bytes"), int, "memory_headroom_bytes"),
         "collected_at": collected_at,
     }
+
+
+def validated_peer_map(peer_telemetry) -> dict[str, dict]:
+    """Validate a {provider_id: snapshot} map at the render boundary, dropping invalid entries."""
+    if not isinstance(peer_telemetry, dict):
+        return {}
+    result = {}
+    for provider_id, snapshot in peer_telemetry.items():
+        try:
+            data = validate_peer_snapshot(snapshot)
+        except ValueError as exc:
+            log.warning("peer telemetry for %s not rendered: %s", provider_id, exc)
+            continue
+        history = snapshot.get("recent_history")
+        data["recent_history"] = list(history) if isinstance(history, list) else None
+        error = snapshot.get("last_error")
+        data["last_error"] = error if isinstance(error, dict) else None
+        result[provider_id] = data
+    return result
+
+
+def peer_freshness(snapshot: dict, now: str) -> str:
+    """current / stale / unknown, judged at read time like local evidence."""
+    collected = snapshot.get("collected_at")
+    if not collected:
+        return "unknown"
+    observed, current = timestamp(collected), timestamp(now)
+    if observed > current:
+        return "unknown"
+    if snapshot.get("last_error") or (current - observed).total_seconds() > PEER_FRESHNESS_SECONDS:
+        return "stale"
+    return "current"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_PEER_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
 
 
 class TailscaleTelemetryHandler(BaseHTTPRequestHandler):
@@ -414,6 +463,7 @@ class FleetTelemetryStore:
             return None
         res = dict(entry)
         res["recent_history"] = list(self._history.get(provider_id, []))
+        res["last_error"] = self._errors.get(provider_id)
         return res
 
     def as_provider_map(self) -> dict[str, dict]:
@@ -426,12 +476,16 @@ class FleetTelemetryStore:
         provider_id: str,
         port: int = DEFAULT_TELEMETRY_PORT,
         timeout: float = 3.0,
+        allow_loopback: bool = False,
     ) -> dict | None:
         """Fetch and ingest a peer snapshot; on failure, record why and keep the last good one."""
-        url = f"http://{peer_ip}:{port}/v1/telemetry"
-        req = urllib.request.Request(url, headers={"User-Agent": "GargoylCollector/1.0"})
+        if not is_tailscale_ip(peer_ip, allow_loopback=allow_loopback):
+            self._record_error(provider_id, "non_tailscale_address", str(peer_ip))
+            return None
+        host = f"[{peer_ip}]" if ":" in peer_ip else peer_ip
+        req = urllib.request.Request(f"http://{host}:{port}/v1/telemetry", headers={"User-Agent": "GargoylCollector/1.0"})
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with _PEER_OPENER.open(req, timeout=timeout) as resp:
                 raw = resp.read(MAX_SNAPSHOT_BYTES + 1)
         except urllib.error.HTTPError as err:
             self._record_error(provider_id, "http_error", f"HTTP {err.code}")

@@ -37,12 +37,20 @@ a caller passes `peer_telemetry`. Wiring is tracked separately.
 - Values a peer didn't report stay `None`; a missing daemon state is `unavailable`,
   never `running`.
 - Each provider keeps a 64-sample rolling history.
-- `poll_peer` records why a poll failed (`unreachable`, `http_error`,
-  `invalid_json`, `oversized`, `invalid_snapshot`) and keeps the last good snapshot.
+- `poll_peer` only contacts Tailscale addresses, ignores proxy settings, and doesn't
+  follow redirects. It records why a poll failed (`non_tailscale_address`,
+  `unreachable`, `http_error`, `invalid_json`, `oversized`, `invalid_snapshot`) and
+  keeps the last good snapshot.
 
 ## Presentation
 
-When peer telemetry is supplied, **Your fleet** and **Fleet management** show the
-peer's hostname, daemon state, models, GPU memory, throughput, and retained sample
-count in place of `Inventory only` / `None here`. Peer rows are telemetry only and
-offer no remote control.
+When peer telemetry is supplied, both renderers validate it again with
+`validated_peer_map` and drop invalid entries. **Your fleet** and **Fleet management**
+then show the peer's hostname, daemon state, models, GPU memory, throughput at the last
+report, and retained sample count in place of `Inventory only` / `None here`.
+
+Each peer row carries a freshness label judged at read time: `current` within
+`PEER_FRESHNESS_SECONDS` (120) of `collected_at`, `stale` when older or when the last
+poll failed, and `unknown` when the timestamp is missing or in the future. The detail
+view shows the last report time and the last poll error. Peer rows are telemetry only
+and offer no remote control.
