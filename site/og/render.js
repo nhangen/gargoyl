@@ -11,10 +11,13 @@ const { chromium } = require("playwright");
     // missing, fail loudly instead of capturing in a fallback typeface.
     const fontReady = await page.evaluate(() =>
       Promise.race([
-        document.fonts.ready,
-        new Promise((resolve) => setTimeout(resolve, 5000)),
+        document.fonts.ready.then(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(false), 5000)),
       ])
     );
+    if (!fontReady) {
+      throw new Error("timed out waiting for document.fonts.ready");
+    }
     // fonts.check() is true when no face matches the family at all, so look
     // for a loaded Archivo face instead.
     const archivoLoaded = await page.evaluate(() =>
@@ -22,9 +25,6 @@ const { chromium } = require("playwright");
         (f) => f.family.replace(/"/g, "") === "Archivo" && f.status === "loaded"
       )
     );
-    if (!fontReady) {
-      throw new Error("timed out waiting for document.fonts.ready");
-    }
     if (!archivoLoaded) {
       throw new Error("self-hosted Archivo font did not load");
     }
