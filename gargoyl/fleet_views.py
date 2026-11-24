@@ -319,7 +319,7 @@ def render_fleet(
                 body += "<p>Provider unavailable in this inventory. No substitute was selected.</p>"
             else:
                 row = selected[0]
-                report, heartbeat = evidence_state(inventory, row, now)
+                report, heartbeat = evidence_state(inventory, row, now, lifecycle=lifecycle)
                 body += (
                     "<h3>"
                     + e(aliases.get(row["id"], row["name"]))
@@ -365,7 +365,10 @@ def render_fleet(
                     )
                 body += '</dl><p>No restart, enrollment or remote command authority is granted by this record. <a href="gargoyl-view://management/">Inspect management and collector coverage</a>.</p>'
         else:
-            states = {r["id"]: evidence_state(inventory, r, now) for r in rows}
+            states = {
+                r["id"]: evidence_state(inventory, r, now, lifecycle=lifecycle)
+                for r in rows
+            }
             counts = {key: sum(1 for r in rows if FLEET_FILTERS[key] is None or states[r["id"]][1] == FLEET_FILTERS[key])
                       for key in FLEET_FILTERS}
             body += (

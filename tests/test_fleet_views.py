@@ -223,12 +223,35 @@ class FleetViewTests(unittest.TestCase):
 
             page = render_view("fleet", None, None, inventory=value, now=NOW, lifecycle=killed)
             self.assertIn("Account reader has stopped (unknown)", page)
+            self.assertIn("report stale", page)
+            self.assertNotIn("report current", page)
+
+            node_key = provider_key(value["providers"][0]["id"])
+            node_page = render_view(
+                f"fleet-node-{node_key}", None, None, inventory=value, now=NOW, lifecycle=killed
+            )
+            self.assertIn("Report freshness</dt><dd class=\"mono\">stale", node_page)
 
             live = render_view(
                 "fleet", None, None, inventory=value, now=NOW,
                 lifecycle={"status": "running", "exit_reason": "none"},
             )
             self.assertNotIn("Account reader has stopped", live)
+            self.assertIn("report current", live)
+            self.assertNotIn("report stale", live)
+
+            live_node_page = render_view(
+                f"fleet-node-{node_key}", None, None, inventory=value, now=NOW,
+                lifecycle={"status": "running", "exit_reason": "none"},
+            )
+            self.assertIn("Report freshness</dt><dd class=\"mono\">current", live_node_page)
+
+            from test_dashboard import snapshot
+            evidence = dict(evaluated_at=NOW, snapshots=[snapshot(source="host", at=NOW)])
+            mgmt_page = render_view("management", evidence, None, inventory=value, now=NOW, lifecycle=killed)
+            self.assertIn("report stale", mgmt_page)
+            self.assertNotIn("report current", mgmt_page)
+            self.assertIn("reader exited", mgmt_page)
 
     def test_stop_reason_is_escaped_exactly_once(self):
         value = normalize_inventory(response(), NOW)
