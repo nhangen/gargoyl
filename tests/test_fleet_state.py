@@ -63,8 +63,7 @@ class FleetStateTests(unittest.TestCase):
         self.assertEqual(value["providers"][0]["name_kind"], "provider_id")
 
     def test_known_apple_model_ids_get_friendly_names_unknown_ids_keep_raw_value(self):
-        self.assertEqual(friendly_machine_name("Mac13,1"), "Mac Studio")
-        self.assertEqual(friendly_machine_name("Mac17,8"), "MacBook Pro (16-inch, M5 Pro, 2025)")
+        self.assertEqual(friendly_machine_name("Mac13,1"), "Mac Studio (2022, M1 Max)")
         self.assertIsNone(friendly_machine_name("unknown-model"))
         self.assertIsNone(friendly_machine_name("Mac Studio"))
         self.assertIsNone(friendly_machine_name(None))
@@ -74,13 +73,38 @@ class FleetStateTests(unittest.TestCase):
         raw["providers"][0]["hardware"]["machine_model"] = "Mac13,1"
         value = normalize_inventory(raw, NOW)
         row = value["providers"][0]
-        self.assertEqual(row["name"], "Mac Studio")
+        self.assertEqual(row["name"], "Mac Studio (2022, M1 Max)")
         self.assertEqual(row["name_kind"], "hardware_label")
         # Unknown identifiers keep the raw hardware value, never a guess.
         raw["providers"][0]["hardware"]["machine_model"] = "Mac99,9"
         value = normalize_inventory(raw, NOW)
         self.assertEqual(value["providers"][0]["name"], "Mac99,9")
         self.assertEqual(value["providers"][0]["name_kind"], "hardware_label")
+
+    def test_model_names_match_apple_identification_pages(self):
+        # Hand-copied from support.apple.com 102231 (Mac Studio), 102852
+        # (Mac mini), 108052 (MacBook Pro), 102869 (MacBook Air) and
+        # 108054 (iMac), not from APPLE_MODEL_NAMES.
+        expected = {
+            "Mac13,2": "Mac Studio (2022, M1 Ultra)",
+            "Mac14,13": "Mac Studio (2023, M2 Max)",
+            "Mac14,14": "Mac Studio (2023, M2 Ultra)",
+            "Mac15,14": "Mac Studio (2025, M3 Ultra)",
+            "Mac16,9": "Mac Studio (2025, M4 Max)",
+            "Mac17,14": "Mac Studio (M5 Max)",
+            "Mac14,12": "Mac mini (2023, M2 Pro)",
+            "Mac16,10": "Mac mini (2024)",
+            "Mac14,2": "MacBook Air (M2, 2022)",
+            "Mac14,7": "MacBook Pro (13-inch, M2, 2022)",
+            "Mac15,12": "MacBook Air (13-inch, M3, 2024)",
+            "Mac16,6": "MacBook Pro (14-inch, 2024)",
+            "Mac17,3": "MacBook Air (13-inch, M5)",
+            "Mac17,6": "MacBook Pro (16-inch, M5 Pro or M5 Max)",
+            "Mac16,3": "iMac (24-inch, 2024, Four ports)",
+        }
+        for identifier, name in expected.items():
+            with self.subTest(identifier=identifier):
+                self.assertEqual(friendly_machine_name(identifier), name)
 
     def test_duplicate_identity_rejected_and_missing_records_are_partial(self):
         raw = response()
