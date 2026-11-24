@@ -221,14 +221,48 @@ class FleetViewTests(unittest.TestCase):
             killed = effective_lifecycle(cache, NOW, alive=lambda _: False)
             self.assertEqual((killed["status"], killed["exit_reason"]), ("exited", "unknown"))
 
-            page = render_view("fleet", None, None, inventory=value, now=NOW, lifecycle=killed)
+            local = dict(identity_digest=value["providers"][0]["identity_digest"], observed_at=NOW)
+            page = render_view("fleet", None, None, inventory=value, local=local, now=NOW, lifecycle=killed)
             self.assertIn("Account reader has stopped (unknown)", page)
+            self.assertIn("report stale", page)
+            self.assertNotIn("report current", page)
+            self.assertIn("unknown — no fresh unique account identity match", page)
+
+            node_key = provider_key(value["providers"][0]["id"])
+            node_page = render_view(
+                f"fleet-node-{node_key}", None, None, inventory=value, local=local, now=NOW, lifecycle=killed
+            )
+            self.assertIn("Report freshness</dt><dd class=\"mono\">stale", node_page)
+            self.assertIn("not independently observed locally", node_page)
 
             live = render_view(
-                "fleet", None, None, inventory=value, now=NOW,
+                "fleet", None, None, inventory=value, local=local, now=NOW,
                 lifecycle={"status": "running", "exit_reason": "none"},
             )
             self.assertNotIn("Account reader has stopped", live)
+            self.assertIn("report current", live)
+            self.assertNotIn("report stale", live)
+            self.assertIn("unique matching public identity", live)
+
+            live_node_page = render_view(
+                f"fleet-node-{node_key}", None, None, inventory=value, local=local, now=NOW,
+                lifecycle={"status": "running", "exit_reason": "none"},
+            )
+            self.assertIn("Report freshness</dt><dd class=\"mono\">current", live_node_page)
+            self.assertIn("Local association</dt><dd class=\"mono\">This Mac:", live_node_page)
+
+            from test_dashboard import snapshot
+            evidence = dict(evaluated_at=NOW, snapshots=[snapshot(source="host", at=NOW)])
+            mgmt_page = render_view("management", evidence, None, inventory=value, local=local, now=NOW, lifecycle=killed)
+            self.assertIn("report stale", mgmt_page)
+            self.assertNotIn("report current", mgmt_page)
+            self.assertIn("reader exited", mgmt_page)
+            self.assertNotIn("This Mac · unique identity match", mgmt_page)
+            self.assertNotIn("Restart local…", mgmt_page)
+            live_mgmt = render_view("management", evidence, None, inventory=value, local=local, now=NOW,
+                                    lifecycle={"status": "running", "exit_reason": "none"})
+            self.assertIn("This Mac · unique identity match", live_mgmt)
+            self.assertIn("Restart local…", live_mgmt)
 
     def test_stop_reason_is_escaped_exactly_once(self):
         value = normalize_inventory(response(), NOW)
