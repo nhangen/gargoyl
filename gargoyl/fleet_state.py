@@ -97,6 +97,91 @@ def provider_key(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+# Apple Darwin model identifiers (sysctl hw.model) and the model names Apple
+# prints on its identification pages: support.apple.com 102231 (Mac Studio),
+# 102852 (Mac mini), 108052 (MacBook Pro), 102869 (MacBook Air) and 108054
+# (iMac). The chip is appended only where Apple lists one chip for that
+# identifier. A missing entry keeps the raw hardware identifier.
+APPLE_MODEL_NAMES = {
+    "Mac13,1": "Mac Studio (2022, M1 Max)",
+    "Mac13,2": "Mac Studio (2022, M1 Ultra)",
+    "Mac14,13": "Mac Studio (2023, M2 Max)",
+    "Mac14,14": "Mac Studio (2023, M2 Ultra)",
+    "Mac15,14": "Mac Studio (2025, M3 Ultra)",
+    "Mac16,9": "Mac Studio (2025, M4 Max)",
+    "Mac17,14": "Mac Studio (M5 Max)",
+    "Mac17,15": "Mac Studio (M5 Ultra)",
+    "Mac14,3": "Mac mini (2023, M2)",
+    "Mac14,12": "Mac mini (2023, M2 Pro)",
+    "Mac16,10": "Mac mini (2024)",
+    "Mac16,11": "Mac mini (2024)",
+    "Mac17,16": "Mac mini (M5 Pro)",
+    "Mac18,5": "Mac mini (M6)",
+    "Mac14,7": "MacBook Pro (13-inch, M2, 2022)",
+    "Mac14,5": "MacBook Pro (14-inch, 2023)",
+    "Mac14,9": "MacBook Pro (14-inch, 2023)",
+    "Mac14,6": "MacBook Pro (16-inch, 2023)",
+    "Mac14,10": "MacBook Pro (16-inch, 2023)",
+    "Mac15,3": "MacBook Pro (14-inch, Nov 2023, M3)",
+    "Mac15,6": "MacBook Pro (14-inch, Nov 2023)",
+    "Mac15,8": "MacBook Pro (14-inch, Nov 2023)",
+    "Mac15,10": "MacBook Pro (14-inch, Nov 2023)",
+    "Mac15,7": "MacBook Pro (16-inch, Nov 2023)",
+    "Mac15,9": "MacBook Pro (16-inch, Nov 2023)",
+    "Mac15,11": "MacBook Pro (16-inch, Nov 2023)",
+    "Mac16,1": "MacBook Pro (14-inch, 2024)",
+    "Mac16,6": "MacBook Pro (14-inch, 2024)",
+    "Mac16,8": "MacBook Pro (14-inch, 2024)",
+    "Mac16,5": "MacBook Pro (16-inch, 2024)",
+    "Mac16,7": "MacBook Pro (16-inch, 2024)",
+    "Mac17,2": "MacBook Pro (14-inch, M5)",
+    "Mac17,7": "MacBook Pro (14-inch, M5 Pro or M5 Max)",
+    "Mac17,9": "MacBook Pro (14-inch, M5 Pro or M5 Max)",
+    "Mac17,6": "MacBook Pro (16-inch, M5 Pro or M5 Max)",
+    "Mac17,8": "MacBook Pro (16-inch, M5 Pro or M5 Max)",
+    "Mac17,11": "MacBook Pro (14-inch PROLED XDR, M5 Pro or M5 Max)",
+    "Mac17,13": "MacBook Pro (14-inch PROLED XDR, M5 Pro or M5 Max)",
+    "Mac17,10": "MacBook Pro (16-inch PROLED XDR, M5 Pro or M5 Max)",
+    "Mac17,12": "MacBook Pro (16-inch PROLED XDR, M5 Pro or M5 Max)",
+    "Mac18,1": "MacBook Pro (14-inch, M6)",
+    "Mac14,2": "MacBook Air (M2, 2022)",
+    "Mac14,15": "MacBook Air (15-inch, M2, 2023)",
+    "Mac15,12": "MacBook Air (13-inch, M3, 2024)",
+    "Mac15,13": "MacBook Air (15-inch, M3, 2024)",
+    "Mac16,12": "MacBook Air (13-inch, M4, 2025)",
+    "Mac16,13": "MacBook Air (15-inch, M4, 2025)",
+    "Mac17,3": "MacBook Air (13-inch, M5)",
+    "Mac17,4": "MacBook Air (15-inch, M5)",
+    "Mac15,4": "iMac (24-inch, 2023, Two ports)",
+    "Mac15,5": "iMac (24-inch, 2023, Four ports)",
+    "Mac16,2": "iMac (24-inch, 2024, Two ports)",
+    "Mac16,3": "iMac (24-inch, 2024, Four ports)",
+    "Mac18,2": "iMac (24-inch, M6)",
+}
+
+
+def friendly_machine_name(value):
+    """Translate a known Apple Darwin model identifier to a friendly name.
+
+    Unknown or non-Apple values return None so callers keep the raw
+    hardware identifier; no model is ever invented.
+    """
+    if type(value) is not str:
+        return None
+    return APPLE_MODEL_NAMES.get(value)
+
+
+def display_name(row):
+    """Return the label to show for a provider row.
+
+    Rows store the raw source or hardware label so provenance stays exact and
+    cached rows pick up table corrections; translation happens only here.
+    """
+    if row["name_kind"] == "hardware_label":
+        return friendly_machine_name(row["name"]) or row["name"]
+    return row["name"]
+
+
 def normalize_inventory(value, fetched_at):
     timestamp(fetched_at)
     if (

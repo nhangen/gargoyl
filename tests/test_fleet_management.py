@@ -97,6 +97,16 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(note.count('no verified direct collector association'), 1)
         self.assertIn('no remote history', note)
 
+    def test_management_labels_darkbloom_version_and_friendly_hardware_names(self):
+        page = self.page()
+        self.assertIn('<th scope="col">Darkbloom version</th>', page)
+        self.assertNotIn('<th scope="col">Version</th>', page)
+        raw = response()
+        del raw['providers'][0]['name']
+        raw['providers'][0]['hardware']['machine_model'] = 'Mac16,9'
+        page = self.page(inventory=normalize_inventory(raw, NOW))
+        self.assertIn('Mac Studio (2025, M4 Max)', page)
+
     def test_preview_keeps_read_only_status_without_restart_instruction(self):
         page = self.page(preview=True)
         table, _ = page.split('</tbody></table>', 1)

@@ -385,6 +385,41 @@ class FleetLayoutTests(unittest.TestCase):
         self.assertIn("provider-second-test-only", page)
         self.assertNotIn('<span class="fleet-id">provider-real-format-test-only</span>', page)
 
+    def test_version_column_is_labelled_darkbloom(self):
+        # The version column identifies the Darkbloom provider release,
+        # not macOS, in both the table header and the detail view.
+        page = self.page()
+        self.assertIn("Darkbloom version", page)
+        self.assertNotIn("<th scope=\"col\">Version</th>", page)
+        value = normalize_inventory(response(), NOW)
+        detail = render_view(
+            "fleet-node-" + provider_key(value["providers"][0]["id"]),
+            None,
+            None,
+            inventory=value,
+            now=NOW,
+        )
+        self.assertIn("Darkbloom version", detail)
+        self.assertNotIn("Reported version", detail)
+
+    def test_hardware_labels_are_friendly_and_keep_the_raw_identifier_in_details(self):
+        raw = response()
+        del raw["providers"][0]["name"]
+        raw["providers"][0]["hardware"]["machine_model"] = "Mac13,1"
+        friendly = normalize_inventory(raw, NOW)
+        page = render_view("fleet", None, None, inventory=friendly, now=NOW)
+        self.assertIn(">Mac Studio (2022, M1 Max)</a>", page)
+        self.assertNotIn("Mac13,1", page)
+        detail = render_view(
+            "fleet-node-" + provider_key(friendly["providers"][0]["id"]),
+            None,
+            None,
+            inventory=friendly,
+            now=NOW,
+        )
+        self.assertIn("<h3>Mac Studio (2022, M1 Max)</h3>", detail)
+        self.assertIn("<dt>Source label</dt><dd class=\"mono\">Mac13,1</dd>", detail)
+
     def test_alias_removes_duplicate_flag_and_keeps_label_source(self):
         page = self.page(aliases={"provider-second-test-only": "Studio Two"})
         self.assertNotIn("Same label as another record", page)

@@ -9,6 +9,7 @@ from gargoyl.dashboard.theme import PAGE_END, page_start
 from gargoyl.fleet_identity import matching_provider
 from gargoyl.fleet_state import (
     TTL,
+    display_name,
     evidence_state,
     provider_key,
     timestamp,
@@ -323,7 +324,7 @@ def render_fleet(
                 report, heartbeat = evidence_state(inventory, row, now, lifecycle=lifecycle)
                 body += (
                     "<h3>"
-                    + e(aliases.get(row["id"], row["name"]))
+                    + e(aliases.get(row["id"], display_name(row)))
                     + '</h3><dl class="facts">'
                 )
                 peer_info = peer_telemetry.get(row["id"]) if peer_telemetry else None
@@ -350,7 +351,7 @@ def render_fleet(
                         if row.get("heartbeat_precision") is not None
                         else "unknown",
                     ),
-                    ("Reported version", row["version"] or "unknown"),
+                    ("Darkbloom version", row["version"] or "unknown"),
                     (
                         "Local association",
                         "This Mac: " + alias
@@ -435,17 +436,17 @@ def render_fleet(
             if rows:
                 body += ('<p class="fleet-summary">' + (" · ".join(noted) if noted
                          else "Every returned record has a reported status and a recent heartbeat.") + "</p>")
-            labels = [aliases.get(r["id"], r["name"]) for r in rows]
+            labels = [aliases.get(r["id"], display_name(r)) for r in rows]
             duplicated = {label for label in labels if labels.count(label) > 1}
             body += (
                 '<p class="fleet-scroll-hint">Scroll the table sideways to see all evidence.</p>'
                 '<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'
                 '<table class="fleet-inventory"><thead><tr><th scope="col">Provider</th><th scope="col">Coordinator report</th>'
-                '<th scope="col">Last heartbeat</th><th scope="col">Version</th></tr></thead><tbody>'
+                '<th scope="col">Last heartbeat</th><th scope="col">Darkbloom version</th></tr></thead><tbody>'
             )
             for row in shown:
                 report, heartbeat = states[row["id"]]
-                label = aliases.get(row["id"], row["name"])
+                label = aliases.get(row["id"], display_name(row))
                 kind = LABEL_KINDS[row["name_kind"]]
                 source = (
                     "Local alias · " + kind.lower() + " “" + row["name"] + "”"
