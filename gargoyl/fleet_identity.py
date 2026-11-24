@@ -7,7 +7,7 @@ import socket
 from urllib.parse import urlsplit
 
 from gargoyl.collector_state_file import _parse, _read, validate_daemon_state_source
-from gargoyl.fleet_state import provider_key, text
+from gargoyl.fleet_state import account_report_state, provider_key, text
 from gargoyl.manual_restart import observed_target
 from gargoyl.telemetry import timestamp
 
@@ -53,22 +53,16 @@ def local_identity(source, executable, uid, now, *, verifier=None):
     )
 
 
-def matching_provider(inventory, local, now):
+def matching_provider(inventory, local, now, lifecycle=None):
     if (
         inventory is None
         or type(local) is not dict
-        or inventory["connection"] != "connected"
+        or account_report_state(inventory, now, lifecycle=lifecycle) != "current"
         or inventory["partial"]
     ):
         return None
     digest = local.get("identity_digest")
     if type(digest) is not str or re.fullmatch("[a-f0-9]{64}", digest) is None:
-        return None
-    if (
-        not 0
-        <= (timestamp(now) - timestamp(inventory["fetched_at"])).total_seconds()
-        <= 120
-    ):
         return None
     if (
         not 0

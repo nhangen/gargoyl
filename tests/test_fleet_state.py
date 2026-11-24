@@ -89,6 +89,17 @@ class FleetStateTests(unittest.TestCase):
         self.assertEqual(evidence_state(value, row, NOW), ("stale", "recent"))
         row["heartbeat_at"] = None
         self.assertEqual(evidence_state(value, row, NOW), ("stale", "unknown"))
+        value["connection"] = "connected"
+        row["heartbeat_at"] = NOW
+        self.assertEqual(
+            evidence_state(value, row, NOW, lifecycle={"status": "running"}),
+            ("current", "recent"),
+        )
+        for stopped_status in ("exited", "stopped", "terminal_failure"):
+            self.assertEqual(
+                evidence_state(value, row, NOW, lifecycle={"status": stopped_status}),
+                ("stale", "recent"),
+            )
 
     def test_fractional_api_timestamps_and_offsets_normalize_without_relaxing_v1(self):
         from gargoyl.fleet_state import heartbeat
