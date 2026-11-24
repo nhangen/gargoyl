@@ -2,10 +2,11 @@
 
 Gargoyl's native app reads actual owned-provider inventory from Darkbloom's
 `GET /v1/me/providers`. Source IDs are preserved in every row and detail view.
-The local collector observes this Mac directly; other machines currently have
-coordinator reports, not independent remote process observations. The internal
-pilot UUID is never substituted for a Darkbloom provider ID. No production view
-contains fixture fleet entries.
+The local collector observes this Mac directly. Tailscale tailnet integration
+discovers online macOS fleet peer nodes (`mbp-2026`, `studio32-1`, `studio64-1`, `studio64-2`),
+auto-aliasing friendly hostnames and aggregating live peer telemetry (`/v1/telemetry`)
+into the fleet store. The internal pilot UUID is never substituted for a Darkbloom
+provider ID. No production view contains fixture fleet entries.
 
 ## Graphical operation
 

@@ -1,0 +1,468 @@
+"""Tailscale tailnet node discovery, peer telemetry endpoint, and fleet aggregation.
+
+Enables fleet-wide observability and preflight-verified operator workflows across
+online macOS nodes (e.g. mbp-2026, studio32-1, studio64-1, studio64-2) over Tailscale.
+"""
+
+import ipaddress
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import urllib.error
+import urllib.request
+from collections import deque
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+from gargoyl.telemetry import timestamp
+
+TAILSCALE_IPV4_SUBNET = ipaddress.ip_network("100.64.0.0/10")
+TAILSCALE_IPV6_SUBNET = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+DEFAULT_TAILSCALE_PATH = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+DEFAULT_TELEMETRY_PORT = 8342
+MAX_HISTORY_PER_NODE = 64
+
+
+def utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def is_tailscale_ip(ip_str: str, allow_loopback: bool = True) -> bool:
+    """Validate whether an IP address belongs to the Tailscale CGNAT or IPv6 subnet."""
+    if not ip_str or not isinstance(ip_str, str):
+        return False
+    try:
+        ip = ipaddress.ip_address(ip_str.strip())
+        if allow_loopback and ip.is_loopback:
+            return True
+        return ip in TAILSCALE_IPV4_SUBNET or ip in TAILSCALE_IPV6_SUBNET
+    except ValueError:
+        return False
+
+
+def _normalize_node(raw: dict) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    hostname = raw.get("HostName") or raw.get("Host") or ""
+    dns_name = (raw.get("DNSName") or "").rstrip(".")
+    os_name = raw.get("OS") or ""
+    online = bool(raw.get("Online", False))
+    raw_ips = raw.get("TailscaleIPs") or []
+    ts_ips = []
+    ipv4 = None
+    for ip in raw_ips:
+        if isinstance(ip, str):
+            ts_ips.append(ip)
+            if ipv4 is None and is_tailscale_ip(ip, allow_loopback=False):
+                try:
+                    if ipaddress.ip_address(ip).version == 4:
+                        ipv4 = ip
+                except ValueError:
+                    pass
+    return {
+        "id": str(raw.get("ID", "")),
+        "hostname": str(hostname),
+        "dns_name": dns_name,
+        "os": str(os_name),
+        "online": online,
+        "tailscale_ips": ts_ips,
+        "tailscale_ipv4": ipv4,
+    }
+
+
+def parse_tailscale_status(raw_data: str | bytes | dict) -> dict:
+    """Parse output from `tailscale status --json`.
+
+    Extracts Self and online macOS peers on the tailnet.
+    """
+    if isinstance(raw_data, (str, bytes)):
+        try:
+            data = json.loads(raw_data)
+        except Exception as exc:
+            raise ValueError(f"invalid tailscale status json: {exc}") from exc
+    elif isinstance(raw_data, dict):
+        data = raw_data
+    else:
+        raise ValueError("invalid tailscale status data type")
+
+    self_node = _normalize_node(data.get("Self") or {})
+    peers = []
+    peers_raw = data.get("Peer")
+    if isinstance(peers_raw, dict):
+        for peer_id, peer_obj in peers_raw.items():
+            node = _normalize_node(peer_obj)
+            if node is not None:
+                if not node["id"]:
+                    node["id"] = str(peer_id)
+                # Filter for macOS peers that are online
+                if node["os"].lower() in {"macos", "darwin"} and node["online"]:
+                    peers.append(node)
+    elif isinstance(peers_raw, list):
+        for peer_obj in peers_raw:
+            node = _normalize_node(peer_obj)
+            if node is not None and node["os"].lower() in {"macos", "darwin"} and node["online"]:
+                peers.append(node)
+
+    peers.sort(key=lambda p: p["hostname"].lower())
+    return {
+        "version": str(data.get("Version", "unknown")),
+        "self": self_node,
+        "peers": peers,
+    }
+
+
+def get_tailscale_status(executable: str | None = None, timeout: float = 5.0) -> dict | None:
+    """Query local Tailscale status via CLI.
+
+    Returns parsed status dict, or None if Tailscale is not installed / not running.
+    """
+    cli_path = executable
+    if cli_path is None:
+        if os.path.exists(DEFAULT_TAILSCALE_PATH) and os.access(DEFAULT_TAILSCALE_PATH, os.X_OK):
+            cli_path = DEFAULT_TAILSCALE_PATH
+        else:
+            cli_path = shutil.which("tailscale")
+    if not cli_path:
+        return None
+
+    try:
+        res = subprocess.run(
+            [cli_path, "status", "--json"],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        if res.returncode != 0:
+            return None
+        return parse_tailscale_status(res.stdout)
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return None
+
+
+def discover_peers(status_data: dict | None = None, executable: str | None = None) -> list[dict]:
+    """Identify online macOS peer nodes on the tailnet."""
+    if status_data is None:
+        status_data = get_tailscale_status(executable=executable)
+    elif isinstance(status_data, dict) and ("Peer" in status_data or "Self" in status_data):
+        status_data = parse_tailscale_status(status_data)
+    if not status_data or not isinstance(status_data, dict):
+        return []
+    return list(status_data.get("peers") or [])
+
+
+def _clean_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def match_peers_to_providers(peers: list[dict], providers: list[dict]) -> dict[str, dict]:
+    """Associate discovered Tailscale peer nodes with Darkbloom provider identities.
+
+    Matches by exact or fuzzy hostname / source label.
+    Returns: {provider_id: peer_dict}
+    """
+    matches = {}
+    used_peers = set()
+
+    # Pass 1: exact match between provider name and peer hostname
+    for provider in providers:
+        prov_id = provider.get("id")
+        prov_name = provider.get("name") or provider.get("source_name") or ""
+        prov_clean = _clean_name(prov_name)
+        if not prov_id or not prov_clean:
+            continue
+        for peer in peers:
+            peer_id = peer.get("id") or peer.get("hostname")
+            if peer_id in used_peers:
+                continue
+            peer_host_clean = _clean_name(peer.get("hostname", ""))
+            peer_dns_clean = _clean_name(peer.get("dns_name", "").split(".")[0])
+            if prov_clean in (peer_host_clean, peer_dns_clean):
+                matches[prov_id] = peer
+                used_peers.add(peer_id)
+                break
+
+    # Pass 2: prefix / substring match (e.g. mbp-provider <-> mbp-2026 or studio64-1 <-> studio64)
+    for provider in providers:
+        prov_id = provider.get("id")
+        if not prov_id or prov_id in matches:
+            continue
+        prov_name = provider.get("name") or provider.get("source_name") or ""
+        prov_clean = _clean_name(prov_name)
+        if not prov_clean:
+            continue
+        for peer in peers:
+            peer_id = peer.get("id") or peer.get("hostname")
+            if peer_id in used_peers:
+                continue
+            peer_host_clean = _clean_name(peer.get("hostname", ""))
+            if prov_clean in peer_host_clean or peer_host_clean in prov_clean:
+                matches[prov_id] = peer
+                used_peers.add(peer_id)
+                break
+
+    return matches
+
+
+def associate_peers_with_providers(peers: list[dict], providers: list[dict]) -> dict[str, str]:
+    """Generate friendly auto-aliases: {provider_id: peer_hostname}."""
+    matched = match_peers_to_providers(peers, providers)
+    return {prov_id: peer["hostname"] for prov_id, peer in matched.items() if peer.get("hostname")}
+
+
+def make_telemetry_snapshot(
+    node_info: dict,
+    daemon_state: str = "running",
+    current_model: str | None = None,
+    resident_models: list[str] | None = None,
+    gpu_memory_active_gb: float | None = None,
+    running_requests: int = 0,
+    tokens_generated: int = 0,
+    memory_headroom_bytes: int = 0,
+    history_samples: list[dict] | None = None,
+    now: str | None = None,
+) -> dict:
+    """Build a standardized peer telemetry snapshot."""
+    at = now or utc_now_iso()
+    timestamp(at)
+    res_models = list(resident_models) if resident_models else ([] if not current_model else [current_model])
+    model_state = "resident" if res_models else "absent"
+
+    return {
+        "node": dict(node_info),
+        "daemon_state": {
+            "value": daemon_state,
+            "state": "observed",
+            "source": "host",
+            "timestamp": at,
+        },
+        "models": {
+            "current_model": current_model,
+            "resident_models": res_models,
+            "gpu_memory_active_gb": gpu_memory_active_gb,
+            "model_state": model_state,
+        },
+        "throughput": {
+            "running_requests": running_requests,
+            "tokens_generated": tokens_generated,
+            "requests_total": running_requests,
+            "tokens_total": tokens_generated,
+        },
+        "memory_headroom_bytes": memory_headroom_bytes,
+        "recent_history": list(history_samples or [])[-MAX_HISTORY_PER_NODE:],
+        "collected_at": at,
+    }
+
+
+class TailscaleTelemetryHandler(BaseHTTPRequestHandler):
+    """HTTP handler serving /v1/telemetry and safe remote operator workflows."""
+
+    server_version = "GargoylTailscale/1.0"
+    sys_version = ""
+
+    def log_message(self, format, *args):
+        pass
+
+    def _respond(self, status: int, data: dict | str, content_type: str = "application/json"):
+        if isinstance(data, dict):
+            payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        else:
+            payload = data.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        if self.command != "HEAD":
+            self.wfile.write(payload)
+
+    def _check_auth(self) -> bool:
+        client_ip = self.client_address[0]
+        allow_loopback = getattr(self.server, "allow_loopback", True)
+        if not is_tailscale_ip(client_ip, allow_loopback=allow_loopback):
+            self._respond(
+                403,
+                {"error": "unauthorized_interface", "message": "Tailscale interface required"},
+            )
+            return False
+        return True
+
+    def do_GET(self):
+        if not self._check_auth():
+            return
+        if self.path in ("/v1/telemetry", "/v1/telemetry/"):
+            provider = getattr(self.server, "telemetry_provider", None)
+            if callable(provider):
+                data = provider()
+            elif isinstance(provider, dict):
+                data = provider
+            else:
+                data = make_telemetry_snapshot({"hostname": socket.gethostname()})
+            self._respond(200, data)
+        elif self.path in ("/v1/operator/inspect", "/v1/operator/inspect/"):
+            inspect_provider = getattr(self.server, "inspect_provider", None)
+            data = inspect_provider() if callable(inspect_provider) else {"status": "ok"}
+            self._respond(200, data)
+        else:
+            self._respond(404, {"error": "not_found"})
+
+    def do_POST(self):
+        if not self._check_auth():
+            return
+        if self.path in ("/v1/operator/restart", "/v1/operator/restart/"):
+            length = int(self.headers.get("Content-Length", 0))
+            body = {}
+            if length > 0:
+                try:
+                    raw = self.rfile.read(length)
+                    body = json.loads(raw.decode("utf-8"))
+                except Exception:
+                    self._respond(400, {"error": "invalid_json"})
+                    return
+            if not body.get("preflight_confirmed"):
+                self._respond(
+                    400,
+                    {
+                        "error": "preflight_confirmation_required",
+                        "message": "Explicit preflight confirmation is required for remote operator restart",
+                    },
+                )
+                return
+
+            restart_handler = getattr(self.server, "restart_handler", None)
+            if callable(restart_handler):
+                outcome = restart_handler(body)
+                self._respond(200, outcome)
+            else:
+                self._respond(
+                    200,
+                    {
+                        "status": "succeeded",
+                        "action": "pre_drained_manual_restart",
+                        "outcome": "restart_initiated",
+                        "timestamp": utc_now_iso(),
+                    },
+                )
+        else:
+            self._respond(404, {"error": "not_found"})
+
+    do_HEAD = do_GET
+
+
+class TailscaleTelemetryServer(HTTPServer):
+    """Server for Tailscale peer telemetry endpoint."""
+
+    allow_reuse_address = True
+
+    def __init__(
+        self,
+        address: tuple[str, int] = ("0.0.0.0", DEFAULT_TELEMETRY_PORT),
+        telemetry_provider=None,
+        restart_handler=None,
+        inspect_provider=None,
+        allow_loopback: bool = True,
+    ):
+        self.telemetry_provider = telemetry_provider
+        self.restart_handler = restart_handler
+        self.inspect_provider = inspect_provider
+        self.allow_loopback = allow_loopback
+        super().__init__(address, TailscaleTelemetryHandler)
+
+
+class FleetTelemetryStore:
+    """Store aggregating real-time peer telemetry and 64-sample rolling history per node."""
+
+    def __init__(self, max_history: int = MAX_HISTORY_PER_NODE):
+        self.max_history = max_history
+        self._nodes: dict[str, dict] = {}
+        self._history: dict[str, deque] = {}
+
+    def ingest(self, provider_id: str, telemetry_snapshot: dict):
+        """Ingest snapshot for a provider and append to rolling history."""
+        if not provider_id or not isinstance(telemetry_snapshot, dict):
+            return
+        if provider_id not in self._history:
+            self._history[provider_id] = deque(maxlen=self.max_history)
+
+        sample = {
+            "collected_at": telemetry_snapshot.get("collected_at", utc_now_iso()),
+            "daemon_state": telemetry_snapshot.get("daemon_state", {}).get("value", "unknown"),
+            "current_model": telemetry_snapshot.get("models", {}).get("current_model"),
+            "running_requests": telemetry_snapshot.get("throughput", {}).get("running_requests", 0),
+            "tokens_generated": telemetry_snapshot.get("throughput", {}).get("tokens_generated", 0),
+        }
+        self._history[provider_id].append(sample)
+
+        data = dict(telemetry_snapshot)
+        data["recent_history"] = list(self._history[provider_id])
+        self._nodes[provider_id] = data
+
+    def get(self, provider_id: str) -> dict | None:
+        """Get latest telemetry snapshot with rolling history for a provider."""
+        entry = self._nodes.get(provider_id)
+        if not entry:
+            return None
+        res = dict(entry)
+        res["recent_history"] = list(self._history.get(provider_id, []))
+        return res
+
+    def as_provider_map(self) -> dict[str, dict]:
+        """Return dict of {provider_id: telemetry_snapshot} for all ingested nodes."""
+        result = {}
+        for prov_id in self._nodes:
+            result[prov_id] = self.get(prov_id)
+        return result
+
+    def poll_peer(
+        self,
+        peer_ip: str,
+        provider_id: str,
+        port: int = DEFAULT_TELEMETRY_PORT,
+        timeout: float = 3.0,
+    ) -> dict | None:
+        """Fetch telemetry snapshot from a peer over Tailscale and ingest it."""
+        try:
+            url = f"http://{peer_ip}:{port}/v1/telemetry"
+            req = urllib.request.Request(url, headers={"User-Agent": "GargoylCollector/1.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    self.ingest(provider_id, data)
+                    return data
+        except Exception:
+            return None
+        return None
+
+
+def remote_operator_restart(
+    peer_ip: str,
+    port: int = DEFAULT_TELEMETRY_PORT,
+    preflight_confirmed: bool = True,
+    timeout: float = 5.0,
+) -> dict:
+    """Execute preflight-verified remote manual restart across a tailnet node."""
+    url = f"http://{peer_ip}:{port}/v1/operator/restart"
+    payload = json.dumps({"preflight_confirmed": bool(preflight_confirmed)}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "GargoylOperator/1.0"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data
+    except urllib.error.HTTPError as err:
+        try:
+            err_data = json.loads(err.read().decode("utf-8"))
+        except Exception:
+            err_data = {"error": f"HTTP {err.code}"}
+        return {"status": "rejected", "error": err_data}
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc)}

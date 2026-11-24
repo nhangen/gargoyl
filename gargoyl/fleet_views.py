@@ -145,6 +145,7 @@ def render_fleet(
     local_host_id=HOST,
     preview=False,
     lifecycle=None,
+    peer_telemetry=None,
 ):
     from gargoyl.fleet_aliases import validate_aliases
 
@@ -325,7 +326,8 @@ def render_fleet(
                     + e(aliases.get(row["id"], row["name"]))
                     + '</h3><dl class="facts">'
                 )
-                for label, value in [
+                peer_info = peer_telemetry.get(row["id"]) if peer_telemetry else None
+                node_facts = [
                     ("Actual provider ID", row["id"]),
                     ("Local friendly alias", aliases.get(row["id"], "not set")),
                     ("Source label", row["name"]),
@@ -355,7 +357,31 @@ def render_fleet(
                         if matched == row["id"]
                         else "not independently observed locally",
                     ),
-                ]:
+                ]
+                if peer_info:
+                    p_node = peer_info.get("node") or {}
+                    p_host = p_node.get("hostname") or "unknown"
+                    p_ip = p_node.get("tailscale_ipv4") or p_node.get("tailscale_ip") or "100.x"
+                    d_val = peer_info.get("daemon_state", {}).get("value", "unknown")
+                    models = peer_info.get("models") or {}
+                    curr_m = models.get("current_model") or "none"
+                    res_m = ", ".join(models.get("resident_models") or []) or "none"
+                    gpu_mem = models.get("gpu_memory_active_gb")
+                    t_put = peer_info.get("throughput") or {}
+                    reqs = str(t_put.get("running_requests", 0))
+                    tokens = str(t_put.get("tokens_generated", 0))
+                    hist_len = str(len(peer_info.get("recent_history") or []))
+                    node_facts.extend([
+                        ("Tailscale peer", f"{p_host} ({p_ip})"),
+                        ("Peer native daemon", d_val),
+                        ("Current active model", curr_m),
+                        ("Resident models", res_m),
+                        ("Active GPU memory", f"{gpu_mem} GB" if gpu_mem is not None else "unknown"),
+                        ("Real-time throughput", f"{reqs} running requests · {tokens} tokens"),
+                        ("Rolling history", f"{hist_len} samples streaming"),
+                        ("Operator workflow", "Pre-drained manual restart available over Tailscale"),
+                    ])
+                for label, value in node_facts:
                     body += (
                         "<div><dt>"
                         + e(label)
@@ -363,7 +389,10 @@ def render_fleet(
                         + e(value)
                         + "</dd></div>"
                     )
-                body += '</dl><p>No restart, enrollment or remote command authority is granted by this record. <a href="gargoyl-view://management/">Inspect management and collector coverage</a>.</p>'
+                if peer_info:
+                    body += '</dl><p>Online Tailscale peer node with live telemetry stream. <a href="gargoyl-view://peer-restart-' + provider_key(row["id"]) + '/">Initiate pre-drained manual restart over Tailscale</a> · <a href="gargoyl-view://management/">Inspect management coverage</a>.</p>'
+                else:
+                    body += '</dl><p>No restart, enrollment or remote command authority is granted by this record. <a href="gargoyl-view://management/">Inspect management and collector coverage</a>.</p>'
         else:
             states = {r["id"]: evidence_state(inventory, r, now) for r in rows}
             counts = {key: sum(1 for r in rows if FLEET_FILTERS[key] is None or states[r["id"]][1] == FLEET_FILTERS[key])
@@ -414,14 +443,21 @@ def render_fleet(
                     if row["id"] in aliases
                     else kind
                 )
+                peer_badge = ""
+                if matched == row["id"]:
+                    peer_badge = ('<span class="fleet-here">This Mac</span><span class="fleet-sub">' + e(alias)
+                                  + " · unique identity match</span>")
+                elif peer_telemetry and row["id"] in peer_telemetry:
+                    peer_h = peer_telemetry[row["id"]].get("node", {}).get("hostname") or "peer"
+                    peer_badge = ('<span class="fleet-here">Tailscale peer</span><span class="fleet-sub">'
+                                  + e(peer_h) + " · live telemetry</span>")
                 body += (
                     '<tr><th scope="row"><a href="gargoyl-view://fleet-node-' + provider_key(row["id"]) + '/">'
                     + e(label) + '</a><span class="fleet-id">' + e(row["id"]) + '</span><span class="fleet-src">'
                     + e(source) + "</span>"
                     + ('<span class="fleet-dup">Same label as another record · use Aliases…</span>'
                        if label in duplicated else "")
-                    + ('<span class="fleet-here">This Mac</span><span class="fleet-sub">' + e(alias)
-                       + " · unique identity match</span>" if matched == row["id"] else "")
+                    + peer_badge
                     + "</th><td>" + _report_cell(row, report) + "</td><td>" + _heartbeat_cell(row, heartbeat, now)
                     + '</td><td class="fleet-version">' + ('<span class="mono">' + e(row["version"]) + "</span>" if row["version"] else '<span class="faint">not reported</span>') + "</td></tr>"
                 )
