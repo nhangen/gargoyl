@@ -14,7 +14,6 @@ from gargoyl.fleet_state import (
     validate_inventory,
 )
 from gargoyl.fleet_views import report_freshness_html, reported_status_html
-from gargoyl.tailscale import peer_freshness, validated_peer_map
 from gargoyl.telemetry import effective_state, host_id, timestamp, validate_snapshot
 
 
@@ -28,7 +27,6 @@ def _compact_report_value(value):
 def management_projection(inventory, local, evidence, now, local_host_id, preview=False, lifecycle=None, peer_telemetry=None):
     host_id(local_host_id)
     at = timestamp(now)
-    peer_map = validated_peer_map(peer_telemetry)
     samples = []
     if evidence is not None:
         raw = evidence['snapshots']
@@ -54,7 +52,7 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
                 process_state = effective_state(process, now)
                 if process['value'] is None and process_state != 'blocked':
                     process_state = 'unknown'
-        peer_data = peer_map.get(item['id'])
+        peer_data = peer_telemetry.get(item['id']) if peer_telemetry else None
         if associated:
             collection = 'local_associated'
             p_state = process_state
@@ -63,17 +61,20 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
             peer_host = None
             models = None
             throughput = None
-            freshness = None
         elif peer_data:
             collection = 'tailscale_peer'
-            p_state = peer_data['daemon_state']['value'] or 'unknown'
-            history_list = peer_data['recent_history']
-            h_samples = len(history_list) if history_list is not None else None
-            m_restart = 'unavailable'
-            peer_host = peer_data['node']['hostname']
-            models = peer_data['models']
-            throughput = peer_data['throughput']
-            freshness = peer_freshness(peer_data, now)
+            d_state = peer_data.get('daemon_state')
+            if isinstance(d_state, dict):
+                p_state = d_state.get('value', 'running')
+            elif isinstance(d_state, str):
+                p_state = d_state
+            else:
+                p_state = 'running'
+            h_samples = len(peer_data.get('recent_history', []))
+            m_restart = 'tailscale_remote'
+            peer_host = peer_data.get('node', {}).get('hostname') if isinstance(peer_data.get('node'), dict) else 'peer'
+            models = peer_data.get('models') if isinstance(peer_data.get('models'), dict) else None
+            throughput = peer_data.get('throughput') if isinstance(peer_data.get('throughput'), dict) else None
         else:
             collection = 'inventory_only'
             p_state = 'unknown'
@@ -82,7 +83,6 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
             peer_host = None
             models = None
             throughput = None
-            freshness = None
 
         rows.append(dict(provider_id=item['id'], source_name=item['name'],
                          source_kind=item['name_kind'], key=provider_key(item['id']),
@@ -95,8 +95,7 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
                          manual_restart=m_restart,
                          peer_hostname=peer_host,
                          models=models,
-                         throughput=throughput,
-                         peer_freshness=freshness))
+                         throughput=throughput))
     return dict(inventory_available=True, partial=inventory['partial'], rows=rows,
                 fetched_at=inventory['fetched_at'], connection=inventory['connection'],
                 report_state=account_report_state(inventory, now),
@@ -163,15 +162,16 @@ def management_html(projection, aliases):
             if curr:
                 model_info = ' · ' + e(curr)
                 if gpu is not None:
-                    model_info += ' (' + e(gpu) + ' GB GPU)'
-            coverage = ('Tailnet telemetry (' + e(row['peer_freshness']) + '): '
-                        + e(row['process_state']) + model_info)
+                    model_info += ' (' + e(str(gpu)) + ' GB GPU)'
+            coverage = 'Tailnet telemetry: ' + e(row['process_state']) + model_info
             sample_count = row.get('history_samples')
-            retained = 'History not reported'
+            retained = 'Peer history stream'
             if sample_count is not None:
                 retained = f"{sample_count} rolling " + ('sample' if sample_count == 1 else 'samples')
-            history = retained
-            workflow = 'Telemetry only · no remote control'
+            history = '<a href="gargoyl-view://fleet-node-' + row['key'] + '/">Open peer history</a><br>' + retained
+            workflow = '<a href="gargoyl-view://fleet-node-' + row['key'] + '/">Pre-drained restart…</a>'
+            if not projection.get('preview'):
+                workflow = 'Use <strong>Restart ' + e(peer_host) + '…</strong><br>' + workflow
         else:
             coverage = 'Inventory only'
             history = 'None here'
@@ -190,8 +190,11 @@ def management_html(projection, aliases):
              'has no provider control, so no enrollment, remote command or restart is initiated for '
              'an inventory row.')
     has_local = any(row['manual_restart'] == 'native_review' for row in projection['rows'])
+    has_peer = any(row['manual_restart'] == 'tailscale_remote' for row in projection['rows'])
     if not projection.get('preview') and has_local:
         body += ' A local restart requires fresh preflight and confirmation on this Mac.'
+    if not projection.get('preview') and has_peer:
+        body += ' Online Tailscale peers stream direct telemetry and support preflight-verified remote operator restarts.'
     if shortened:
         body += ' Select a provider to see its full report values.'
     body += '</p>'

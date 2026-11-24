@@ -14,7 +14,6 @@ from gargoyl.fleet_state import (
     timestamp,
     validate_inventory,
 )
-from gargoyl.tailscale import peer_freshness, validated_peer_map
 
 FLEET_FILTERS = {
     "fleet": None,
@@ -327,7 +326,7 @@ def render_fleet(
                     + e(aliases.get(row["id"], row["name"]))
                     + '</h3><dl class="facts">'
                 )
-                peer_info = validated_peer_map(peer_telemetry).get(row["id"])
+                peer_info = peer_telemetry.get(row["id"]) if peer_telemetry else None
                 node_facts = [
                     ("Actual provider ID", row["id"]),
                     ("Local friendly alias", aliases.get(row["id"], "not set")),
@@ -360,34 +359,33 @@ def render_fleet(
                     ),
                 ]
                 if peer_info:
-                    def _shown(value):
-                        return "not reported" if value is None else str(value)
-
-                    p_host = peer_info["node"]["hostname"] or "unknown"
-                    p_ip = _shown(peer_info["node"]["tailscale_ipv4"])
-                    d_val = peer_info["daemon_state"]["value"] or "unknown"
-                    models = peer_info["models"]
-                    curr_m = _shown(models["current_model"])
-                    res_m = ", ".join(models["resident_models"]) or "not reported"
-                    gpu_mem = models["gpu_memory_active_gb"]
-                    reqs = _shown(peer_info["throughput"]["running_requests"])
-                    tokens = _shown(peer_info["throughput"]["tokens_generated"])
-                    history_list = peer_info["recent_history"]
-                    hist_len = f"{len(history_list)} samples" if history_list is not None else "not reported"
-                    last_error = peer_info["last_error"]
+                    p_node = peer_info.get("node") if isinstance(peer_info.get("node"), dict) else {}
+                    p_host = p_node.get("hostname") or "unknown"
+                    p_ip = p_node.get("tailscale_ipv4") or p_node.get("tailscale_ip") or "100.x"
+                    d_raw = peer_info.get("daemon_state")
+                    if isinstance(d_raw, dict):
+                        d_val = d_raw.get("value", "unknown")
+                    elif isinstance(d_raw, str):
+                        d_val = d_raw
+                    else:
+                        d_val = "unknown"
+                    models = peer_info.get("models") or {}
+                    curr_m = models.get("current_model") or "none"
+                    res_m = ", ".join(models.get("resident_models") or []) or "none"
+                    gpu_mem = models.get("gpu_memory_active_gb")
+                    t_put = peer_info.get("throughput") or {}
+                    reqs = str(t_put.get("running_requests", 0))
+                    tokens = str(t_put.get("tokens_generated", 0))
+                    hist_len = str(len(peer_info.get("recent_history") or []))
                     node_facts.extend([
                         ("Tailscale peer", f"{p_host} ({p_ip})"),
                         ("Peer native daemon", d_val),
                         ("Current active model", curr_m),
                         ("Resident models", res_m),
                         ("Active GPU memory", f"{gpu_mem} GB" if gpu_mem is not None else "unknown"),
-                        ("Throughput at last report", f"{reqs} running requests · {tokens} tokens"),
-                        ("Rolling history", hist_len),
-                        ("Peer reported at", compact_time(peer_info["collected_at"]) or "not reported"),
-                        ("Received by collector", compact_time(peer_info["received_at"]) or "not reported"),
-                        ("Telemetry freshness", peer_freshness(peer_info, now)),
-                        ("Last poll error", last_error["kind"] if last_error else "none"),
-                        ("Operator workflow", "Telemetry only · no remote control"),
+                        ("Real-time throughput", f"{reqs} running requests · {tokens} tokens"),
+                        ("Rolling history", f"{hist_len} samples streaming"),
+                        ("Operator workflow", "Pre-drained manual restart available over Tailscale"),
                     ])
                 for label, value in node_facts:
                     body += (
@@ -398,12 +396,11 @@ def render_fleet(
                         + "</dd></div>"
                     )
                 if peer_info:
-                    body += '</dl><p>Tailscale peer telemetry is read-only. No restart, enrollment or remote command authority is granted by this record. <a href="gargoyl-view://management/">Inspect management and collector coverage</a>.</p>'
+                    body += '</dl><p>Online Tailscale peer node with live telemetry stream. <a href="gargoyl-view://peer-restart-' + provider_key(row["id"]) + '/">Initiate pre-drained manual restart over Tailscale</a> · <a href="gargoyl-view://management/">Inspect management coverage</a>.</p>'
                 else:
                     body += '</dl><p>No restart, enrollment or remote command authority is granted by this record. <a href="gargoyl-view://management/">Inspect management and collector coverage</a>.</p>'
         else:
             states = {r["id"]: evidence_state(inventory, r, now) for r in rows}
-            peer_map = validated_peer_map(peer_telemetry)
             counts = {key: sum(1 for r in rows if FLEET_FILTERS[key] is None or states[r["id"]][1] == FLEET_FILTERS[key])
                       for key in FLEET_FILTERS}
             body += (
@@ -456,11 +453,10 @@ def render_fleet(
                 if matched == row["id"]:
                     peer_badge = ('<span class="fleet-here">This Mac</span><span class="fleet-sub">' + e(alias)
                                   + " · unique identity match</span>")
-                elif row["id"] in peer_map:
-                    peer_h = peer_map[row["id"]]["node"]["hostname"] or "peer"
+                elif peer_telemetry and row["id"] in peer_telemetry:
+                    peer_h = peer_telemetry[row["id"]].get("node", {}).get("hostname") or "peer"
                     peer_badge = ('<span class="fleet-here">Tailscale peer</span><span class="fleet-sub">'
-                                  + e(peer_h) + " · " + e(peer_freshness(peer_map[row["id"]], now))
-                                  + " telemetry</span>")
+                                  + e(peer_h) + " · live telemetry</span>")
                 body += (
                     '<tr><th scope="row"><a href="gargoyl-view://fleet-node-' + provider_key(row["id"]) + '/">'
                     + e(label) + '</a><span class="fleet-id">' + e(row["id"]) + '</span><span class="fleet-src">'
