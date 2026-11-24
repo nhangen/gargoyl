@@ -257,14 +257,21 @@ def validate_inventory(value):
     return value
 
 
-def account_report_state(inventory, now):
+def account_report_state(inventory, now, lifecycle=None):
     fetch_age = (timestamp(now) - timestamp(inventory["fetched_at"])).total_seconds()
+    reader_stopped = lifecycle is not None and lifecycle.get("status") in {
+        "exited",
+        "stopped",
+        "terminal_failure",
+    }
     return (
         "unknown"
         if fetch_age < 0
         else (
             "current"
-            if fetch_age <= TTL and inventory["connection"] == "connected"
+            if fetch_age <= TTL
+            and inventory["connection"] == "connected"
+            and not reader_stopped
             else "stale"
         )
     )
@@ -277,9 +284,9 @@ def heartbeat_state(row, now):
     return "unknown" if age < 0 else ("recent" if age <= TTL else "older")
 
 
-def evidence_state(inventory, row, now):
+def evidence_state(inventory, row, now, lifecycle=None):
     """Fetch freshness and heartbeat freshness are distinct from reported status."""
-    return account_report_state(inventory, now), heartbeat_state(row, now)
+    return account_report_state(inventory, now, lifecycle=lifecycle), heartbeat_state(row, now)
 
 
 def _directory(path, uid, create=False):

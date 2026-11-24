@@ -39,7 +39,7 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
         return dict(inventory_available=False, partial=True, rows=[], preview=preview, lifecycle=lifecycle)
     validate_inventory(inventory)
     try:
-        matched = matching_provider(inventory, local, now)
+        matched = matching_provider(inventory, local, now, lifecycle=lifecycle)
     except (ValueError, KeyError, TypeError):
         matched = None
     rows = []
@@ -63,7 +63,7 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
                          manual_restart='native_review' if associated else 'unavailable'))
     return dict(inventory_available=True, partial=inventory['partial'], rows=rows,
                 fetched_at=inventory['fetched_at'], connection=inventory['connection'],
-                report_state=account_report_state(inventory, now),
+                report_state=account_report_state(inventory, now, lifecycle=lifecycle),
                 preview=preview, lifecycle=lifecycle)
 
 
