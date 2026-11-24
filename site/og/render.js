@@ -15,8 +15,12 @@ const { chromium } = require("playwright");
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ])
     );
-    const archivoLoaded = await page.evaluate(
-      () => document.fonts.check('16px "Archivo"')
+    // fonts.check() is true when no face matches the family at all, so look
+    // for a loaded Archivo face instead.
+    const archivoLoaded = await page.evaluate(() =>
+      [...document.fonts].some(
+        (f) => f.family.replace(/"/g, "") === "Archivo" && f.status === "loaded"
+      )
     );
     if (!fontReady) {
       throw new Error("timed out waiting for document.fonts.ready");
