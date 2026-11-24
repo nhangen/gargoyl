@@ -54,5 +54,6 @@ poll failed, `current` within `PEER_FRESHNESS_SECONDS` (120) of when the store r
 the snapshot, `stale` when older, and `unknown` when there is no usable timestamp. The
 store stamps `received_at` with its own clock, so peer clock skew doesn't affect the
 label; a raw map without `received_at` falls back to the peer's `collected_at`. The detail
-view shows the last report time and the last poll error. Peer rows are telemetry only
+view shows the peer's report time, the time the collector received it, and the last
+poll error. Peer rows are telemetry only
 and offer no remote control.

@@ -597,7 +597,8 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         mgmt, fleet, detail = pages
         self.assertIn("stale", mgmt)
         self.assertIn("stale telemetry", fleet)
-        self.assertIn(compact_time(HOUR_BEFORE_NOW), detail)
+        self.assertIn("Peer reported at</dt><dd class=\"mono\">" + compact_time(HOUR_BEFORE_NOW), detail)
+        self.assertIn("Received by collector</dt><dd class=\"mono\">" + compact_time(HOUR_BEFORE_NOW), detail)
         self.assertIn("unreachable", detail)
 
     def test_fresh_snapshot_then_failed_poll_is_stale(self):
@@ -624,6 +625,8 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         self.assertEqual(peer_freshness(validated_peer_map(raw)["p"], NOW), "unknown")
         raw["p"]["last_error"] = {"detail": "no kind"}
         self.assertIsNone(validated_peer_map(raw)["p"]["last_error"])
+        raw["p"]["last_error"] = {"kind": "unreachable", "detail": "x"}
+        self.assertEqual(peer_freshness(validated_peer_map(raw)["p"], NOW), "stale")
 
     def test_fresh_snapshot_renders_current(self):
         store = FleetTelemetryStore(clock=lambda: NOW)
