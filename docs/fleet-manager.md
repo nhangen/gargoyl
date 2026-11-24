@@ -24,7 +24,12 @@ providers. Low traffic and coordinator warnings never trigger repair.
 
 **Aliases…** lets you choose an actual provider ID and save a friendly
 name on this Mac. Source labels and IDs remain visible. A hardware model is
-explicitly a hardware label; a missing name falls back to the actual ID. Aliases
+explicitly a hardware label; a missing name falls back to the actual ID.
+Known Apple Darwin model identifiers (`sysctl hw.model`, e.g. `Mac13,1`)
+are displayed with a friendly machine name such as "Mac Studio"; unknown
+identifiers keep the raw hardware value and nothing is invented. The version
+column is labeled **Darkbloom version** because it is the provider's Darkbloom
+release (e.g. `0.10.17`), not a macOS version. Aliases
 never alter public identity matching, action targets, provider settings or source
 records. Leave an alias blank to remove it. There is no inferred mapping of
 `studio64-1`/`studio64-2` to identical-looking machines; the operator must identify

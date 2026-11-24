@@ -348,7 +348,7 @@ def render_fleet(
                         if row.get("heartbeat_precision") is not None
                         else "unknown",
                     ),
-                    ("Reported version", row["version"] or "unknown"),
+                    ("Darkbloom version", row["version"] or "unknown"),
                     (
                         "Local association",
                         "This Mac: " + alias
@@ -403,7 +403,7 @@ def render_fleet(
                 '<p class="fleet-scroll-hint">Scroll the table sideways to see all evidence.</p>'
                 '<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'
                 '<table class="fleet-inventory"><thead><tr><th scope="col">Provider</th><th scope="col">Coordinator report</th>'
-                '<th scope="col">Last heartbeat</th><th scope="col">Version</th></tr></thead><tbody>'
+                '<th scope="col">Last heartbeat</th><th scope="col">Darkbloom version</th></tr></thead><tbody>'
             )
             for row in shown:
                 report, heartbeat = states[row["id"]]

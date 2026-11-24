@@ -94,7 +94,7 @@ def management_html(projection, aliases):
     body += ('<div class="scroll management-table" tabindex="0" role="region" aria-label="Provider management coverage" '
              'aria-describedby="management-coverage">'
              '<table><thead><tr><th scope="col">Provider / actual ID</th><th scope="col">Report</th>'
-             '<th scope="col">Heartbeat</th><th scope="col">Version</th><th scope="col">Evidence coverage</th>'
+             '<th scope="col">Heartbeat</th><th scope="col">Darkbloom version</th><th scope="col">Evidence coverage</th>'
              '<th scope="col">History</th><th scope="col">Operator workflow</th></tr></thead><tbody>')
     shortened = False
     for row in projection['rows']:
