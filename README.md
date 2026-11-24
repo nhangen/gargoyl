@@ -28,7 +28,7 @@ See [fleet operation, aliases and sign-in](docs/fleet-manager.md) and
 
 ## Safety and privacy
 
-- No prompts, completions, credentials, API keys, model names, hostnames, raw logs, customer identifiers, or IP addresses leave a host. No setting turns that off.
+- No prompts, completions, credentials, API keys, model names, hostnames, raw logs, customer identifiers, or IP addresses leave a host in gargoyl telemetry; the v1 contract rejects them. No setting turns that off.
 - Collection and repair have separate application-level checks, but the local
   pilot does not enforce separate OS identities. Its read-only monitor and
   native manual-action worker run as the same Mac user. The optional browser
