@@ -1,15 +1,15 @@
-"""Tailscale tailnet node discovery, peer telemetry endpoint, and fleet aggregation.
+"""Tailscale tailnet node discovery, a read-only peer telemetry endpoint, and fleet aggregation.
 
-Enables fleet-wide observability and preflight-verified operator workflows across
-online macOS nodes (e.g. mbp-2026, studio32-1, studio64-1, studio64-2) over Tailscale.
+Remote operator actions are deliberately not served here: mutations stay local and
+owner-confirmed (docs/hardening-decisions.md) until authenticated transport exists.
 """
 
 import ipaddress
 import json
+import logging
 import os
 import re
 import shutil
-import socket
 import subprocess
 import urllib.error
 import urllib.request
@@ -24,6 +24,8 @@ TAILSCALE_IPV6_SUBNET = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 DEFAULT_TAILSCALE_PATH = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 DEFAULT_TELEMETRY_PORT = 8342
 MAX_HISTORY_PER_NODE = 64
+
+log = logging.getLogger(__name__)
 
 
 def utc_now_iso():
@@ -257,21 +259,19 @@ def make_telemetry_snapshot(
 
 
 class TailscaleTelemetryHandler(BaseHTTPRequestHandler):
-    """HTTP handler serving /v1/telemetry and safe remote operator workflows."""
+    """Read-only HTTP handler serving /v1/telemetry to Tailscale peers."""
 
     server_version = "GargoylTailscale/1.0"
     sys_version = ""
+    timeout = 5
 
     def log_message(self, format, *args):
         pass
 
-    def _respond(self, status: int, data: dict | str, content_type: str = "application/json"):
-        if isinstance(data, dict):
-            payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        else:
-            payload = data.encode("utf-8")
+    def _respond(self, status: int, data: dict):
+        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
-        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -283,8 +283,8 @@ class TailscaleTelemetryHandler(BaseHTTPRequestHandler):
 
     def _check_auth(self) -> bool:
         client_ip = self.client_address[0]
-        allow_loopback = getattr(self.server, "allow_loopback", True)
-        if not is_tailscale_ip(client_ip, allow_loopback=allow_loopback):
+        if not is_tailscale_ip(client_ip, allow_loopback=self.server.allow_loopback):
+            log.warning("rejected telemetry request from non-Tailscale address %s", client_ip)
             self._respond(
                 403,
                 {"error": "unauthorized_interface", "message": "Tailscale interface required"},
@@ -295,81 +295,31 @@ class TailscaleTelemetryHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._check_auth():
             return
-        if self.path in ("/v1/telemetry", "/v1/telemetry/"):
-            provider = getattr(self.server, "telemetry_provider", None)
-            if callable(provider):
-                data = provider()
-            elif isinstance(provider, dict):
-                data = provider
-            else:
-                data = make_telemetry_snapshot({"hostname": socket.gethostname()})
-            self._respond(200, data)
-        elif self.path in ("/v1/operator/inspect", "/v1/operator/inspect/"):
-            inspect_provider = getattr(self.server, "inspect_provider", None)
-            data = inspect_provider() if callable(inspect_provider) else {"status": "ok"}
-            self._respond(200, data)
-        else:
+        if self.path not in ("/v1/telemetry", "/v1/telemetry/"):
             self._respond(404, {"error": "not_found"})
+            return
+        provider = self.server.telemetry_provider
+        if not callable(provider):
+            self._respond(503, {"error": "telemetry_provider_not_configured"})
+            return
+        self._respond(200, provider())
 
-    def do_POST(self):
+    def _method_not_allowed(self):
         if not self._check_auth():
             return
-        if self.path in ("/v1/operator/restart", "/v1/operator/restart/"):
-            length = int(self.headers.get("Content-Length", 0))
-            body = {}
-            if length > 0:
-                try:
-                    raw = self.rfile.read(length)
-                    body = json.loads(raw.decode("utf-8"))
-                except Exception:
-                    self._respond(400, {"error": "invalid_json"})
-                    return
-            if not body.get("preflight_confirmed"):
-                self._respond(
-                    400,
-                    {
-                        "error": "preflight_confirmation_required",
-                        "message": "Explicit preflight confirmation is required for remote operator restart",
-                    },
-                )
-                return
+        self._respond(405, {"error": "method_not_allowed"})
 
-            restart_handler = getattr(self.server, "restart_handler", None)
-            if callable(restart_handler):
-                outcome = restart_handler(body)
-                self._respond(200, outcome)
-            else:
-                self._respond(
-                    200,
-                    {
-                        "status": "succeeded",
-                        "action": "pre_drained_manual_restart",
-                        "outcome": "restart_initiated",
-                        "timestamp": utc_now_iso(),
-                    },
-                )
-        else:
-            self._respond(404, {"error": "not_found"})
-
+    do_POST = do_PUT = do_PATCH = do_DELETE = _method_not_allowed
     do_HEAD = do_GET
 
 
 class TailscaleTelemetryServer(HTTPServer):
-    """Server for Tailscale peer telemetry endpoint."""
+    """Read-only telemetry server; the caller chooses the bind address explicitly."""
 
     allow_reuse_address = True
 
-    def __init__(
-        self,
-        address: tuple[str, int] = ("0.0.0.0", DEFAULT_TELEMETRY_PORT),
-        telemetry_provider=None,
-        restart_handler=None,
-        inspect_provider=None,
-        allow_loopback: bool = True,
-    ):
+    def __init__(self, address: tuple[str, int], telemetry_provider=None, allow_loopback: bool = False):
         self.telemetry_provider = telemetry_provider
-        self.restart_handler = restart_handler
-        self.inspect_provider = inspect_provider
         self.allow_loopback = allow_loopback
         super().__init__(address, TailscaleTelemetryHandler)
 
@@ -437,32 +387,3 @@ class FleetTelemetryStore:
         except Exception:
             return None
         return None
-
-
-def remote_operator_restart(
-    peer_ip: str,
-    port: int = DEFAULT_TELEMETRY_PORT,
-    preflight_confirmed: bool = True,
-    timeout: float = 5.0,
-) -> dict:
-    """Execute preflight-verified remote manual restart across a tailnet node."""
-    url = f"http://{peer_ip}:{port}/v1/operator/restart"
-    payload = json.dumps({"preflight_confirmed": bool(preflight_confirmed)}).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json", "User-Agent": "GargoylOperator/1.0"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data
-    except urllib.error.HTTPError as err:
-        try:
-            err_data = json.loads(err.read().decode("utf-8"))
-        except Exception:
-            err_data = {"error": f"HTTP {err.code}"}
-        return {"status": "rejected", "error": err_data}
-    except Exception as exc:
-        return {"status": "failed", "error": str(exc)}

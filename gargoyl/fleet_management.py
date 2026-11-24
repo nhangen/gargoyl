@@ -66,7 +66,7 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
             d_state = peer_data.get('daemon_state', {})
             p_state = d_state.get('value', 'running')
             h_samples = len(peer_data.get('recent_history', []))
-            m_restart = 'tailscale_remote'
+            m_restart = 'unavailable'
             peer_host = peer_data.get('node', {}).get('hostname')
             models = peer_data.get('models')
             throughput = peer_data.get('throughput')
@@ -163,10 +163,8 @@ def management_html(projection, aliases):
             retained = 'Peer history stream'
             if sample_count is not None:
                 retained = f"{sample_count} rolling " + ('sample' if sample_count == 1 else 'samples')
-            history = '<a href="gargoyl-view://peer-history-' + row['key'] + '/">Open peer history</a><br>' + retained
-            workflow = '<a href="gargoyl-view://peer-restart-' + row['key'] + '/">Pre-drained restart…</a>'
-            if not projection.get('preview'):
-                workflow = 'Use <strong>Restart ' + e(peer_host) + '…</strong><br>' + workflow
+            history = retained
+            workflow = 'Telemetry only · no remote control'
         else:
             coverage = 'Inventory only'
             history = 'None here'
@@ -185,11 +183,8 @@ def management_html(projection, aliases):
              'has no provider control, so no enrollment, remote command or restart is initiated for '
              'an inventory row.')
     has_local = any(row['manual_restart'] == 'native_review' for row in projection['rows'])
-    has_peer = any(row['manual_restart'] == 'tailscale_remote' for row in projection['rows'])
     if not projection.get('preview') and has_local:
         body += ' A local restart requires fresh preflight and confirmation on this Mac.'
-    if not projection.get('preview') and has_peer:
-        body += ' Online Tailscale peers stream direct telemetry and support preflight-verified remote operator restarts.'
     if shortened:
         body += ' Select a provider to see its full report values.'
     body += '</p>'

@@ -379,7 +379,7 @@ def render_fleet(
                         ("Active GPU memory", f"{gpu_mem} GB" if gpu_mem is not None else "unknown"),
                         ("Real-time throughput", f"{reqs} running requests · {tokens} tokens"),
                         ("Rolling history", f"{hist_len} samples streaming"),
-                        ("Operator workflow", "Pre-drained manual restart available over Tailscale"),
+                        ("Operator workflow", "Telemetry only · no remote control"),
                     ])
                 for label, value in node_facts:
                     body += (
@@ -390,7 +390,7 @@ def render_fleet(
                         + "</dd></div>"
                     )
                 if peer_info:
-                    body += '</dl><p>Online Tailscale peer node with live telemetry stream. <a href="gargoyl-view://peer-restart-' + provider_key(row["id"]) + '/">Initiate pre-drained manual restart over Tailscale</a> · <a href="gargoyl-view://management/">Inspect management coverage</a>.</p>'
+                    body += '</dl><p>Tailscale peer telemetry is read-only. No restart, enrollment or remote command authority is granted by this record. <a href="gargoyl-view://management/">Inspect management and collector coverage</a>.</p>'
                 else:
                     body += '</dl><p>No restart, enrollment or remote command authority is granted by this record. <a href="gargoyl-view://management/">Inspect management and collector coverage</a>.</p>'
         else:

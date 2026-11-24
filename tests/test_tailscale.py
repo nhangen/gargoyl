@@ -1,6 +1,7 @@
 """Tests for Tailscale node discovery, peer telemetry endpoint, and fleet federation."""
 
 import json
+import re
 import threading
 import unittest
 import urllib.error
@@ -9,9 +10,10 @@ import urllib.request
 from test_dashboard import HOST, snapshot
 from test_fleet_state import NOW, response
 
+from gargoyl import tailscale
 from gargoyl.fleet_management import management_html, management_projection
 from gargoyl.fleet_state import normalize_inventory, provider_key
-from gargoyl.native_views import render_view
+from gargoyl.native_views import render_view, valid_view
 from gargoyl.tailscale import (
     FleetTelemetryStore,
     TailscaleTelemetryServer,
@@ -21,7 +23,6 @@ from gargoyl.tailscale import (
     make_telemetry_snapshot,
     match_peers_to_providers,
     parse_tailscale_status,
-    remote_operator_restart,
 )
 
 SAMPLE_TAILSCALE_STATUS = {
@@ -258,38 +259,47 @@ class TailscaleEndpointAndFederationTests(unittest.TestCase):
             store.ingest("prov-1", mock_snapshot)
         self.assertEqual(len(store.get("prov-1")["recent_history"]), 64)
 
-    def test_remote_operator_restart_endpoint(self):
-        restart_called = []
-
-        def handle_restart(body):
-            restart_called.append(body)
-            return {
-                "status": "succeeded",
-                "outcome": "pre_drained_restart_initiated",
-                "timestamp": NOW,
-            }
-
-        self.server = TailscaleTelemetryServer(
-            ("127.0.0.1", 0),
-            restart_handler=handle_restart,
-            allow_loopback=True,
-        )
-        port = self.server.server_port
+    def _serve(self, **kwargs):
+        self.server = TailscaleTelemetryServer(("127.0.0.1", 0), **kwargs)
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.daemon = True
         self.thread.start()
+        return self.server.server_port
 
-        # Reject without preflight confirmation
-        rejected = remote_operator_restart("127.0.0.1", port=port, preflight_confirmed=False)
-        self.assertEqual(rejected["status"], "rejected")
-        self.assertEqual(len(restart_called), 0)
+    def test_operator_restart_route_is_not_served(self):
+        port = self._serve(telemetry_provider=lambda: {"node": {}}, allow_loopback=True)
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/operator/restart",
+            data=json.dumps({"preflight_confirmed": True}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req, timeout=2)
+        self.assertEqual(ctx.exception.code, 405)
+        self.assertFalse(hasattr(tailscale, "remote_operator_restart"))
 
-        # Accept with confirmed preflight
-        accepted = remote_operator_restart("127.0.0.1", port=port, preflight_confirmed=True)
-        self.assertEqual(accepted["status"], "succeeded")
-        self.assertEqual(accepted["outcome"], "pre_drained_restart_initiated")
-        self.assertEqual(len(restart_called), 1)
-        self.assertTrue(restart_called[0]["preflight_confirmed"])
+    def test_telemetry_without_provider_is_unavailable_not_observed(self):
+        port = self._serve(allow_loopback=True)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/telemetry", timeout=2)
+        self.assertEqual(ctx.exception.code, 503)
+
+    def test_inspect_route_is_not_served(self):
+        port = self._serve(telemetry_provider=lambda: {"node": {}}, allow_loopback=True)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/operator/inspect", timeout=2)
+        self.assertEqual(ctx.exception.code, 404)
+
+    def test_server_requires_explicit_address_and_rejects_loopback_by_default(self):
+        with self.assertRaises(TypeError):
+            TailscaleTelemetryServer()
+        port = self._serve(telemetry_provider=lambda: {"node": {}})
+        with self.assertLogs("gargoyl.tailscale", level="WARNING") as logs:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/telemetry", timeout=2)
+        self.assertEqual(ctx.exception.code, 403)
+        self.assertTrue(any("127.0.0.1" in line for line in logs.output))
 
 
 class MultiNodeFleetFederationTests(unittest.TestCase):
@@ -360,11 +370,11 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         self.assertIn("deepseek-coder-v2-lite (18.5 GB GPU)", html_federated)
         self.assertIn("qwen2.5-coder-32b (34.0 GB GPU)", html_federated)
         self.assertIn("llama-3.1-70b (42.0 GB GPU)", html_federated)
-        self.assertIn("Open peer history", html_federated)
-        self.assertIn("Restart studio32-1…", html_federated)
-        self.assertIn("Restart studio64-1…", html_federated)
-        self.assertIn("Restart studio64-2…", html_federated)
-        self.assertIn("Pre-drained restart…", html_federated)
+        self.assertNotIn("Pre-drained", html_federated)
+        self.assertNotIn("remote operator restart", html_federated)
+        self.assertEqual(html_federated.count("Telemetry only · no remote control"), 3)
+        for href in re.findall(r'href="gargoyl-view://([^"/]+)/"', html_federated):
+            self.assertTrue(valid_view(href), href)
 
     def test_render_fleet_with_peer_telemetry(self):
         store = FleetTelemetryStore()
@@ -411,7 +421,11 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         self.assertIn("studio32-1 (100.80.1.2)", detail_page)
         self.assertIn("deepseek-coder-v2-lite", detail_page)
         self.assertIn("18.5 GB", detail_page)
-        self.assertIn("Pre-drained manual restart available over Tailscale", detail_page)
+        self.assertNotIn("Pre-drained", detail_page)
+        self.assertIn("Telemetry only · no remote control", detail_page)
+        for page_html in (page, detail_page):
+            for href in re.findall(r'href="gargoyl-view://([^"/]+)/"', page_html):
+                self.assertTrue(valid_view(href), href)
 
 
 if __name__ == "__main__":
