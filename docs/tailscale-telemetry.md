@@ -1,44 +1,48 @@
-# Tailscale Tailnet Telemetry and Fleet Federation
+# Tailscale peer telemetry
 
-## Overview
+`gargoyl/tailscale.py` is the library layer for observing other fleet Macs over a
+Tailscale tailnet. It isn't wired into the native app yet: nothing starts the
+telemetry server or polls peers, and `render_view` receives peer telemetry only when
+a caller passes `peer_telemetry`. Wiring is tracked separately.
 
-Rather than treating the operator's Mac fleet (`mbp-2026`, `studio32-1`, `studio64-1`, `studio64-2`) as isolated silos with empty `Inventory only` and `None here` placeholders, Gargoyl integrates directly with the private Tailscale tailnet to provide true fleet-wide telemetry, observability, and remote operator controls.
+## Discovery
 
-## 1. Tailscale Node Discovery & Auto-Aliasing (`gargoyl/tailscale.py`)
+- `get_tailscale_status` runs `/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  status --json`, or `tailscale` on `PATH`. A missing CLI, non-zero exit, timeout, or
+  unparseable output returns `None` and logs the reason.
+- `parse_tailscale_status` keeps peers whose `OS` is macOS or Darwin and whose
+  `Online` is `true`.
+- `match_peers_to_providers` associates a peer with a Darkbloom provider only when the
+  cleaned provider name exactly equals the peer's hostname or first DNS label, and
+  only when the match is unique in both directions. Ambiguous or partial names stay
+  unmatched.
 
-- **Discovery**: Queries local Tailscale status via `/Applications/Tailscale.app/Contents/MacOS/Tailscale status --json` (or `tailscale status --json` on `PATH`) to discover active nodes on the operator's tailnet.
-- **Filtering**: Filters for peer nodes where `OS` is macOS (`macOS` / `Darwin`) and `Online` is `true`.
-- **Auto-Aliasing**: Matches discovered online Tailscale peer hostnames (e.g. `studio32-1`, `studio64-1`, `studio64-2`, `mbp-2026`) against Darkbloom provider identities by source label / hostname, automatically providing friendly hostnames without manual guesswork.
+## Telemetry endpoint
 
-## 2. Peer Telemetry Endpoint (`/v1/telemetry`)
+- `TailscaleTelemetryServer` serves `GET /v1/telemetry` only. The caller must pass
+  the bind address; bind it to the node's own Tailscale IP.
+- Requests from outside `100.64.0.0/10` and `fd7a:115c:a1e0::/48` get HTTP 403 and
+  are logged. Loopback is rejected unless `allow_loopback=True`. The address check is
+  not authentication: `100.64.0.0/10` is shared carrier-grade NAT space, and any
+  tailnet member passes it.
+- Without a `telemetry_provider`, the endpoint returns HTTP 503 rather than a
+  placeholder snapshot. Other methods return HTTP 405.
+- No operator action is served. Remote restart stays unavailable until authenticated
+  transport identity exists (see `docs/fleet-collector-contract.md`).
 
-- **Interface Protection**: Telemetry endpoints bind to the Tailscale interface or enforce a subnet guard.
-- **Subnet Guard**: Rejects incoming requests from non-Tailscale interfaces with HTTP 403 Forbidden. Only addresses within the Tailscale CGNAT range (`100.64.0.0/10`) or Tailscale IPv6 ULA (`fd7a:115c:a1e0::/48`), plus numeric loopback (`127.0.0.1`), are authorized.
-- **Snapshot Payload**: The read-only `/v1/telemetry` endpoint exposes:
-  - `node`: Hostname, Tailscale IP, and provider association.
-  - `daemon_state`: Normalized daemon state (`value`, `state`, `source`, `timestamp`).
-  - `models`: Active model residency, `current_model`, `resident_models`, and `gpu_memory_active_gb`.
-  - `throughput`: Real-time request and token counters (`running_requests`, `tokens_generated`, `requests_total`, `tokens_total`).
-  - `memory_headroom_bytes`: Unified memory headroom bytes.
-  - `recent_history`: Bounded 64-sample rolling history buffer.
-  - `collected_at`: UTC timestamp.
+## Fleet store
 
-## 3. Fleet Telemetry Aggregation / Federation
+- `FleetTelemetryStore.ingest` validates each snapshot with `validate_peer_snapshot`
+  and rejects malformed fields, recording the reason in `last_error`.
+- Values a peer didn't report stay `None`; a missing daemon state is `unavailable`,
+  never `running`.
+- Each provider keeps a 64-sample rolling history.
+- `poll_peer` records why a poll failed (`unreachable`, `http_error`,
+  `invalid_json`, `oversized`, `invalid_snapshot`) and keeps the last good snapshot.
 
-- **Federated Collector**: Gargoyl's collector on the operator workstation periodically polls online tailnet peers over their private `100.x.x.x` IPs.
-- **Fleet Store (`FleetTelemetryStore`)**: Aggregates peer evidence into the fleet store, maintaining a 64-sample rolling history per node.
-- **Live Presentation**: Replaces empty `Inventory only` and `None here` table cells in **Your fleet** (`render_fleet`) and **Fleet management** (`management_html`):
-  - Native daemon state & health (`running`, `observed`).
-  - Active loaded models with GPU memory usage (`current_model (XX.X GB GPU)`).
-  - Real-time throughput (running requests and tokens generated).
-  - Rolling history links and retained sample counts per peer.
-  - Operator workflow links for remote pre-drained restarts.
+## Presentation
 
-## 4. Remote Operator Workflows over Tailscale
-
-- **Preflight Verification**: Operator workflows across tailnet nodes require explicit preflight confirmation.
-- **Pre-Drained Restart (`POST /v1/operator/restart`)**:
-  - Initiates a safe, graceful restart across tailnet peers.
-  - Rejects any unconfirmed or malformed request with HTTP 400.
-  - Rejects non-Tailscale connections with HTTP 403.
-  - Enforces atomic journal locking and pre-drained state reconciliation on the target node.
+When peer telemetry is supplied, **Your fleet** and **Fleet management** show the
+peer's hostname, daemon state, models, GPU memory, throughput, and retained sample
+count in place of `Inventory only` / `None here`. Peer rows are telemetry only and
+offer no remote control.
