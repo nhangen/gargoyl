@@ -56,7 +56,7 @@ def valid_view(view):
     return view in VIEWS or fleet_mode(view)
 
 
-def render_view(view, evidence, record, *, journal_available=True, now=None, inventory=None, local=None, local_alias="This Mac", aliases=None, aliases_available=True, local_host_id=HOST, preview=False, lifecycle=None):
+def render_view(view, evidence, record, *, journal_available=True, now=None, inventory=None, local=None, local_alias="This Mac", aliases=None, aliases_available=True, local_host_id=HOST, preview=False, lifecycle=None, peer_telemetry=None):
     """Inputs are reconstructed normalized export and validated journal; never raw HTML."""
     if not valid_view(view):
         raise ValueError("unsupported view")
@@ -74,7 +74,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         evidence = dict(evidence, snapshots=samples)
     if view.startswith("fleet"):
         from gargoyl.fleet_views import render_fleet
-        html = native_document(render_fleet(view, inventory, evidence, local, local_alias, now, nav("fleet"), aliases=aliases, aliases_available=aliases_available, local_host_id=local_host_id, preview=preview, lifecycle=lifecycle))
+        html = native_document(render_fleet(view, inventory, evidence, local, local_alias, now, nav("fleet"), aliases=aliases, aliases_available=aliases_available, local_host_id=local_host_id, preview=preview, lifecycle=lifecycle, peer_telemetry=peer_telemetry))
         if len(html.encode()) > 500000:
             raise ValueError("view limit")
         return html
@@ -118,7 +118,7 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         body += '<p class="muted">Viewed at ' + e(display_time(now)) + (' · local report ' if view == 'management' else ' · report ') + e(display_time(evidence['evaluated_at'])) + '</p>'
     if view == "management":
         from gargoyl.fleet_management import management_html, management_projection
-        body += management_html(management_projection(inventory, local, evidence, now, local_host_id, preview=preview, lifecycle=lifecycle), aliases or {})
+        body += management_html(management_projection(inventory, local, evidence, now, local_host_id, preview=preview, lifecycle=lifecycle, peer_telemetry=peer_telemetry), aliases or {})
     elif view == "tools":
         body += '<section><h2>Inspect and operate</h2><ul class="tool-list">'
         body += card("Fleet management", "See which providers have direct observations, available history and native operator workflows; other records remain inventory-only.", view="management")

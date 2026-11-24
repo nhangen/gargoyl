@@ -3,9 +3,10 @@
 Gargoyl's native app reads actual owned-provider inventory from Darkbloom's
 `GET /v1/me/providers`. Source IDs are preserved in every row and detail view.
 The local collector observes this Mac directly; other machines currently have
-coordinator reports, not independent remote process observations. The internal
-pilot UUID is never substituted for a Darkbloom provider ID. No production view
-contains fixture fleet entries.
+coordinator reports, not independent remote process observations. A read-only
+Tailscale peer telemetry library exists (`docs/tailscale-telemetry.md`) but isn't
+wired into the app yet. The internal pilot UUID is never substituted for a Darkbloom
+provider ID. No production view contains fixture fleet entries.
 
 ## Graphical operation
 
