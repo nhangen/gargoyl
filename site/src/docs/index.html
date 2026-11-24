@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gargoyl: developer docs</title>
+  <meta name="description" content="Install Gargoyl, read the v1 contract, and see how collection, the dashboard and repairs fit together. Everything runs locally.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0c0e0d">
+  <link rel="canonical" href="https://gargoyl.dev/docs/">
+  <meta property="og:title" content="Gargoyl developer docs">
+  <meta property="og:description" content="Install Gargoyl, read the v1 contract, and see how collection, the dashboard and repairs fit together.">
+  <meta property="og:url" content="https://gargoyl.dev/docs/">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://gargoyl.dev/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Gargoyl: See which host reports to trust, and which to recheck.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Gargoyl developer docs">
+  <meta name="twitter:description" content="Install Gargoyl, read the v1 contract, and see how collection, the dashboard and repairs fit together.">
+  <meta name="twitter:image" content="https://gargoyl.dev/og.png">
+  <meta name="twitter:creator" content="@nathan_hangen">
+  <link rel="icon" href="/icon/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon/apple-touch-icon.png" sizes="180x180">
+  <link rel="icon" href="/icon/icon-192.png" sizes="192x192" type="image/png">
+  <link rel="icon" href="/icon/icon-512.png" sizes="512x512" type="image/png">
+  <link rel="manifest" href="/icon/manifest.webmanifest">
+  <link rel="preload" href="/fonts/archivo-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <svg width="0" height="0" class="sr-only" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="mark" viewBox="0 0 64 64">
+        <path d="M12 8 22 20h20L52 8l-3 22-8 14-9 12-9-12-8-14z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+        <path d="M21 31l8 3-8 1z M43 31l-8 3 8 1z" class="mark-eyes"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <div class="crumbs">
+        <a class="wordmark" href="/" aria-label="Gargoyl home">
+          <svg class="wordmark-mark" aria-hidden="true"><use href="#mark"/></svg>
+          <span>gargoyl</span>
+        </a>
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <span class="crumb">developer docs</span>
+      </div>
+      <a class="header-link" {{link:github}}>
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+  </header>
+
+  <div class="wrap docs-layout">
+    <nav class="docs-nav" aria-label="Docs sections">
+      <p class="docs-nav-label">On this page</p>
+      <ul>
+          <li><a href="#quickstart">Quick start</a></li>
+          <li><a href="#start">Get started</a></li>
+          <li><a href="#contract">Contract and data</a></li>
+          <li><a href="#fleet">Operating the fleet</a></li>
+          <li><a href="#repairs">Repairs</a></li>
+      </ul>
+    </nav>
+
+    <main id="main" class="docs-main">
+      <p class="eyebrow">developer docs</p>
+      <h1>Build on Gargoyl.</h1>
+      <p class="docs-lede">Install it, read the v1 contract, and see how collection, the dashboard and repairs fit together. Everything here runs locally.</p>
+
+      <section class="doc-group" id="quickstart" aria-labelledby="quickstart-title">
+        <h2 id="quickstart-title">Quick start</h2>
+        <article class="step">
+          <div class="step-text">
+            <span class="step-num" aria-hidden="true">1</span>
+            <div>
+              <h3>Get the code</h3>
+              <p>Clone the repository, make a virtual environment, and install the package into it.</p>
+            </div>
+          </div>
+          <figure class="snippet">
+            <figcaption>Terminal</figcaption>
+<pre tabindex="0" aria-label="Clone and install commands"><code><span class="ok"># clone</span>
+git clone https://github.com/nhangen/gargoyl
+cd gargoyl
+
+<span class="ok"># isolate and install</span>
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .</code></pre>
+          </figure>
+        </article>
+        <article class="step">
+          <div class="step-text">
+            <span class="step-num" aria-hidden="true">2</span>
+            <div>
+              <h3>Start the local monitor</h3>
+              <p>The monitor reads one daemon-state file you name and serves a viewer on loopback only. Open <code>http://127.0.0.1:8765/</code>, check it from a second terminal, and stop it with Ctrl-C.</p>
+            </div>
+          </div>
+          <figure class="snippet">
+            <figcaption>Terminal</figcaption>
+<pre tabindex="0" aria-label="Run the local monitor"><code><span class="ok"># start the monitor (use your own file and host id)</span>
+gargoyl monitor \
+  --input /absolute/path/to/daemon-state.json \
+  --owner-uid "$(id -u)" \
+  --host &lt;stable-host-uuid&gt;
+
+<span class="ok"># in a second terminal, check the local viewer</span>
+gargoyl status</code></pre>
+          </figure>
+        </article>
+        <article class="step step-last">
+          <div class="step-text">
+            <span class="step-num step-num-muted" aria-hidden="true">3</span>
+            <div>
+              <h3>Or build the Mac app <span class="badge">Optional</span></h3>
+              <p>Prefer a window to a terminal? Build the native app from the same checkout. It connects read-only.</p>
+            </div>
+          </div>
+          <figure class="snippet">
+            <figcaption>Terminal</figcaption>
+<pre tabindex="0" aria-label="Build the native Mac app"><code><span class="ok"># build the native app</span>
+python tools/build_macos_app.py --output dist --python .venv/bin/python</code></pre>
+          </figure>
+        </article>
+      </section>
+
+      <section class="doc-group" id="start" aria-labelledby="start-title">
+        <h2 id="start-title">Get started</h2>
+        <p class="doc-blurb">Run the monitor on one host and learn the commands.</p>
+        <div class="doc-grid">
+          <a class="doc-card" {{doc:local-monitor.md}}>
+            <span class="doc-title">Local monitor</span>
+            <span class="doc-desc">Poll an owner-local daemon-state file and watch it on loopback. Start, stop and status.</span>
+            <span class="doc-file">docs/local-monitor.md</span>
+          </a>
+          <a class="doc-card" {{doc:cli.md}}>
+            <span class="doc-title">CLI reference</span>
+            <span class="doc-desc">Inspect, capture, monitor and status, with saved-input examples.</span>
+            <span class="doc-file">docs/cli.md</span>
+          </a>
+          <a class="doc-card" {{doc:pilot-configuration.md}}>
+            <span class="doc-title">Pilot configuration</span>
+            <span class="doc-desc">The local installation policy.</span>
+            <span class="doc-file">docs/pilot-configuration.md</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="doc-group" id="contract" aria-labelledby="contract-title">
+        <h2 id="contract-title">Contract and data</h2>
+        <p class="doc-blurb">What a host may report, and in what shape.</p>
+        <div class="doc-grid">
+          <a class="doc-card" {{doc:contract.md}}>
+            <span class="doc-title">v1 contract</span>
+            <span class="doc-desc">Schema, privacy rules, collector and dashboard integration, security boundaries.</span>
+            <span class="doc-file">docs/contract.md</span>
+          </a>
+          <a class="doc-card" {{doc:daemon-state-json.md}}>
+            <span class="doc-title">Daemon state JSON</span>
+            <span class="doc-desc">The state file the collector reads.</span>
+            <span class="doc-file">docs/daemon-state-json.md</span>
+          </a>
+          <a class="doc-card" {{doc:diagnostic-confidence.md}}>
+            <span class="doc-title">Diagnostic confidence</span>
+            <span class="doc-desc">How the dashboard keeps local reports, coordinator reports and protocol confidence apart. Missing evidence stays unknown.</span>
+            <span class="doc-file">docs/diagnostic-confidence.md</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="doc-group" id="fleet" aria-labelledby="fleet-title">
+        <h2 id="fleet-title">Operating the fleet</h2>
+        <p class="doc-blurb">Read-only fleet views, the Mac app, and deployment evidence.</p>
+        <div class="doc-grid">
+          <a class="doc-card" {{doc:fleet-manager.md}}>
+            <span class="doc-title">Fleet manager</span>
+            <span class="doc-desc">Fleet operation, aliases and sign-in.</span>
+            <span class="doc-file">docs/fleet-manager.md</span>
+          </a>
+          <a class="doc-card" {{doc:native-operator-app.md}}>
+            <span class="doc-title">Native Mac app</span>
+            <span class="doc-desc">The desktop app and how it connects.</span>
+            <span class="doc-file">docs/native-operator-app.md</span>
+          </a>
+          <a class="doc-card" {{doc:operator-console.md}}>
+            <span class="doc-title">Operator console</span>
+            <span class="doc-desc">The read-only browser console and how it shows evidence.</span>
+            <span class="doc-file">docs/operator-console.md</span>
+          </a>
+          <a class="doc-card" {{doc:pilot-acceptance.md}}>
+            <span class="doc-title">Pilot acceptance</span>
+            <span class="doc-desc">Deployment and acceptance evidence.</span>
+            <span class="doc-file">docs/pilot-acceptance.md</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="doc-group" id="repairs" aria-labelledby="repairs-title">
+        <h2 id="repairs-title">Repairs <span class="badge">In development</span></h2>
+        <p class="doc-blurb">Allowlisted, preflighted and always confirmed per host. Never autonomous.</p>
+        <div class="doc-grid">
+          <a class="doc-card" {{doc:repair-contract.md}}>
+            <span class="doc-title">Repair contract</span>
+            <span class="doc-desc">What a repair may do and when.</span>
+            <span class="doc-file">docs/repair-contract.md</span>
+          </a>
+          <a class="doc-card" {{doc:repair-execution.md}}>
+            <span class="doc-title">Repair execution</span>
+            <span class="doc-desc">The synthetic integration library that runs a confirmed repair with a local audit. Not active in the installed monitor.</span>
+            <span class="doc-file">docs/repair-execution.md</span>
+          </a>
+          <a class="doc-card" {{doc:repair-view.md}}>
+            <span class="doc-title">Repair view</span>
+            <span class="doc-desc">Read-only previews of repair plans. No buttons or actions.</span>
+            <span class="doc-file">docs/repair-view.md</span>
+          </a>
+        </div>
+      </section>
+
+      <aside class="callout" aria-labelledby="privacy-title">
+        <svg class="callout-mark" aria-hidden="true"><use href="#mark"/></svg>
+        <div class="callout-text">
+          <h2 id="privacy-title">Privacy is part of the schema.</h2>
+          <p>Prompts, completions, credentials, raw logs, customer identifiers, IP addresses and model names are rejected by the v1 contract. No setting turns that off.</p>
+        </div>
+        <a class="btn btn-ghost" {{doc:contract.md}}>Read the contract</a>
+      </aside>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <p>Built by Nathan Hangen</p>
+      <nav aria-label="Footer">
+        <a href="/docs/">Docs</a>
+        <a {{link:github}}>GitHub</a>
+        <a {{link:x}}>X</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
