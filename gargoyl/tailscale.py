@@ -24,6 +24,7 @@ TAILSCALE_IPV6_SUBNET = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 DEFAULT_TAILSCALE_PATH = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 DEFAULT_TELEMETRY_PORT = 8342
 MAX_HISTORY_PER_NODE = 64
+MAX_SNAPSHOT_BYTES = 256 * 1024
 
 log = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ def get_tailscale_status(executable: str | None = None, timeout: float = 5.0) ->
         else:
             cli_path = shutil.which("tailscale")
     if not cli_path:
+        log.info("tailscale CLI not found")
         return None
 
     try:
@@ -137,10 +139,17 @@ def get_tailscale_status(executable: str | None = None, timeout: float = 5.0) ->
             timeout=timeout,
             check=False,
         )
-        if res.returncode != 0:
-            return None
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        log.warning("tailscale status unavailable: %s", exc)
+        return None
+    if res.returncode != 0:
+        stderr = res.stderr.decode("utf-8", "replace").strip()[:200]
+        log.warning("tailscale status exited %s: %s", res.returncode, stderr)
+        return None
+    try:
         return parse_tailscale_status(res.stdout)
-    except (subprocess.TimeoutExpired, OSError, ValueError):
+    except ValueError as exc:
+        log.warning("tailscale status unparseable: %s", exc)
         return None
 
 
@@ -424,15 +433,26 @@ class FleetTelemetryStore:
         port: int = DEFAULT_TELEMETRY_PORT,
         timeout: float = 3.0,
     ) -> dict | None:
-        """Fetch telemetry snapshot from a peer over Tailscale and ingest it."""
+        """Fetch and ingest a peer snapshot; on failure, record why and keep the last good one."""
+        url = f"http://{peer_ip}:{port}/v1/telemetry"
+        req = urllib.request.Request(url, headers={"User-Agent": "GargoylCollector/1.0"})
         try:
-            url = f"http://{peer_ip}:{port}/v1/telemetry"
-            req = urllib.request.Request(url, headers={"User-Agent": "GargoylCollector/1.0"})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    self.ingest(provider_id, data)
-                    return data
-        except Exception:
+                raw = resp.read(MAX_SNAPSHOT_BYTES + 1)
+        except urllib.error.HTTPError as err:
+            self._record_error(provider_id, "http_error", f"HTTP {err.code}")
             return None
-        return None
+        except (urllib.error.URLError, TimeoutError, OSError) as err:
+            self._record_error(provider_id, "unreachable", str(err))
+            return None
+        if len(raw) > MAX_SNAPSHOT_BYTES:
+            self._record_error(provider_id, "oversized", f">{MAX_SNAPSHOT_BYTES} bytes")
+            return None
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as err:
+            self._record_error(provider_id, "invalid_json", str(err))
+            return None
+        if not self.ingest(provider_id, data):
+            return None
+        return self.get(provider_id)

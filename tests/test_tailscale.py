@@ -1,7 +1,12 @@
 """Tests for Tailscale node discovery, peer telemetry endpoint, and fleet federation."""
 
+import http.server
 import json
+import os
 import re
+import socket
+import stat
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -19,6 +24,7 @@ from gargoyl.tailscale import (
     TailscaleTelemetryServer,
     associate_peers_with_providers,
     discover_peers,
+    get_tailscale_status,
     is_tailscale_ip,
     make_telemetry_snapshot,
     match_peers_to_providers,
@@ -352,6 +358,67 @@ class PeerSnapshotValidationTests(unittest.TestCase):
         self.assertEqual(len(history), 64)
         self.assertEqual(history[0]["running_requests"], 6)
         self.assertEqual(history[-1]["running_requests"], 69)
+
+
+class FailureObservabilityTests(unittest.TestCase):
+    def _free_port(self):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def _serve_raw(self, status, body):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 2)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server.server_port
+
+    def test_poll_failures_are_recorded_and_keep_last_good_snapshot(self):
+        store = FleetTelemetryStore()
+        store.ingest("prov-a", make_telemetry_snapshot({"hostname": "peer-a"}, daemon_state="running", now=NOW))
+        cases = [
+            (self._free_port(), "unreachable"),
+            (self._serve_raw(403, b"{}"), "http_error"),
+            (self._serve_raw(200, b"not json"), "invalid_json"),
+            (self._serve_raw(200, b'{"daemon_state": "x"}'), "invalid_snapshot"),
+        ]
+        for port, kind in cases:
+            with self.assertLogs("gargoyl.tailscale", level="WARNING"):
+                self.assertIsNone(store.poll_peer("127.0.0.1", "prov-a", port=port, timeout=2))
+            self.assertEqual(store.last_error("prov-a")["kind"], kind)
+            self.assertEqual(store.get("prov-a")["daemon_state"]["value"], "running")
+
+    def _fake_cli(self, script):
+        directory = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        path = os.path.join(directory, "tailscale")
+        with open(path, "w") as fh:
+            fh.write("#!/bin/sh\n" + script + "\n")
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        return path
+
+    def test_tailscale_status_failures_are_logged_with_reason(self):
+        logged_out = self._fake_cli('[ "$1 $2" = "status --json" ] || exit 64; echo "Logged out." >&2; exit 1')
+        with self.assertLogs("gargoyl.tailscale", level="WARNING") as logs:
+            self.assertIsNone(get_tailscale_status(executable=logged_out))
+        self.assertTrue(any("Logged out." in line for line in logs.output))
+        garbage = self._fake_cli('[ "$1 $2" = "status --json" ] || exit 64; echo not-json')
+        with self.assertLogs("gargoyl.tailscale", level="WARNING"):
+            self.assertIsNone(get_tailscale_status(executable=garbage))
+        ok = self._fake_cli('[ "$1 $2" = "status --json" ] || exit 64; echo \'{"Self": {}, "Peer": {}}\'')
+        self.assertEqual(get_tailscale_status(executable=ok)["peers"], [])
 
 
 class MultiNodeFleetFederationTests(unittest.TestCase):
