@@ -58,13 +58,10 @@ def _normalize_node(raw: dict) -> dict | None:
     ipv4 = None
     for ip in raw_ips:
         if isinstance(ip, str):
+            ip = ip.strip()
             ts_ips.append(ip)
-            if ipv4 is None and is_tailscale_ip(ip, allow_loopback=False):
-                try:
-                    if ipaddress.ip_address(ip).version == 4:
-                        ipv4 = ip
-                except ValueError:
-                    pass
+            if ipv4 is None and is_tailscale_ip(ip, allow_loopback=False) and ipaddress.ip_address(ip).version == 4:
+                ipv4 = ip
     return {
         "id": str(raw.get("ID", "")),
         "hostname": str(hostname),
@@ -100,7 +97,6 @@ def parse_tailscale_status(raw_data: str | bytes | dict) -> dict:
             if node is not None:
                 if not node["id"]:
                     node["id"] = str(peer_id)
-                # Filter for macOS peers that are online
                 if node["os"].lower() in {"macos", "darwin"} and node["online"]:
                     peers.append(node)
     elif isinstance(peers_raw, list):
@@ -243,8 +239,6 @@ def make_telemetry_snapshot(
         "throughput": {
             "running_requests": running_requests,
             "tokens_generated": tokens_generated,
-            "requests_total": running_requests,
-            "tokens_total": tokens_generated,
         },
         "memory_headroom_bytes": memory_headroom_bytes,
         "recent_history": list(history_samples or [])[-MAX_HISTORY_PER_NODE:],

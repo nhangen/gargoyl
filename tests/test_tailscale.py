@@ -483,7 +483,6 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
                 gpu_memory_active_gb=gpu_gb,
                 running_requests=reqs,
                 tokens_generated=tokens,
-                history_samples=[{"sample": 1}, {"sample": 2}],
                 now=NOW,
             )
             store.ingest(prov_id, snap)
@@ -507,6 +506,7 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         self.assertIn("deepseek-coder-v2-lite (18.5 GB GPU)", html_federated)
         self.assertIn("qwen2.5-coder-32b (34.0 GB GPU)", html_federated)
         self.assertIn("llama-3.1-70b (42.0 GB GPU)", html_federated)
+        self.assertEqual(html_federated.count("1 rolling sample<"), 3)
         self.assertNotIn("Pre-drained", html_federated)
         self.assertNotIn("remote operator restart", html_federated)
         self.assertEqual(html_federated.count("Telemetry only · no remote control"), 3)
