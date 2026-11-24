@@ -1,7 +1,10 @@
 # gargoyl.dev
 
-Static homepage for Gargoyl. No JavaScript and no third-party requests; the
-display face (Archivo, SIL OFL 1.1) is self-hosted.
+Static homepage for Gargoyl. One third-party request: Google Analytics
+(gtag, property Gargoyl (gargoyl.dev), measurement ID G-1DC6Z83Z0P) plus an
+inline `site_click` event tracker. The display face (Archivo, SIL OFL 1.1)
+is self-hosted, and the site ships no other JavaScript beyond the GA snippet
+and the copy-button/click-tracker inline scripts.
 
 - `links.json`: **the one place for external links** (GitHub, X, pilot sign-up)
 - `src/`: page source. Links are written as `{{link:<name>}}` in `src/index.html`
