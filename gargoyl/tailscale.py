@@ -216,17 +216,17 @@ def associate_peers_with_providers(peers: list[dict], providers: list[dict]) -> 
 
 def make_telemetry_snapshot(
     node_info: dict,
-    daemon_state: str = "running",
+    daemon_state: str | None = None,
     current_model: str | None = None,
     resident_models: list[str] | None = None,
     gpu_memory_active_gb: float | None = None,
-    running_requests: int = 0,
-    tokens_generated: int = 0,
-    memory_headroom_bytes: int = 0,
+    running_requests: int | None = None,
+    tokens_generated: int | None = None,
+    memory_headroom_bytes: int | None = None,
     history_samples: list[dict] | None = None,
     now: str | None = None,
 ) -> dict:
-    """Build a standardized peer telemetry snapshot."""
+    """Build a peer telemetry snapshot; values not observed stay None."""
     at = now or utc_now_iso()
     timestamp(at)
     res_models = list(resident_models) if resident_models else ([] if not current_model else [current_model])
@@ -236,7 +236,7 @@ def make_telemetry_snapshot(
         "node": dict(node_info),
         "daemon_state": {
             "value": daemon_state,
-            "state": "observed",
+            "state": "observed" if daemon_state is not None else "unavailable",
             "source": "host",
             "timestamp": at,
         },
@@ -255,6 +255,64 @@ def make_telemetry_snapshot(
         "memory_headroom_bytes": memory_headroom_bytes,
         "recent_history": list(history_samples or [])[-MAX_HISTORY_PER_NODE:],
         "collected_at": at,
+    }
+
+
+def _optional(value, kinds, field):
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, kinds):
+        raise ValueError(f"invalid {field}")
+    return value
+
+
+def _section(snapshot: dict, name: str) -> dict:
+    value = snapshot.get(name)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"invalid {name}")
+    return value
+
+
+def validate_peer_snapshot(snapshot) -> dict:
+    """Normalize an untrusted peer snapshot; raises ValueError on any malformed field."""
+    if not isinstance(snapshot, dict):
+        raise ValueError("invalid snapshot")
+    node = _section(snapshot, "node")
+    daemon = _section(snapshot, "daemon_state")
+    models = _section(snapshot, "models")
+    throughput = _section(snapshot, "throughput")
+    resident = models.get("resident_models") or []
+    if not isinstance(resident, list) or not all(isinstance(m, str) for m in resident):
+        raise ValueError("invalid resident_models")
+    collected_at = snapshot.get("collected_at")
+    if collected_at is not None:
+        try:
+            timestamp(collected_at)
+        except Exception as exc:
+            raise ValueError("invalid collected_at") from exc
+    daemon_value = _optional(daemon.get("value"), str, "daemon_state.value")
+    return {
+        "node": {
+            "hostname": _optional(node.get("hostname"), str, "node.hostname"),
+            "tailscale_ipv4": _optional(node.get("tailscale_ipv4"), str, "node.tailscale_ipv4"),
+        },
+        "daemon_state": {
+            "value": daemon_value,
+            "state": "observed" if daemon_value is not None else "unavailable",
+        },
+        "models": {
+            "current_model": _optional(models.get("current_model"), str, "models.current_model"),
+            "resident_models": list(resident),
+            "gpu_memory_active_gb": _optional(models.get("gpu_memory_active_gb"), (int, float), "models.gpu_memory_active_gb"),
+        },
+        "throughput": {
+            "running_requests": _optional(throughput.get("running_requests"), int, "throughput.running_requests"),
+            "tokens_generated": _optional(throughput.get("tokens_generated"), int, "throughput.tokens_generated"),
+        },
+        "memory_headroom_bytes": _optional(snapshot.get("memory_headroom_bytes"), int, "memory_headroom_bytes"),
+        "collected_at": collected_at,
     }
 
 
@@ -325,32 +383,41 @@ class TailscaleTelemetryServer(HTTPServer):
 
 
 class FleetTelemetryStore:
-    """Store aggregating real-time peer telemetry and 64-sample rolling history per node."""
+    """Store aggregating validated peer telemetry and 64-sample rolling history per node."""
 
     def __init__(self, max_history: int = MAX_HISTORY_PER_NODE):
         self.max_history = max_history
         self._nodes: dict[str, dict] = {}
         self._history: dict[str, deque] = {}
+        self._errors: dict[str, dict] = {}
 
-    def ingest(self, provider_id: str, telemetry_snapshot: dict):
-        """Ingest snapshot for a provider and append to rolling history."""
-        if not provider_id or not isinstance(telemetry_snapshot, dict):
-            return
-        if provider_id not in self._history:
-            self._history[provider_id] = deque(maxlen=self.max_history)
+    def _record_error(self, provider_id: str, kind: str, detail: str):
+        self._errors[provider_id] = {"at": utc_now_iso(), "kind": kind, "detail": detail}
+        log.warning("peer telemetry for %s rejected: %s (%s)", provider_id, kind, detail)
 
-        sample = {
-            "collected_at": telemetry_snapshot.get("collected_at", utc_now_iso()),
-            "daemon_state": telemetry_snapshot.get("daemon_state", {}).get("value", "unknown"),
-            "current_model": telemetry_snapshot.get("models", {}).get("current_model"),
-            "running_requests": telemetry_snapshot.get("throughput", {}).get("running_requests", 0),
-            "tokens_generated": telemetry_snapshot.get("throughput", {}).get("tokens_generated", 0),
-        }
-        self._history[provider_id].append(sample)
+    def last_error(self, provider_id: str) -> dict | None:
+        return self._errors.get(provider_id)
 
-        data = dict(telemetry_snapshot)
-        data["recent_history"] = list(self._history[provider_id])
+    def ingest(self, provider_id: str, telemetry_snapshot) -> bool:
+        """Validate and store a snapshot; returns False and records the reason when rejected."""
+        if not provider_id:
+            return False
+        try:
+            data = validate_peer_snapshot(telemetry_snapshot)
+        except ValueError as exc:
+            self._record_error(provider_id, "invalid_snapshot", str(exc))
+            return False
+        history = self._history.setdefault(provider_id, deque(maxlen=self.max_history))
+        history.append({
+            "collected_at": data["collected_at"],
+            "daemon_state": data["daemon_state"]["value"],
+            "current_model": data["models"]["current_model"],
+            "running_requests": data["throughput"]["running_requests"],
+            "tokens_generated": data["throughput"]["tokens_generated"],
+        })
         self._nodes[provider_id] = data
+        self._errors.pop(provider_id, None)
+        return True
 
     def get(self, provider_id: str) -> dict | None:
         """Get latest telemetry snapshot with rolling history for a provider."""
@@ -363,10 +430,7 @@ class FleetTelemetryStore:
 
     def as_provider_map(self) -> dict[str, dict]:
         """Return dict of {provider_id: telemetry_snapshot} for all ingested nodes."""
-        result = {}
-        for prov_id in self._nodes:
-            result[prov_id] = self.get(prov_id)
-        return result
+        return {prov_id: self.get(prov_id) for prov_id in self._nodes}
 
     def poll_peer(
         self,

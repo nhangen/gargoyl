@@ -359,18 +359,26 @@ def render_fleet(
                     ),
                 ]
                 if peer_info:
-                    p_node = peer_info.get("node") or {}
+                    def _dict(value):
+                        return value if isinstance(value, dict) else {}
+
+                    def _shown(value):
+                        return "not reported" if value is None else str(value)
+
+                    p_node = _dict(peer_info.get("node"))
                     p_host = p_node.get("hostname") or "unknown"
-                    p_ip = p_node.get("tailscale_ipv4") or p_node.get("tailscale_ip") or "100.x"
-                    d_val = peer_info.get("daemon_state", {}).get("value", "unknown")
-                    models = peer_info.get("models") or {}
+                    p_ip = p_node.get("tailscale_ipv4") or "not reported"
+                    d_val = _dict(peer_info.get("daemon_state")).get("value") or "unknown"
+                    models = _dict(peer_info.get("models"))
                     curr_m = models.get("current_model") or "none"
-                    res_m = ", ".join(models.get("resident_models") or []) or "none"
+                    resident = models.get("resident_models")
+                    res_m = ", ".join(str(m) for m in resident) if isinstance(resident, list) and resident else "none"
                     gpu_mem = models.get("gpu_memory_active_gb")
-                    t_put = peer_info.get("throughput") or {}
-                    reqs = str(t_put.get("running_requests", 0))
-                    tokens = str(t_put.get("tokens_generated", 0))
-                    hist_len = str(len(peer_info.get("recent_history") or []))
+                    t_put = _dict(peer_info.get("throughput"))
+                    reqs = _shown(t_put.get("running_requests"))
+                    tokens = _shown(t_put.get("tokens_generated"))
+                    history_list = peer_info.get("recent_history")
+                    hist_len = str(len(history_list)) if isinstance(history_list, list) else "0"
                     node_facts.extend([
                         ("Tailscale peer", f"{p_host} ({p_ip})"),
                         ("Peer native daemon", d_val),
@@ -448,7 +456,8 @@ def render_fleet(
                     peer_badge = ('<span class="fleet-here">This Mac</span><span class="fleet-sub">' + e(alias)
                                   + " · unique identity match</span>")
                 elif peer_telemetry and row["id"] in peer_telemetry:
-                    peer_h = peer_telemetry[row["id"]].get("node", {}).get("hostname") or "peer"
+                    peer_node = peer_telemetry[row["id"]].get("node")
+                    peer_h = (peer_node.get("hostname") if isinstance(peer_node, dict) else None) or "peer"
                     peer_badge = ('<span class="fleet-here">Tailscale peer</span><span class="fleet-sub">'
                                   + e(peer_h) + " · live telemetry</span>")
                 body += (

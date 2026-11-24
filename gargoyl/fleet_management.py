@@ -63,13 +63,15 @@ def management_projection(inventory, local, evidence, now, local_host_id, previe
             throughput = None
         elif peer_data:
             collection = 'tailscale_peer'
-            d_state = peer_data.get('daemon_state', {})
-            p_state = d_state.get('value', 'running')
-            h_samples = len(peer_data.get('recent_history', []))
+            d_state = peer_data.get('daemon_state')
+            p_state = (d_state.get('value') if isinstance(d_state, dict) else None) or 'unknown'
+            history_list = peer_data.get('recent_history')
+            h_samples = len(history_list) if isinstance(history_list, list) else None
             m_restart = 'unavailable'
-            peer_host = peer_data.get('node', {}).get('hostname')
-            models = peer_data.get('models')
-            throughput = peer_data.get('throughput')
+            node = peer_data.get('node')
+            peer_host = node.get('hostname') if isinstance(node, dict) else None
+            models = peer_data.get('models') if isinstance(peer_data.get('models'), dict) else None
+            throughput = peer_data.get('throughput') if isinstance(peer_data.get('throughput'), dict) else None
         else:
             collection = 'inventory_only'
             p_state = 'unknown'
@@ -157,7 +159,7 @@ def management_html(projection, aliases):
             if curr:
                 model_info = ' · ' + e(curr)
                 if gpu is not None:
-                    model_info += f' ({gpu} GB GPU)'
+                    model_info += ' (' + e(gpu) + ' GB GPU)'
             coverage = 'Tailnet telemetry: ' + e(row['process_state']) + model_info
             sample_count = row.get('history_samples')
             retained = 'Peer history stream'

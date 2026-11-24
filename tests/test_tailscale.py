@@ -203,7 +203,7 @@ class TailscaleEndpointAndFederationTests(unittest.TestCase):
 
     def test_telemetry_snapshot_contents(self):
         snap = make_telemetry_snapshot(
-            node_info={"hostname": "studio32-1", "tailscale_ip": "100.80.1.2"},
+            node_info={"hostname": "studio32-1", "tailscale_ipv4": "100.80.1.2"},
             daemon_state="running",
             current_model="deepseek-coder-v2-lite",
             resident_models=["deepseek-coder-v2-lite", "qwen2.5-coder-7b"],
@@ -224,7 +224,7 @@ class TailscaleEndpointAndFederationTests(unittest.TestCase):
 
     def test_telemetry_server_get_telemetry_and_history(self):
         mock_snapshot = make_telemetry_snapshot(
-            node_info={"hostname": "studio32-1", "tailscale_ip": "100.80.1.2"},
+            node_info={"hostname": "studio32-1", "tailscale_ipv4": "100.80.1.2"},
             daemon_state="running",
             current_model="qwen2.5-coder-7b",
             gpu_memory_active_gb=14.0,
@@ -302,6 +302,49 @@ class TailscaleEndpointAndFederationTests(unittest.TestCase):
         self.assertTrue(any("127.0.0.1" in line for line in logs.output))
 
 
+class PeerSnapshotValidationTests(unittest.TestCase):
+    def test_snapshot_defaults_are_unknown_not_observed(self):
+        snap = make_telemetry_snapshot({"hostname": "peer-a"}, now=NOW)
+        self.assertIsNone(snap["daemon_state"]["value"])
+        self.assertEqual(snap["daemon_state"]["state"], "unavailable")
+        self.assertIsNone(snap["throughput"]["running_requests"])
+        self.assertIsNone(snap["throughput"]["tokens_generated"])
+        self.assertIsNone(snap["memory_headroom_bytes"])
+        self.assertEqual(make_telemetry_snapshot({}, daemon_state="running", now=NOW)["daemon_state"]["state"], "observed")
+
+    def test_ingest_rejects_malformed_snapshots_and_records_reason(self):
+        good = make_telemetry_snapshot({"hostname": "peer-a"}, daemon_state="running", now=NOW)
+        bad_cases = [
+            {"daemon_state": "running"},
+            dict(good, node="peer-a"),
+            dict(good, models={"gpu_memory_active_gb": "<i>18</i>"}),
+            dict(good, models={"gpu_memory_active_gb": True}),
+            dict(good, models={"resident_models": ["ok", 3]}),
+            dict(good, throughput={"running_requests": "3"}),
+            dict(good, collected_at="yesterday"),
+            [],
+        ]
+        for bad in bad_cases:
+            store = FleetTelemetryStore()
+            self.assertFalse(store.ingest("prov-a", bad), bad)
+            self.assertIsNone(store.get("prov-a"))
+            self.assertIn("invalid", store.last_error("prov-a")["kind"])
+        store = FleetTelemetryStore()
+        self.assertTrue(store.ingest("prov-a", good))
+        self.assertTrue(store.ingest("prov-a", {"daemon_state": "x"}) is False)
+        self.assertEqual(store.get("prov-a")["daemon_state"]["value"], "running")
+
+    def test_history_evicts_oldest_samples(self):
+        store = FleetTelemetryStore()
+        for i in range(70):
+            store.ingest("prov-a", make_telemetry_snapshot(
+                {"hostname": "peer-a"}, daemon_state="running", running_requests=i, now=NOW))
+        history = store.get("prov-a")["recent_history"]
+        self.assertEqual(len(history), 64)
+        self.assertEqual(history[0]["running_requests"], 6)
+        self.assertEqual(history[-1]["running_requests"], 69)
+
+
 class MultiNodeFleetFederationTests(unittest.TestCase):
     def setUp(self):
         raw = response()
@@ -339,7 +382,7 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         ]
         for prov_id, host, ip, model, gpu_gb, reqs, tokens in nodes:
             snap = make_telemetry_snapshot(
-                node_info={"hostname": host, "tailscale_ip": ip},
+                node_info={"hostname": host, "tailscale_ipv4": ip},
                 daemon_state="running",
                 current_model=model,
                 resident_models=[model],
@@ -376,10 +419,32 @@ class MultiNodeFleetFederationTests(unittest.TestCase):
         for href in re.findall(r'href="gargoyl-view://([^"/]+)/"', html_federated):
             self.assertTrue(valid_view(href), href)
 
+    def test_missing_peer_fields_render_as_unknown_and_values_are_escaped(self):
+        store = FleetTelemetryStore()
+        store.ingest("prov-studio32-1", make_telemetry_snapshot(
+            {"hostname": "studio32-1"}, current_model="<b>m</b>", gpu_memory_active_gb=2.5, now=NOW))
+        peer_map = store.as_provider_map()
+        html = management_html(management_projection(
+            self.inventory, self.local, self.evidence, NOW, HOST, peer_telemetry=peer_map), {})
+        self.assertIn("Tailnet telemetry: unknown · &lt;b&gt;m&lt;/b&gt; (2.5 GB GPU)", html)
+        self.assertNotIn("<b>m</b>", html)
+        raw = {"prov-studio32-1": {"node": {"hostname": "studio32-1"}, "daemon_state": {"value": "running"},
+                                   "models": {"current_model": "m", "gpu_memory_active_gb": "<i>x</i>"},
+                                   "recent_history": []}}
+        raw_html = management_html(management_projection(
+            self.inventory, self.local, self.evidence, NOW, HOST, peer_telemetry=raw), {})
+        self.assertNotIn("<i>x</i>", raw_html)
+        detail = render_view("fleet-node-" + provider_key("prov-studio32-1"), self.evidence, None,
+                             inventory=self.inventory, local=self.local, local_alias="mbp-2026",
+                             now=NOW, peer_telemetry=peer_map)
+        self.assertIn("studio32-1 (not reported)", detail)
+        self.assertIn("not reported running requests", detail)
+        self.assertNotIn("100.x", detail)
+
     def test_render_fleet_with_peer_telemetry(self):
         store = FleetTelemetryStore()
         snap = make_telemetry_snapshot(
-            node_info={"hostname": "studio32-1", "tailscale_ip": "100.80.1.2"},
+            node_info={"hostname": "studio32-1", "tailscale_ipv4": "100.80.1.2"},
             daemon_state="running",
             current_model="deepseek-coder-v2-lite",
             gpu_memory_active_gb=18.5,
