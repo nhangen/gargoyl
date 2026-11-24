@@ -8,6 +8,7 @@ from pathlib import Path
 from gargoyl.fleet_account import FleetError
 from gargoyl.fleet_state import (
     FleetCache,
+    display_name,
     evidence_state,
     friendly_machine_name,
     normalize_inventory,
@@ -73,13 +74,28 @@ class FleetStateTests(unittest.TestCase):
         raw["providers"][0]["hardware"]["machine_model"] = "Mac13,1"
         value = normalize_inventory(raw, NOW)
         row = value["providers"][0]
-        self.assertEqual(row["name"], "Mac Studio (2022, M1 Max)")
+        # The stored label stays the raw identifier; translation is a display
+        # concern, so cached rows pick up table corrections without a refetch.
+        self.assertEqual(row["name"], "Mac13,1")
         self.assertEqual(row["name_kind"], "hardware_label")
-        # Unknown identifiers keep the raw hardware value, never a guess.
+        self.assertEqual(display_name(row), "Mac Studio (2022, M1 Max)")
         raw["providers"][0]["hardware"]["machine_model"] = "Mac99,9"
-        value = normalize_inventory(raw, NOW)
-        self.assertEqual(value["providers"][0]["name"], "Mac99,9")
-        self.assertEqual(value["providers"][0]["name_kind"], "hardware_label")
+        row = normalize_inventory(raw, NOW)["providers"][0]
+        self.assertEqual(display_name(row), "Mac99,9")
+
+    def test_source_names_win_over_a_translatable_hardware_model(self):
+        for field in ("name", "provider_name"):
+            with self.subTest(field=field):
+                raw = response()
+                del raw["providers"][0]["name"]
+                raw["providers"][0][field] = "Rack Studio"
+                raw["providers"][0]["hardware"]["machine_model"] = "Mac13,1"
+                row = normalize_inventory(raw, NOW)["providers"][0]
+                self.assertEqual(row["name_kind"], "source_name")
+                self.assertEqual(display_name(row), "Rack Studio")
+        self.assertEqual(
+            display_name(dict(name="Mac13,1", name_kind="source_name")), "Mac13,1"
+        )
 
     def test_model_names_match_apple_identification_pages(self):
         # Hand-copied from support.apple.com 102231 (Mac Studio), 102852

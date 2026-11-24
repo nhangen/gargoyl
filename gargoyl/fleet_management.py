@@ -9,6 +9,7 @@ from html import escape
 from gargoyl.fleet_identity import matching_provider
 from gargoyl.fleet_state import (
     account_report_state,
+    display_name,
     heartbeat_state,
     provider_key,
     validate_inventory,
@@ -101,7 +102,7 @@ def management_html(projection, aliases):
         status = _compact_report_value(row['reported_status'])
         version = _compact_report_value(row['version'])
         shortened |= status != row['reported_status'] or version != row['version']
-        label = aliases.get(row['provider_id'], row['source_name'])
+        label = aliases.get(row['provider_id'], display_name(dict(name=row['source_name'], name_kind=row['source_kind'])))
         identity = ('<a href="gargoyl-view://fleet-node-' + row['key'] + '/">' + e(label)
                     + '</a><br><span class="mono">' + e(row['provider_id']) + '</span>')
         if row['provider_id'] in aliases:

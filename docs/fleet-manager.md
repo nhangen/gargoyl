@@ -26,8 +26,9 @@ providers. Low traffic and coordinator warnings never trigger repair.
 name on this Mac. Source labels and IDs remain visible. A hardware model is
 explicitly a hardware label; a missing name falls back to the actual ID.
 Known Apple Darwin model identifiers (`sysctl hw.model`, e.g. `Mac13,1`)
-are displayed with a friendly machine name such as "Mac Studio"; unknown
-identifiers keep the raw hardware value and nothing is invented. The version
+are displayed with the model name Apple prints on its identification pages,
+such as "Mac Studio (2022, M1 Max)"; the raw identifier stays as the source
+label in the provider details, and unknown identifiers keep the raw value. The version
 column is labeled **Darkbloom version** because it is the provider's Darkbloom
 release (e.g. `0.10.17`), not a macOS version. Aliases
 never alter public identity matching, action targets, provider settings or source

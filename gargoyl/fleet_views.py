@@ -9,6 +9,7 @@ from gargoyl.dashboard.theme import PAGE_END, page_start
 from gargoyl.fleet_identity import matching_provider
 from gargoyl.fleet_state import (
     TTL,
+    display_name,
     evidence_state,
     provider_key,
     timestamp,
@@ -322,7 +323,7 @@ def render_fleet(
                 report, heartbeat = evidence_state(inventory, row, now)
                 body += (
                     "<h3>"
-                    + e(aliases.get(row["id"], row["name"]))
+                    + e(aliases.get(row["id"], display_name(row)))
                     + '</h3><dl class="facts">'
                 )
                 for label, value in [
@@ -397,7 +398,7 @@ def render_fleet(
             if rows:
                 body += ('<p class="fleet-summary">' + (" · ".join(noted) if noted
                          else "Every returned record has a reported status and a recent heartbeat.") + "</p>")
-            labels = [aliases.get(r["id"], r["name"]) for r in rows]
+            labels = [aliases.get(r["id"], display_name(r)) for r in rows]
             duplicated = {label for label in labels if labels.count(label) > 1}
             body += (
                 '<p class="fleet-scroll-hint">Scroll the table sideways to see all evidence.</p>'
@@ -407,7 +408,7 @@ def render_fleet(
             )
             for row in shown:
                 report, heartbeat = states[row["id"]]
-                label = aliases.get(row["id"], row["name"])
+                label = aliases.get(row["id"], display_name(row))
                 kind = LABEL_KINDS[row["name_kind"]]
                 source = (
                     "Local alias · " + kind.lower() + " “" + row["name"] + "”"

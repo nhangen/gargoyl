@@ -171,6 +171,17 @@ def friendly_machine_name(value):
     return APPLE_MODEL_NAMES.get(value)
 
 
+def display_name(row):
+    """Return the label to show for a provider row.
+
+    Rows store the raw source or hardware label so provenance stays exact and
+    cached rows pick up table corrections; translation happens only here.
+    """
+    if row["name_kind"] == "hardware_label":
+        return friendly_machine_name(row["name"]) or row["name"]
+    return row["name"]
+
+
 def normalize_inventory(value, fetched_at):
     timestamp(fetched_at)
     if (
@@ -190,10 +201,7 @@ def normalize_inventory(value, fetched_at):
         seen.add(identity)
         hardware = raw.get("hardware") if type(raw.get("hardware")) is dict else {}
         name = text(raw.get("name")) or text(raw.get("provider_name"))
-        raw_model = text(hardware.get("machine_model"))
-        # A known Apple Darwin identifier becomes a friendly machine name;
-        # unknown identifiers and non-Apple labels keep the raw hardware value.
-        label = name or friendly_machine_name(raw_model) or raw_model
+        label = name or text(hardware.get("machine_model"))
         label_kind = (
             "source_name" if name else ("hardware_label" if label else "provider_id")
         )
