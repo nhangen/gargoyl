@@ -381,6 +381,16 @@ class FleetLayoutTests(unittest.TestCase):
         self.assertIn("unknown · heartbeat time is ahead of this Mac’s clock", page)
         self.assertEqual(page.count("unknown · no usable heartbeat time"), 1)
 
+    def test_word_guide_matches_the_report_state_classifier(self):
+        page = self.page()
+        self.assertIn("<em>current</em> — the account read is at most 2 min old, the session is connected "
+                      "and the account reader is running", page)
+        self.assertIn("<em>stale</em> — any other read: older than that, disconnected, or the reader stopped", page)
+        self.assertIn("<em>unknown</em> — the read time is ahead of this Mac’s clock", page)
+        self.assertIn("<em>This Mac</em> is the only row with direct local observations", page)
+        self.assertNotIn("no fresh read, so the value stays unknown", page)
+        self.assertNotIn(" s) and the session", page)
+
     def test_inventory_table_keeps_the_scroll_container_native_layout_measures(self):
         # The compiled native self-test measures .fleet-inventory inside its .scroll wrapper.
         self.assertIn('<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'

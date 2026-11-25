@@ -179,10 +179,13 @@ def render_fleet(
         '<p class="muted"><strong>Word guide:</strong> <em>coordinator report</em> — status and heartbeat time as reported by your '
         "Darkbloom account for a remote provider; not an independent check of that machine. <em>Heartbeat</em> — the last "
         "time the account reported the provider active; <em>recent</em> means within " + str(TTL // 60) + " minutes of now, "
-        "<em>older</em> means older than that (age shown beside it) and <em>unknown</em> means no usable heartbeat time. "
-        "<em>Current</em> — the account read is fresh (≤ " + str(TTL) + " s) and the session is connected; <em>stale</em> — "
-        "that read is older, so it is shown but no longer fresh; <em>unknown</em> — no fresh read, so the value stays unknown. "
+        "<em>older</em> means older than that (age shown beside it) and <em>unknown</em> means no usable heartbeat time or "
+        "one ahead of this Mac’s clock. Report: <em>current</em> — the account read is at most " + str(TTL // 60) + " min old, "
+        "the session is connected and the account reader is running; <em>stale</em> — any other read: older than that, "
+        "disconnected, or the reader stopped; <em>unknown</em> — the read time is ahead of this Mac’s clock, so its "
+        "freshness cannot be judged. "
         "A <em>provider ID</em> is the opaque identifier your account assigns to a machine; it is not a host name. "
+        "<em>This Mac</em> is the only row with direct local observations; other rows carry coordinator reports only. "
         "Providers outside your account reports are not listed here; see <a href=\"gargoyl-view://evidence/\">Local evidence</a> "
         "for directly observed local hosts, including network hosts outside the account reports.</p>"
     )

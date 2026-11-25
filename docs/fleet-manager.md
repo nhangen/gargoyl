@@ -14,9 +14,12 @@ provider ID. No production view contains fixture fleet entries.
   (reported status, last heartbeat time). It is account-side reporting, not an
   independent observation of that remote machine.
 - **Heartbeat** — `recent` = within 2 minutes of now; `older` = older than that
-  (the age is shown beside it); `unknown` = no usable heartbeat time.
-- **Report freshness** — `current` = account read within 2 minutes and connected;
-  `stale` = an older read, shown but not fresh; `unknown` = no fresh read.
+  (the age is shown beside it); `unknown` = no usable heartbeat time, or one ahead
+  of this Mac's clock.
+- **Report freshness** — `current` = account read at most 2 minutes old, session
+  connected, and the account reader running; `stale` = any other read (older,
+  disconnected, or reader stopped); `unknown` = the read time is ahead of this
+  Mac's clock, so its freshness cannot be judged.
 - **Provider ID** — the opaque identifier your account assigns to a machine; it
   is not a host name or a real machine name.
 - **This Mac** — the only row with a verified unique-identity collector
