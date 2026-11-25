@@ -88,8 +88,8 @@ interval and port. Use a private user-owned service file and a trusted local sou
 No environment variables or credentials are required. A macOS LaunchAgent may use
 `ProgramArguments` for that vector, `RunAtLoad` and `KeepAlive` only after an explicit
 choice to enable login persistence; remove/unload it to disable persistence.
-Gargoyl never loads, enables or starts a service. Saving permissions in the native
-app rewrites only Gargoyl's own `dev.gargoyl.monitor.plist` arguments (with
+Saving permissions in the native app never loads, enables or starts a service; it
+rewrites only Gargoyl's own `dev.gargoyl.monitor.plist` arguments (with
 `RunAtLoad` and `KeepAlive` off); see `docs/pilot-configuration.md`. Do not add OS grants or change
 security settings without separate approval. Foreground start/stop/status is fully
 implemented; no login/boot service is running as a result of installation.
