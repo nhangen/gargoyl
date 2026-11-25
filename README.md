@@ -39,7 +39,7 @@ See [fleet operation, aliases and sign-in](docs/fleet-manager.md) and
   process; it is disabled on the installed pilot. See
   [deployment and acceptance evidence](docs/pilot-acceptance.md).
 - Repairs are allowlisted, preflighted, target-specific, and never autonomous.
-- The pilot does not download or switch models, rotate credentials, or perform destructive cleanup. Its only configuration write is the per-capability Permissions & Activation flow, which records your explicit grants and the matching monitor flags.
+- The pilot does not download or switch models, rewrite configuration, rotate credentials, or perform destructive cleanup.
 
 ## Roadmap
 
