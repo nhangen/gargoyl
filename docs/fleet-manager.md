@@ -8,6 +8,21 @@ Tailscale peer telemetry library exists (`docs/tailscale-telemetry.md`) but isn'
 wired into the app yet. The internal pilot UUID is never substituted for a Darkbloom
 provider ID. No production view contains fixture fleet entries.
 
+## Word guide
+
+- **Coordinator report** — what your Darkbloom account says about each provider
+  (reported status, last heartbeat time). It is account-side reporting, not an
+  independent observation of that remote machine.
+- **Heartbeat** — `recent` = within 2 minutes of now; `older` = older than that
+  (the age is shown beside it); `unknown` = no usable heartbeat time.
+- **Report freshness** — `current` = account read within 2 minutes and connected;
+  `stale` = an older read, shown but not fresh; `unknown` = no fresh read.
+- **Provider ID** — the opaque identifier your account assigns to a machine; it
+  is not a host name or a real machine name.
+- **This Mac** — the only row with a verified unique-identity collector
+  association; direct local observations appear here, while other rows carry
+  coordinator reports only.
+
 ## Graphical operation
 
 Choose **Account → Connect fleet…**, review the read-only scope and optional Remember
