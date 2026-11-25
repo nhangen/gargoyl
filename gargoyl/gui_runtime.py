@@ -394,8 +394,11 @@ def set_grants(*, stream, home=None, python=None, timeout=90):
     policy = save_pilot_grants(home=home, python=python, grants=grants)
     try:
         update_monitor_plist(home=home, policy=policy)
-    except Exception:
-        write_pilot_payload(home=home, payload=previous)
+    except BaseException:
+        try:
+            write_pilot_payload(home=home, payload=previous)
+        except BaseException:
+            raise ValueError("grant rollback unavailable") from None
         raise ValueError("monitor plist unavailable") from None
     return activation_state(home=home, python=python)
 
@@ -617,7 +620,10 @@ def main():
             from gargoyl.fleet_state import FleetCache
             if not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode) or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode):
                 raise ValueError("private pipes required")
-            if not load_pilot_configuration(home=owner_home()).require_local().permits("account_read_only"):
+            policy = load_pilot_configuration(home=owner_home())
+            # Account sessions never depended on the pilot identity; only a
+            # recorded policy is bound to this owner and host before it gates.
+            if not (policy.require_local() if policy.recorded else policy).permits("account_read_only"):
                 raise ValueError("account permission not granted")
             restored = None
             duration = PERSISTENT_SESSION_SECONDS if mode == "fleet-session-remember" else SESSION_SECONDS
@@ -732,6 +738,7 @@ def main():
             "grant consent unavailable": "Permissions not saved: the confirmation did not match the selected permissions. Nothing changed.",
             "grant request unavailable": "Permissions not saved: the request was malformed. Nothing changed.",
             "monitor plist unavailable": "Permissions not saved: the monitor configuration could not be updated, so the previous permissions were restored.",
+            "grant rollback unavailable": "Permissions may be partly saved: the monitor configuration could not be updated and the previous permissions could not be restored. Open Permissions & Activation… to check the current state.",
         }
         if mode == "reconcile":
             explanation = reconciliation_reasons.get(str(error))
@@ -740,6 +747,8 @@ def main():
                 str(error),
                 "Permissions not saved: the pilot configuration could not be read or written. Nothing changed.",
             )
+        elif mode in {"fleet-session", "fleet-session-remember", "fleet-restore"} and str(error) == "pilot configuration unavailable":
+            explanation = "Account connection unavailable: the saved permissions could not be read for this owner and Mac. Nothing was connected."
         else:
             explanation = grant_reasons.get(str(error))
         emit(

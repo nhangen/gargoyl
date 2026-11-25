@@ -471,7 +471,7 @@ class PilotConfigurationTests(unittest.TestCase):
         self.assertEqual(agent.read_bytes(), foreign)
         self.assertEqual(self.path.read_bytes(), before)
 
-    def run_main(self, mode, payload=b''):
+    def run_main(self, mode, payload=b'', nodename='synthetic-local'):
         from gargoyl.gui_runtime import main as gui_main
         in_r, in_w = os.pipe()
         out_r, out_w = os.pipe()
@@ -482,7 +482,7 @@ class PilotConfigurationTests(unittest.TestCase):
         with patch('gargoyl.gui_runtime.owner_home', return_value=self.home), \
              patch('gargoyl.gui_runtime.console_owner', return_value=True), \
              patch('sys.executable', self.python), \
-             patch('os.uname', return_value=Mock(nodename='synthetic-local')), \
+             patch('os.uname', return_value=Mock(nodename=nodename)), \
              patch('sys.argv', ['gui_runtime.py', mode]), \
              patch('sys.stdin', stdin), patch('sys.stdout', stdout):
             code = gui_main()
@@ -523,3 +523,22 @@ class PilotConfigurationTests(unittest.TestCase):
                     self.assertEqual(code, 1)
                     self.assertIn('account read-only permission is not granted', events[-1]['text'])
         session.assert_not_called()
+
+    def test_unrecorded_account_sessions_do_not_require_the_pilot_identity(self):
+        with patch('gargoyl.fleet_session.run_session') as session, \
+             patch('gargoyl.fleet_state.FleetCache'):
+            code, events = self.run_main('fleet-session', nodename='another-mac.local')
+        session.assert_called_once()
+        self.recorded(('account_read_only',))
+        with patch('gargoyl.fleet_session.run_session') as session, \
+             patch('gargoyl.fleet_state.FleetCache'):
+            code, events = self.run_main('fleet-session', nodename='another-mac.local')
+        session.assert_not_called()
+        self.assertIn('could not be read for this owner and Mac', events[-1]['text'])
+
+    def test_failed_rollback_reports_partial_state(self):
+        self.write()
+        with patch('gargoyl.gui_runtime.update_monitor_plist', side_effect=OSError('disk full')), \
+             patch('gargoyl.gui_runtime.write_pilot_payload', side_effect=OSError('disk full')), \
+             self.assertRaisesRegex(ValueError, 'grant rollback unavailable'):
+            self.set_grants((), 'REVOKE ALL')
