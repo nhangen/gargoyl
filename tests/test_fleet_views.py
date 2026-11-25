@@ -370,8 +370,16 @@ class FleetLayoutTests(unittest.TestCase):
 
     def test_older_heartbeat_age_is_measured_from_now(self):
         page = render_view("fleet", None, None, inventory=self.inventory(), now="2026-11-01T03:00:00Z")
-        self.assertIn("older · 3 h ago", page)
+        self.assertIn("older · 3 h ago (older than 2 min; account-reported, not live)", page)
         self.assertIn("(3 h ago)", page)
+
+    def test_unusable_heartbeat_time_is_named_as_such(self):
+        self.assertIn('<span class="fleet-sub">unknown · no usable heartbeat time</span>', self.page())
+
+    def test_future_heartbeat_names_clock_skew_not_a_missing_time(self):
+        page = render_view("fleet", None, None, inventory=self.inventory(), now="2026-10-31T23:55:00Z")
+        self.assertIn("unknown · heartbeat time is ahead of this Mac’s clock", page)
+        self.assertEqual(page.count("unknown · no usable heartbeat time"), 1)
 
     def test_inventory_table_keeps_the_scroll_container_native_layout_measures(self):
         # The compiled native self-test measures .fleet-inventory inside its .scroll wrapper.

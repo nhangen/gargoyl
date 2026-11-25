@@ -102,14 +102,14 @@ def _heartbeat_cell(row, heartbeat, now):
     if shown is None:
         reason = HEARTBEAT_REASONS.get(row.get("heartbeat_reason"), "Unknown cached evidence")
         return ('<span class="ev ev-unknown">' + e(reason)
-                + '</span><span class="fleet-sub">unknown — no usable heartbeat time</span>')
+                + '</span><span class="fleet-sub">unknown · no usable heartbeat time</span>')
     sub = heartbeat
     # Age is measured against now, the same reference recency uses; recent rows need no age.
     gap = (timestamp(now) - timestamp(row["heartbeat_at"])).total_seconds()
     if heartbeat == "older" and gap >= 0:
         sub += " · " + _age(gap) + " ago (older than " + str(TTL // 60) + " min; account-reported, not live)"
     elif heartbeat == "unknown":
-        sub += " · no usable heartbeat time"
+        sub += " · heartbeat time is ahead of this Mac’s clock"
     return ('<span class="ev ' + GLYPH[heartbeat] + ' mono">' + e(shown) + '</span><span class="fleet-sub">'
             + e(sub) + "</span>")
 
