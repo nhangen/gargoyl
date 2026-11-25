@@ -9,13 +9,16 @@ import hashlib
 import http.client
 import json
 import os
+import plistlib
 import selectors
 import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
+from pathlib import Path
 
 from gargoyl.collector_coordinator_log import validate_log_report
 from gargoyl.dashboard import build_dashboard
@@ -32,7 +35,14 @@ from gargoyl.manual_restart import (
     restart_gate_allows,
 )
 from gargoyl.manual_restart import run_restart as execute_restart
-from gargoyl.pilot_configuration import load_pilot_configuration
+from gargoyl.pilot_configuration import (
+    grant_flags,
+    load_pilot_configuration,
+    read_pilot_payload,
+    save_pilot_grants,
+    validate_grants,
+    write_pilot_payload,
+)
 from gargoyl.telemetry import timestamp, validate_snapshot
 
 HOST = "00000000-0000-4000-8000-000000000001"
@@ -230,8 +240,6 @@ def graphical_reconcile(*, journal, inspect_target, receive, owner=console_owner
     return current
 
 def monitor_configuration():
-    import plistlib
-
     home = owner_home()
     policy = load_pilot_configuration(home=home).require_local()
     executable_stamp(policy.monitor_executable)
@@ -254,11 +262,22 @@ def monitor_configuration():
     finally:
         os.close(fd)
     value = plistlib.loads(payload)
-    expected = [
+    expected = monitor_argv(home, policy)
+    if (
+        value.get("Label") != "dev.gargoyl.monitor"
+        or value.get("ProgramArguments") != expected
+    ):
+        raise ValueError("monitor configuration differs")
+    return path
+
+
+def monitor_argv(home, policy):
+    """The one monitor command line a policy implies; grants map 1:1 to flags."""
+    return [
         policy.monitor_executable,
         "monitor",
         "--input",
-        str(home / ".darkbloom/daemon-state.json"),
+        str(Path(home) / ".darkbloom/daemon-state.json"),
         "--owner-uid",
         str(policy.owner_uid),
         "--host",
@@ -267,16 +286,121 @@ def monitor_configuration():
         "5",
         "--port",
         "8766",
-        "--provider-executable",
-        str(home / ".darkbloom/Darkbloom.app/Contents/MacOS/darkbloom"),
-        "--coordinator-errors",
-    ]
-    if (
-        value.get("Label") != "dev.gargoyl.monitor"
-        or value.get("ProgramArguments") != expected
-    ):
-        raise ValueError("monitor configuration differs")
-    return path
+    ] + list(grant_flags(policy.grants, policy.provider_executable))
+
+
+def update_monitor_plist(*, home, policy):
+    """Write dev.gargoyl.monitor.plist for the configured grants.
+
+    Only Gargoyl's own job is replaced: an existing file must be an owned,
+    single-link, non-writable-by-others plist labelled dev.gargoyl.monitor.
+    """
+    agents_dir = Path(home) / "Library/LaunchAgents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    plist_path = agents_dir / "dev.gargoyl.monitor.plist"
+    try:
+        fd = os.open(plist_path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        fd = None
+    if fd is not None:
+        try:
+            s = os.fstat(fd)
+            if (
+                not stat.S_ISREG(s.st_mode)
+                or s.st_uid != policy.owner_uid
+                or s.st_nlink != 1
+                or s.st_mode & 0o022
+            ):
+                raise ValueError("monitor ownership unavailable")
+            existing = os.read(fd, 65537)
+        finally:
+            os.close(fd)
+        if len(existing) > 65536:
+            raise ValueError("monitor configuration limit")
+        try:
+            label = plistlib.loads(existing).get("Label")
+        except Exception:
+            label = None
+        if label != "dev.gargoyl.monitor":
+            raise ValueError("monitor configuration unavailable")
+    payload = plistlib.dumps(
+        dict(
+            Label="dev.gargoyl.monitor",
+            ProgramArguments=monitor_argv(home, policy),
+            RunAtLoad=False,
+            KeepAlive=False,
+        )
+    )
+    handle, temp = tempfile.mkstemp(
+        prefix="monitor-", suffix=".plist", dir=str(agents_dir)
+    )
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, str(plist_path))
+    except Exception:
+        if os.path.exists(temp):
+            os.unlink(temp)
+        raise
+
+
+def activation_state(*, home=None, python=None):
+    """Return the persisted grants and the exact monitor CLI line they imply.
+
+    ``recorded`` is false until the owner saves a grant set; until then the
+    approved pilot defaults apply and ``permits`` lists what they allow.
+    """
+    home = home or owner_home()
+    policy = load_pilot_configuration(home=home, python=python).require_local()
+    command = monitor_argv(home, policy)
+    return dict(
+        kind="activation",
+        grants=list(policy.grants),
+        recorded=policy.recorded,
+        permits=[
+            name
+            for name in ("provider_executable", "operator_tools", "restart", "account_read_only")
+            if policy.permits(name)
+        ],
+        command=command,
+        line=" ".join(command),
+    )
+
+
+def set_grants(*, stream, home=None, python=None, timeout=90):
+    """Persist one explicit per-capability grant set after a typed confirmation.
+
+    Each capability is an independent, explicit choice: the typed phrase must
+    name the exact grant set being stored. Revocation is a fresh empty set
+    ("REVOKE ALL"), not a silent drop of any single grant. The policy and the
+    monitor plist change together: a failed plist write restores the prior policy.
+    """
+    home = home or owner_home()
+    request = read_confirmation(stream, timeout=timeout)
+    if type(request) is not dict or set(request) != {"grants", "confirm"}:
+        raise ValueError("grant request unavailable")
+    confirm = request["confirm"]
+    if type(confirm) is not str or type(request["grants"]) is not list:
+        raise ValueError("grant consent unavailable")
+    grants = validate_grants(request["grants"])
+    expected = " ".join(grants) if grants else "REVOKE ALL"
+    if confirm != expected:
+        raise ValueError("grant consent unavailable")
+    python = sys.executable if python is None else python
+    previous = read_pilot_payload(home=home)
+    policy = save_pilot_grants(home=home, python=python, grants=grants)
+    try:
+        update_monitor_plist(home=home, policy=policy)
+    except BaseException:
+        try:
+            write_pilot_payload(home=home, payload=previous)
+        except BaseException:
+            raise ValueError("grant rollback unavailable") from None
+        raise ValueError("monitor plist unavailable") from None
+    return activation_state(home=home, python=python)
 
 
 def control_monitor(action, *, run=subprocess.run, validate=monitor_configuration):
@@ -444,6 +568,18 @@ def main():
             sys.stdout.flush()
         elif mode in {"start-monitor", "stop-monitor"}:
             emit(dict(kind="status", text=control_monitor(mode)))
+        elif mode == "activation":
+            # Read-only: list the persisted grants and the exact CLI line they imply.
+            sys.stdout.write(json.dumps(activation_state()) + "\n")
+            sys.stdout.flush()
+        elif mode == "set-grants":
+            # One explicit per-capability grant set, bound to a typed confirmation.
+            if (
+                not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode)
+                or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode)
+            ):
+                raise ValueError("private pipes required")
+            emit(set_grants(stream=sys.stdin.buffer))
         elif mode == "status":
             record = read_operation(str(owner_home() / ".gargoyl-manual-restart"))
             emit(
@@ -484,6 +620,11 @@ def main():
             from gargoyl.fleet_state import FleetCache
             if not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode) or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode):
                 raise ValueError("private pipes required")
+            policy = load_pilot_configuration(home=owner_home())
+            # Account sessions never depended on the pilot identity; only a
+            # recorded policy is bound to this owner and host before it gates.
+            if not (policy.require_local() if policy.recorded else policy).permits("account_read_only"):
+                raise ValueError("account permission not granted")
             restored = None
             duration = PERSISTENT_SESSION_SECONDS if mode == "fleet-session-remember" else SESSION_SECONDS
             retry_count = 0
@@ -591,7 +732,25 @@ def main():
             "observation_changed": "Provider observation or owner changed. Review again; nothing was recorded by this request.",
             "confirmation_unavailable": "Reconciliation cancelled or confirmation expired. Nothing was recorded.",
         }
-        explanation = reconciliation_reasons.get(str(error)) if mode == "reconcile" else None
+        grant_reasons = {
+            "restart permission not granted": "Manual restart unavailable: restart permission is not granted. Choose Help → Permissions & Activation… to grant it. Nothing was run.",
+            "account permission not granted": "Account connection unavailable: account read-only permission is not granted. Choose Help → Permissions & Activation… to grant it.",
+            "grant consent unavailable": "Permissions not saved: the confirmation did not match the selected permissions. Nothing changed.",
+            "grant request unavailable": "Permissions not saved: the request was malformed. Nothing changed.",
+            "monitor plist unavailable": "Permissions not saved: the monitor configuration could not be updated, so the previous permissions were restored.",
+            "grant rollback unavailable": "Permissions may be partly saved: the monitor configuration could not be updated and the previous permissions could not be restored. Open Permissions & Activation… to check the current state.",
+        }
+        if mode == "reconcile":
+            explanation = reconciliation_reasons.get(str(error))
+        elif mode == "set-grants":
+            explanation = grant_reasons.get(
+                str(error),
+                "Permissions not saved: the pilot configuration could not be read or written. Nothing changed.",
+            )
+        elif mode in {"fleet-session", "fleet-session-remember", "fleet-restore"} and str(error) == "pilot configuration unavailable":
+            explanation = "Account connection unavailable: the saved permissions could not be read for this owner and Mac. Nothing was connected."
+        else:
+            explanation = grant_reasons.get(str(error))
         emit(
             dict(
                 kind="unavailable",

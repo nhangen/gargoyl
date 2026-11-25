@@ -36,11 +36,46 @@ Schema1 has exactly these keys:
 | `monitor_executable` | `gargoyl` beside the selected isolated Python, not an arbitrary command |
 | `versions` | Nonempty map of reviewed version strings to the catalog's recorded build hashes; may only narrow that catalog |
 
+Schema2 has the same keys plus `grants`, written only by the native app's
+Permissions & Activation flow after a typed confirmation:
+
+| Key | Constraint |
+|---|---|
+| `schema` | Integer2 |
+| `grants` | One of the fixed ordered sets of `provider_executable`, `operator_tools`, `restart`, `account_read_only`; a dependent grant requires its prerequisites, and `[]` revokes everything |
+
+Each grant maps1:1 to a monitor flag: `provider_executable` to
+`--provider-executable <path> --coordinator-errors`, `operator_tools` to
+`--operator-tools`, `restart` to `--enable-restart`. `account_read_only` adds no
+flag. Saving changes only `grants`; owner, hostname, telemetry identity and a
+narrowed `versions` carry over unchanged.
+
+### Unrecorded policy and enforcement
+
+With no policy file, or a schema1 file, no grant set has been recorded and the
+approved pilot behavior stays exactly as before: the monitor job carries the
+provider flags, and manual restart and the read-only account remain available
+behind their own confirmations. Once a schema2 file exists, its grants are
+enforced everywhere: every manual restart path (native, `gargoyl tools restart`,
+the operator console and an already-running monitor) refuses without `restart`
+in `installation_preflight`, and every account session mode refuses without
+`account_read_only`. A running monitor keeps the flags it was started with until
+it is stopped and started; the restart refusal applies to it immediately.
+
+### Monitor job writer
+
+Saving grants rewrites `~/Library/LaunchAgents/dev.gargoyl.monitor.plist` with the
+implied argument vector, `RunAtLoad` and `KeepAlive` off. An existing file is
+replaced only when it is an owned, single-link, non-group/world-writable plist
+labelled `dev.gargoyl.monitor`; anything else is refused unchanged. If the plist
+write fails, the previous `pilot.json` is restored, so the policy and the job never
+disagree. Nothing is loaded or started.
+
 The policy binds one local installation. It cannot select another owner, a remote
 hostname, a custom provider/configuration layout, an arbitrary executable or a new
 operation. It does not bootstrap a service, start a provider, change the monitor
-LaunchAgent or bypass native Mac owner confirmation. A mismatching existing
-monitor job is refused, not rewritten. The configured telemetry identity is passed
+LaunchAgent beyond the grants writer above, or bypass native Mac owner confirmation.
+Outside that writer, a mismatching existing monitor job is refused, not rewritten. The configured telemetry identity is passed
 through normalized export and native views; it never replaces an account provider ID.
 
 ## Compatibility approval
@@ -60,4 +95,4 @@ Read-only diagnostic parsing uses the reviewed catalog; the installation policy'
 subset further restricts manual execution. Journal parsing retains the catalog so
 old records remain readable if execution policy narrows.
 
-No config editor, provisioning grant, automatic repair or remote backend is added.
+The only config writer is the per-capability grants flow above. No provisioning grant, automatic repair or remote backend is added.

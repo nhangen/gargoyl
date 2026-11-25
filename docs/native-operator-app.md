@@ -86,8 +86,9 @@ Release preparation can enable native controls with the build option `--enable-n
 this does not grant permissions, authenticate or invoke a restart. It must not be mistaken
 for live repair activation. The current pilot recognizes only UID 501 on MBP-26, the existing
 fixed monitor LaunchAgent/configuration, loopback port 8766 and supported pinned Darkbloom
-versions. It does not install a privileged helper, enroll a machine, create credentials or
-modify the LaunchAgent.
+versions. It does not install a privileged helper, enroll a machine or create credentials.
+The only LaunchAgent change is Help → Permissions & Activation…, which rewrites the monitor
+job's arguments to match the capabilities you grant; see `docs/pilot-configuration.md`.
 
 Compiled fixture tests do not exercise real Touch ID/password prompts or a live
 provider restart. Native visual/OS permission acceptance must be recorded

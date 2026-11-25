@@ -307,7 +307,7 @@ final class Worker {
         #else
         let pathAllowed = (pythonPath != nil) && pythonPath!.hasPrefix(NSHomeDirectory() + "/")
         #endif
-        guard ownerActive(), (["restart", "reconcile", "status", "export", "start-monitor", "stop-monitor", "fleet-session", "fleet-alias-list", "fleet-alias-set", "fleet-session-remember", "fleet-restore"].contains(mode) || (mode.hasPrefix("view-") && readOnlyView(String(mode.dropFirst(5))))),
+        guard ownerActive(), (["restart", "reconcile", "status", "export", "start-monitor", "stop-monitor", "fleet-session", "fleet-alias-list", "fleet-alias-set", "fleet-session-remember", "fleet-restore", "activation", "set-grants"].contains(mode) || (mode.hasPrefix("view-") && readOnlyView(String(mode.dropFirst(5))))),
               let path = pythonPath,
               pathAllowed, path.hasSuffix("/.venv/bin/python") || path.hasSuffix("/bin/python")
         else { throw NSError(domain: "Gargoyl", code: 1) }
@@ -372,6 +372,19 @@ final class Worker {
             try? input.fileHandleForWriting.write(contentsOf:data + Data([10]))
         }
         try? input.fileHandleForWriting.close()
+    }
+    func sendGrants(grants: [String]) {
+        guard mode == "set-grants", !replied else { return }
+        replied = true
+        let confirm = grants.isEmpty ? "REVOKE ALL" : grants.joined(separator: " ")
+        do {
+            let data = try JSONSerialization.data(withJSONObject: ["grants": grants, "confirm": confirm])
+            try input.fileHandleForWriting.write(contentsOf: data + Data([10]))
+            try input.fileHandleForWriting.close()
+        } catch {
+            try? input.fileHandleForWriting.close()
+            process.terminate()
+        }
     }
     func disconnectFleet() {
         guard ["fleet-session", "fleet-session-remember", "fleet-restore"].contains(mode) else { return }
@@ -485,8 +498,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     var accountTitleTimer: Timer?
     var disconnectFleetButton: NSButton!
     var viewPhase = "not started"
+    var currentGrants: [String] = []
+    var activationCommand: String = ""
+    var activationLoaded: Bool = false
+    var grantWorker: Worker?
     #if GARGOYL_NATIVE_TESTS
     var previewOverride:Bool?
+    var grantsOverride:[String]?
     #endif
     var previewOnly: Bool {
         #if GARGOYL_NATIVE_TESTS
@@ -512,6 +530,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         windowMenu.addItem(withTitle:"Zoom",action:#selector(NSWindow.performZoom(_:)),keyEquivalent:"")
         NSApp.windowsMenu = windowMenu
         let helpItem = NSMenuItem(); menu.addItem(helpItem); let helpMenu = NSMenu(title:"Help"); helpItem.submenu = helpMenu
+        let permissionsItem = helpMenu.addItem(withTitle:"Permissions & Activation…",action:#selector(showPermissions),keyEquivalent:""); permissionsItem.target = self
         let diagnostics = helpMenu.addItem(withTitle:"Window diagnostics…",action:#selector(windowDiagnostics),keyEquivalent:""); diagnostics.target = self
         window = NSWindow(contentRect: NSRect(x:0,y:0,width:1180,height:820), styleMask:[.titled,.closable,.miniaturizable,.resizable], backing:.buffered, defer:false)
         window.isReleasedWhenClosed = false
@@ -533,7 +552,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         let account = NSMenu(title:"Account")
         let header = NSMenuItem(title:"Darkbloom account · read-only",action:nil,keyEquivalent:""); header.isEnabled = false
         account.addItem(header)
-        let accountItems: [(String, Selector)?] = [("Connect fleet…",#selector(connectFleet)),("Resume saved sign-in",#selector(resumeSavedFleet)),("Disconnect fleet",#selector(disconnectFleet)),nil,("Forget saved sign-in…",#selector(forgetSavedFleet))]
+        let accountItems: [(String, Selector)?] = [("Connect fleet…",#selector(connectFleet)),("Resume saved sign-in",#selector(resumeSavedFleet)),("Disconnect fleet",#selector(disconnectFleet)),nil,("Permissions & Activation…",#selector(showPermissions)),nil,("Forget saved sign-in…",#selector(forgetSavedFleet))]
         for entry in accountItems {
             guard let entry = entry else { account.addItem(NSMenuItem.separator()); continue }
             let (title, selector) = entry
@@ -575,13 +594,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier:"GargoylLoopbackOnly",encodedContentRuleList:resourceRules) { [weak self] list, _ in
             DispatchQueue.main.async {
                 guard let self = self, let list = list else { self?.show("Dashboard network isolation unavailable. Display remains blocked."); return }
-                self.web.configuration.userContentController.add(list); self.webReady = true; self.viewPhase = "rules ready"; self.refresh(); self.restoreSavedFleetIfEnabled()
+                self.web.configuration.userContentController.add(list); self.webReady = true; self.viewPhase = "rules ready"; self.refresh(); self.checkInitialActivation()
             }
         }
     }
     // Account menu items mirror the hidden state-holder buttons the connection logic maintains.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
+        case #selector(showPermissions): return true
         case #selector(connectFleet): return connectFleetButton?.isEnabled ?? false
         case #selector(disconnectFleet): return disconnectFleetButton?.isEnabled ?? false
         case #selector(forgetSavedFleet): return forgetFleetButton.isEnabled
@@ -636,8 +656,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     // One rule for toolbar items and their overflow-menu copies (which validate as menu items).
     func toolbarActionEnabled(_ action: Selector?) -> Bool {
         switch action {
+        case #selector(showPermissions): return true
         case #selector(startMonitor), #selector(stopMonitor), #selector(editFleetAliases): return !previewOnly
-        case #selector(restartProvider): return restartButton?.isEnabled ?? false
+        case #selector(restartProvider): return (restartButton?.isEnabled ?? false) && hasGrant("restart")
         case #selector(reconcileOperation): return (reconcileButton?.isEnabled ?? false) && !(reconcileButton?.isHidden ?? true)
         default: return true
         }
@@ -785,6 +806,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     @objc func connectFleet() {
         guard !previewOnly, fleetWorker == nil, ownerActive(), window.attachedSheet == nil else { return }
+        if !hasGrant("account_read_only") {
+            show("Account connection unavailable: account read-only permission not granted. Choose Help → Permissions & Activation… to grant.")
+            return
+        }
         let alert=NSAlert(); alert.messageText="Connect your read-only fleet account"
         alert.informativeText="Darkbloom’s account grant can view Macs, summary and earnings; Gargoyl reads only owned-provider metadata. It cannot control providers. You approve the account grant on the official site. Optionally remember this read-only session in this Mac’s encrypted login Keychain, with standard macOS application access controls. No password, provider credential or synchronization is configured. You may see a macOS Keychain access prompt, including after app updates."
         let remember=NSButton(checkboxWithTitle:"Remember this read-only account in login Keychain",target:nil,action:nil)
@@ -894,7 +919,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     func restoreSavedFleetIfEnabled() {
         guard !startupRestoreAttempted else { return }; startupRestoreAttempted=true
-        guard !previewOnly, self.readRemember(), self.fleetOwner(), fleetWorker == nil else { return }
+        guard !previewOnly, hasGrant("account_read_only"), self.readRemember(), self.fleetOwner(), fleetWorker == nil else { return }
         guard !keychainBusy else { return }; keychainBusy=true
         fleetGeneration += 1; let generation=fleetGeneration; let epoch=credentialEpoch
         connectFleetButton.isEnabled=false; disconnectFleetButton.isEnabled=true
@@ -1044,6 +1069,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
     }
     func startManualOperation(_ mode: String) {
         guard ["restart","reconcile"].contains(mode), !previewOnly, restartWorker == nil, ownerActive() else { show("Manual operation unavailable: active owner or an existing operation could not be verified."); return }
+        if mode == "restart" && !hasGrant("restart") {
+            show("Manual restart unavailable: restart permission not granted in pilot configuration. Choose Help → Permissions & Activation… to grant.")
+            return
+        }
         displayView("operation")
         restartButton.isEnabled = false; reconcileButton.isEnabled = false
         manualVerified = false; acceptedOperationID = nil; manualFailure = nil
@@ -1173,6 +1202,330 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigation
         let alert = NSAlert(); alert.messageText = "Native window diagnostics"
         alert.informativeText = "Window: Gargoyl. Minimize enabled: \(window.styleMask.contains(.miniaturizable)). Current miniaturized: \(window.isMiniaturized).\n\n" + windowHistory.events.joined(separator:"\n") + "\n\nRead-only view: \(viewPhase). Rules ready: \(webReady). View: \(viewSelection.selected). Generation: \(viewSelection.generation). Worker active: \(viewWorker != nil). Web size: \(Int(web.frame.width)) × \(Int(web.frame.height)). Document loaded: \(web.title != nil).\n\nEvents are bounded in-memory UI diagnostics only. Closing or minimizing this window does not stop monitoring or Darkbloom."
         alert.addButton(withTitle:"Done"); alert.beginSheetModal(for:window)
+    }
+
+    struct CapabilityStep {
+        let key: String
+        let title: String
+        let summary: String
+        let grantsText: String
+        let refusesText: String
+        let flagText: String
+    }
+
+    static let activationSteps: [CapabilityStep] = [
+        CapabilityStep(
+            key: "provider_executable",
+            title: "Provider Executable Access",
+            summary: "Step 1 of 4 · Native provider diagnostics",
+            grantsText: "Allows Gargoyl to read version information, binary stamps, and owner-local native diagnostics from the local Darkbloom executable.",
+            refusesText: "Does NOT grant background provider control, configuration modifications, or automatic restart. No provider-control fallback, nothing automatic.",
+            flagText: "--provider-executable <path> --coordinator-errors"
+        ),
+        CapabilityStep(
+            key: "operator_tools",
+            title: "Operator Tools",
+            summary: "Step 2 of 4 · Local dashboard diagnostics",
+            grantsText: "Enables private operator tools for local diagnostic checks and exposes read-only operational health evidence on the loopback dashboard.",
+            refusesText: "Does NOT expose private data to external networks; tools stay strictly on your local Mac. Does NOT grant restart or mutation.",
+            flagText: "--operator-tools (requires provider executable access)"
+        ),
+        CapabilityStep(
+            key: "restart",
+            title: "Manual Restart Enablement",
+            summary: "Step 3 of 4 · Confirmed Darkbloom restart",
+            grantsText: "Enables manual, operator-confirmed graceful Darkbloom restart in the console. Requires typed consent phrase, Touch ID / Mac password authentication, and writes to the shared operation journal.",
+            refusesText: "Does NOT enable automatic restart, unattended recovery, or provider-control fallback. Restart is strictly manual and bounded.",
+            flagText: "--enable-restart (requires operator tools)"
+        ),
+        CapabilityStep(
+            key: "account_read_only",
+            title: "Darkbloom Account Read-Only Scope",
+            summary: "Step 4 of 4 · Fleet reading",
+            grantsText: "Enables connecting to your Darkbloom account in read-only mode to view fleet inventory and evidence across your devices.",
+            refusesText: "Refuses write access, token minting, provider modification, or credential persistence without explicit consent. Agreeing to restart does NOT grant account access.",
+            flagText: "Read-only account scope (no background monitor flag)"
+        )
+    ]
+
+    static let grantPrerequisites: [String: [String]] = [
+        "operator_tools": ["provider_executable"],
+        "restart": ["provider_executable", "operator_tools"],
+    ]
+
+    static func missingPrerequisites(step: String, grants: [String]) -> [String] {
+        return (grantPrerequisites[step] ?? []).filter { !grants.contains($0) }
+    }
+
+    static func accumulate(step: String, granted: Bool, into grants: [String]) -> [String] {
+        guard granted, missingPrerequisites(step: step, grants: grants).isEmpty, !grants.contains(step) else { return grants }
+        return grants + [step]
+    }
+
+    func hasGrant(_ grant: String) -> Bool {
+        #if GARGOYL_NATIVE_TESTS
+        if let override = grantsOverride {
+            return override.contains(grant)
+        }
+        #endif
+        return currentGrants.contains(grant)
+    }
+
+    func updateGrantControls() {
+        if previewOnly {
+            restartButton?.isEnabled = false
+            connectFleetButton?.isEnabled = false
+        } else {
+            restartButton?.isEnabled = hasGrant("restart")
+            if fleetWorker == nil {
+                connectFleetButton?.isEnabled = hasGrant("account_read_only")
+            }
+        }
+    }
+
+    func checkInitialActivation() {
+        guard !previewOnly else { return }
+        loadActivationState { [weak self] state in
+            guard let self = self else { return }
+            let completed = UserDefaults.standard.bool(forKey: "GargoylActivationCompleted")
+            if state.loaded && !state.recorded && !completed {
+                self.startActivationFlow()
+            }
+            self.restoreSavedFleetIfEnabled()
+        }
+    }
+
+    struct ActivationState {
+        var loaded = false
+        var recorded = false
+        var permits: [String] = []
+        var line = ""
+        var reason = ""
+    }
+
+    func loadActivationState(completion: ((ActivationState) -> Void)? = nil) {
+        if previewOnly {
+            completion?(ActivationState())
+            return
+        }
+        do {
+            var state = ActivationState()
+            var reader: Worker?
+            reader = try Worker(mode:"activation",event:{ value in
+                if value["kind"] as? String == "activation" {
+                    state.loaded = true
+                    state.recorded = value["recorded"] as? Bool ?? false
+                    state.permits = value["permits"] as? [String] ?? []
+                    state.line = value["line"] as? String ?? ""
+                } else if value["kind"] as? String == "unavailable" {
+                    state.reason = value["text"] as? String ?? ""
+                }
+            },finished:{ [weak self] completed in
+                DispatchQueue.main.async {
+                    withExtendedLifetime(reader) {}
+                    guard let self = self else { return }
+                    self.activationLoaded = state.loaded
+                    self.currentGrants = state.loaded ? state.permits : []
+                    self.activationCommand = state.line
+                    self.updateGrantControls()
+                    completion?(state)
+                }
+            })
+        } catch {
+            var state = ActivationState()
+            state.reason = "Permissions worker could not start: \(error.localizedDescription)"
+            completion?(state)
+        }
+    }
+
+    func applyGrants(_ grants: [String], completion: ((Bool, String) -> Void)? = nil) {
+        guard !previewOnly, grantWorker == nil, ownerActive() else { completion?(false, "Permissions not saved: the active owner could not be verified."); return }
+        do {
+            var saved = ActivationState()
+            let writer = try Worker(mode:"set-grants",event:{ value in
+                if value["kind"] as? String == "activation" {
+                    saved.loaded = true
+                    saved.recorded = value["recorded"] as? Bool ?? false
+                    saved.permits = value["permits"] as? [String] ?? []
+                    saved.line = value["line"] as? String ?? ""
+                } else if value["kind"] as? String == "unavailable" {
+                    saved.reason = value["text"] as? String ?? ""
+                }
+            },finished:{ [weak self] completed in
+                DispatchQueue.main.async {
+                    guard let self = self, self.grantWorker === completed else { return }
+                    self.grantWorker = nil
+                    if saved.loaded {
+                        self.currentGrants = saved.permits
+                        self.activationCommand = saved.line
+                        self.activationLoaded = true
+                        self.updateGrantControls()
+                        UserDefaults.standard.set(true, forKey: "GargoylActivationCompleted")
+                        completion?(true, saved.line)
+                    } else {
+                        completion?(false, saved.reason.isEmpty ? "Permissions not saved: no confirmation arrived from the worker." : saved.reason)
+                    }
+                }
+            })
+            grantWorker = writer
+            writer.sendGrants(grants: grants)
+        } catch {
+            completion?(false, "Permissions not saved: the worker could not start.")
+        }
+    }
+
+    func startActivationFlow() {
+        guard !previewOnly, ownerActive(), window?.attachedSheet == nil else { return }
+        runActivationStep(stepIndex: 0, accumulatedGrants: [])
+    }
+
+    func runActivationStep(stepIndex: Int, accumulatedGrants: [String]) {
+        guard stepIndex < App.activationSteps.count else {
+            showActivationSummary(grants: accumulatedGrants)
+            return
+        }
+        let step = App.activationSteps[stepIndex]
+        let missing = App.missingPrerequisites(step: step.key, grants: accumulatedGrants)
+        let alert = NSAlert()
+        alert.messageText = "\(step.title) (\(step.summary))"
+        var text = "What this grants:\n\(step.grantsText)\n\nWhat this does NOT grant:\n\(step.refusesText)\n\nCLI flag mapping: \(step.flagText)"
+        if !missing.isEmpty {
+            let names = App.activationSteps.filter { missing.contains($0.key) }.map { $0.title }
+            text += "\n\nUnavailable: requires \(names.joined(separator: " and ")), which you skipped. Re-run setup to grant it."
+        }
+        alert.informativeText = text
+        alert.addButton(withTitle: "Grant")
+        alert.addButton(withTitle: "Skip")
+        alert.addButton(withTitle: "Cancel Setup")
+        alert.buttons[0].isEnabled = missing.isEmpty
+
+        let proceed = { [weak self] (grantChosen: Bool) in
+            guard let self = self else { return }
+            let nextGrants = App.accumulate(step: step.key, granted: grantChosen, into: accumulatedGrants)
+            self.runActivationStep(stepIndex: stepIndex + 1, accumulatedGrants: nextGrants)
+        }
+
+        if let w = window {
+            alert.beginSheetModal(for: w) { response in
+                if response == .alertFirstButtonReturn {
+                    proceed(true)
+                } else if response == .alertSecondButtonReturn {
+                    proceed(false)
+                }
+            }
+        } else {
+            let res = alert.runModal()
+            if res == .alertFirstButtonReturn {
+                proceed(true)
+            } else if res == .alertSecondButtonReturn {
+                proceed(false)
+            }
+        }
+    }
+
+    func showActivationSummary(grants: [String]) {
+        let alert = NSAlert()
+        alert.messageText = "Setup Summary: Review Selected Permissions"
+        var desc = "Selected Capabilities:\n"
+        for step in App.activationSteps {
+            let granted = grants.contains(step.key)
+            desc += "• \(step.title): \(granted ? "GRANTED" : "SKIPPED")\n"
+        }
+        desc += "\nThe exact monitor launch command is shown after saving, as written to the monitor configuration."
+        desc += "\n\nConsent remains explicit and unbundled. Agreeing to restart does not imply account access, and unknown state stays unknown."
+        alert.informativeText = desc
+        alert.addButton(withTitle: "Apply & Save")
+        alert.addButton(withTitle: "Re-run Setup")
+        alert.addButton(withTitle: "Cancel")
+        let handleResponse = { [weak self] (response: NSApplication.ModalResponse) in
+            guard let self = self else { return }
+            if response == .alertFirstButtonReturn {
+                self.applyGrants(grants) { success, detail in
+                    if success {
+                        self.show("Permissions saved. The monitor configuration now launches:\n\(detail)\nA running monitor keeps its current flags until you stop and start it; restart and account access are enforced immediately.")
+                    } else {
+                        self.show(detail)
+                    }
+                }
+            } else if response == .alertSecondButtonReturn {
+                self.startActivationFlow()
+            }
+        }
+        if let w = window {
+            alert.beginSheetModal(for: w, completionHandler: handleResponse)
+        } else {
+            handleResponse(alert.runModal())
+        }
+    }
+
+    @objc func showPermissions() {
+        if previewOnly {
+            let alert = NSAlert()
+            alert.messageText = "Read-only Preview"
+            alert.informativeText = "Permission grants and activation are not available in preview bundles. All actions and operator tools remain disabled.\n\nSee docs/operator-tools.md and docs/local-monitor.md."
+            alert.addButton(withTitle: "OK")
+            if let w = window { alert.beginSheetModal(for: w, completionHandler: nil) } else { alert.runModal() }
+            return
+        }
+        guard ownerActive(), window?.attachedSheet == nil else { return }
+        loadActivationState { [weak self] state in
+            guard let self = self else { return }
+            let alert = NSAlert()
+            alert.messageText = "Permissions & Capabilities Audit"
+            var text: String
+            if !state.loaded {
+                text = "Permissions state unavailable. Nothing is shown as granted or revoked because it could not be read.\n\n"
+                text += state.reason.isEmpty ? "The pilot configuration could not be read." : state.reason
+            } else {
+                text = state.recorded ? "Current Grants & Flag Mapping:\n\n" : "No permissions have been reviewed yet. The approved pilot defaults apply until you save a choice.\n\n"
+                for step in App.activationSteps {
+                    let status = state.permits.contains(step.key) ? (state.recorded ? "GRANTED" : "PILOT DEFAULT") : "NOT GRANTED"
+                    text += "• \(step.title): [\(status)]\n  Flag: \(step.flagText)\n\n"
+                }
+                text += "Monitor command line:\n\(state.line)"
+                text += "\n\nEach permission maps 1:1 to monitor flags. Consent is explicit, unbundled, and revokable anytime."
+            }
+            alert.informativeText = text
+            alert.addButton(withTitle: "Change Permissions…")
+            alert.addButton(withTitle: "Revoke All")
+            alert.addButton(withTitle: "Close")
+            let handleChoice = { [weak self] (response: NSApplication.ModalResponse) in
+                guard let self = self else { return }
+                if response == .alertFirstButtonReturn {
+                    self.startActivationFlow()
+                } else if response == .alertSecondButtonReturn {
+                    self.confirmRevocation()
+                }
+            }
+            if let w = self.window {
+                alert.beginSheetModal(for: w, completionHandler: handleChoice)
+            } else {
+                handleChoice(alert.runModal())
+            }
+        }
+    }
+
+    func confirmRevocation() {
+        let alert = NSAlert()
+        alert.messageText = "Revoke All Permissions?"
+        alert.informativeText = "This will revoke all granted capabilities: restart and account access are refused immediately, and the monitor configuration returns to baseline (no provider diagnostics, no operator tools, no restart).\n\nYou can re-grant permissions at any time."
+        alert.addButton(withTitle: "Revoke All")
+        alert.addButton(withTitle: "Cancel")
+        let handleRevoke = { [weak self] (response: NSApplication.ModalResponse) in
+            guard let self = self, response == .alertFirstButtonReturn else { return }
+            self.applyGrants([]) { success, detail in
+                if success {
+                    self.show("All permissions revoked. Restart and account access are refused immediately. The monitor configuration now launches:\n\(detail)\nA running monitor keeps its current flags until you stop and start it.")
+                } else {
+                    self.show(detail)
+                }
+            }
+        }
+        if let w = window {
+            alert.beginSheetModal(for: w, completionHandler: handleRevoke)
+        } else {
+            handleRevoke(alert.runModal())
+        }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         recordWindow("reopen",reopeningVisibleWindows:flag)
@@ -1536,6 +1889,9 @@ if CommandLine.arguments.contains("--self-test") {
     ownerChangedFixture.fleetOwner={ownerPresent}; ownerChangedFixture.readRemember={rememberFlag}; ownerChangedFixture.writeRemember={rememberFlag=$0}
     let expiredRecord=SavedFleetCredential(token:fixtureToken,created:100,expires:200)
     ownerChangedFixture.credentialStore=LoginFleetCredentialStore(open:{ (errSecSuccess,loginFixture) },copy:{ _ in ownerPresent=false; return (errSecSuccess,expiredRecord.encoded()! as CFData) },delete:{ _ in expiredDeletes += 1; return errSecSuccess })
+    let ungrantedRestore=App(); ungrantedRestore.previewOverride=false; ungrantedRestore.connectFleetButton=NSButton(); ungrantedRestore.disconnectFleetButton=NSButton(); ungrantedRestore.fleetOwner={true}; ungrantedRestore.readRemember={true}; ungrantedRestore.grantsOverride=["provider_executable","operator_tools","restart"]
+    ungrantedRestore.restoreSavedFleetIfEnabled(); precondition(!ungrantedRestore.keychainBusy)
+    ownerChangedFixture.grantsOverride=["account_read_only"]
     ownerChangedFixture.restoreSavedFleetIfEnabled(); waitFakeKeychain(ownerChangedFixture)
     precondition(expiredDeletes == 0 && rememberFlag && ownerChangedFixture.connectFleetButton.isEnabled && !ownerChangedFixture.disconnectFleetButton.isEnabled)
     let cancelledRestore=App(); cancelledRestore.previewOverride=false; cancelledRestore.connectFleetButton=NSButton(); cancelledRestore.disconnectFleetButton=NSButton(); cancelledRestore.fleetGeneration=1; cancelledRestore.connectFleetButton.isEnabled=false; cancelledRestore.disconnectFleetButton.isEnabled=true
@@ -1544,7 +1900,7 @@ if CommandLine.arguments.contains("--self-test") {
     let deniedRestore=App(); deniedRestore.previewOverride=false; deniedRestore.connectFleetButton=NSButton(); deniedRestore.disconnectFleetButton=NSButton(); var deniedFlag=true
     deniedRestore.fleetOwner={true}; deniedRestore.readRemember={deniedFlag}; deniedRestore.writeRemember={deniedFlag=$0}
     deniedRestore.credentialStore=LoginFleetCredentialStore(open:{ (errSecUserCanceled,nil) })
-    deniedRestore.restoreSavedFleetIfEnabled(); waitFakeKeychain(deniedRestore)
+    deniedRestore.grantsOverride=["account_read_only"]; deniedRestore.restoreSavedFleetIfEnabled(); waitFakeKeychain(deniedRestore)
     precondition(deniedFlag && deniedRestore.connectFleetButton.isEnabled && !deniedRestore.disconnectFleetButton.isEnabled)
     let previewApp = App(); previewApp.previewOverride = true; previewApp.connectFleetButton = NSButton(); previewApp.disconnectFleetButton = NSButton()
     precondition(previewApp.previewOnly)
@@ -1691,6 +2047,27 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(hiddenEvents.events[0].contains("applicationHidden=true"))
     for _ in 0..<30 { windowEvents.record("reopen",miniaturized:false,visible:true,reopeningVisibleWindows:true) }
     precondition(windowEvents.events.count == 16 && windowEvents.events.last!.hasPrefix("32 "))
+    precondition(App.activationSteps.count == 4)
+    precondition(App.activationSteps.map { $0.key } == ["provider_executable", "operator_tools", "restart", "account_read_only"])
+    precondition(App.accumulate(step: "restart", granted: true, into: []) == [])
+    precondition(App.accumulate(step: "operator_tools", granted: true, into: []) == [])
+    precondition(App.missingPrerequisites(step: "restart", grants: ["provider_executable"]) == ["operator_tools"])
+    var walked: [String] = []
+    for (key, choice) in [("provider_executable", false), ("operator_tools", false), ("restart", true), ("account_read_only", true)] {
+        walked = App.accumulate(step: key, granted: choice, into: walked)
+    }
+    precondition(walked == ["account_read_only"])
+    walked = []
+    for key in ["provider_executable", "operator_tools", "restart", "account_read_only"] {
+        walked = App.accumulate(step: key, granted: true, into: walked)
+    }
+    precondition(walked == ["provider_executable", "operator_tools", "restart", "account_read_only"])
+    let testApp = App()
+    testApp.currentGrants = ["provider_executable", "operator_tools"]
+    precondition(testApp.hasGrant("provider_executable"))
+    precondition(testApp.hasGrant("operator_tools"))
+    precondition(!testApp.hasGrant("restart"))
+    precondition(!testApp.hasGrant("account_read_only"))
     print("Native navigation and authorization-state fixtures passed; no OS authentication requested.")
     exit(0)
 }

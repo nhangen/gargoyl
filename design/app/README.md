@@ -39,6 +39,11 @@ evidence store; it's the target design for `gargoyl.dashboard` and
   evidence and a 60-second expiry. Confirmation is single-use and bound to one
   host and one plan; typing the host prefix is a proposal, not something the
   contract implements.
+- **Consent is explicit, per-capability and unbundled.** No "trust everything"
+  master switch, no silent broadening of a grant. Unknown stays unknown;
+  agreeing to restart does not imply account access, and provider executable
+  access does not grant restart or account privileges. Each capability requires
+  an independent, explicit opt-in choice.
 
 ## Constraints carried from the viewer
 
