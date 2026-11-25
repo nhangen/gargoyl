@@ -168,7 +168,8 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
                  '<p class="muted"><strong>Terms:</strong> the <strong>journal</strong> is the one durable '
                  'record of the last manual restart attempt; the <strong>gate</strong> is the rule that '
                  'blocks a new attempt while a journal record is unresolved; <strong>reconciliation</strong> '
-                 'is a read-only review that records what is now observed without changing the record; '
+                 'is a read-only review of the provider that records what is now observed in the journal, '
+                 'which resolves the record and lets a new confirmed attempt through the gate; '
                  '<strong>unverified</strong> means the attempt’s outcome is not yet proven by observation.</p>')
         if not journal_available:
             body += '<div class="callout warn"><p>Operation record unavailable. Outcome is unknown; this view cannot authorize a retry.</p></div>'

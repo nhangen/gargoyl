@@ -103,6 +103,14 @@ class NativeViewTests(unittest.TestCase):
         self.assertIn('Operation record unavailable', page)
         self.assertNotIn('No manual operation recorded', page)
 
+    def test_operation_terms_appear_in_every_journal_state_and_admit_the_reconcile_write(self):
+        for kwargs in (dict(journal_available=False), dict()):
+            page = render_view('operation', None, None, now=NOW, **kwargs)
+            self.assertIn('<strong>Terms:</strong>', page)
+            self.assertIn('<strong>reconciliation</strong> is a read-only review of the provider', page)
+            self.assertIn('records what is now observed in the journal', page)
+            self.assertNotIn('without changing the record', page)
+
     def test_native_restart_refuses_unresolved_states_before_preflight(self):
         from unittest.mock import Mock
 
