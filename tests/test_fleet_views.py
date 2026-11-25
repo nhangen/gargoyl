@@ -402,6 +402,12 @@ class FleetLayoutTests(unittest.TestCase):
         self.assertEqual(self.page().count("<strong>coordinator report</strong>"), 1)
         self.assertEqual(self.page().count("<em>coordinator report</em>"), 1)
 
+    def test_detail_view_explains_the_provider_id(self):
+        value = self.inventory()
+        detail = "fleet-node-" + provider_key(value["providers"][0]["id"])
+        self.assertIn("opaque account-assigned identifier; not a host name",
+                      render_view(detail, None, None, inventory=value, now=NOW))
+
     def test_inventory_table_keeps_the_scroll_container_native_layout_measures(self):
         # The compiled native self-test measures .fleet-inventory inside its .scroll wrapper.
         self.assertIn('<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'

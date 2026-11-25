@@ -103,6 +103,10 @@ class NativeViewTests(unittest.TestCase):
         self.assertIn('Operation record unavailable', page)
         self.assertNotIn('No manual operation recorded', page)
 
+    def test_unavailable_tools_state_their_enablement_path(self):
+        page = render_view('tools', self.evidence(), None, now=NOW)
+        self.assertEqual(page.count('Enablement path: none by design'), 2)
+
     def test_operation_terms_appear_in_every_journal_state_and_admit_the_reconcile_write(self):
         for kwargs in (dict(journal_available=False), dict()):
             page = render_view('operation', None, None, now=NOW, **kwargs)
