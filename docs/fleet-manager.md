@@ -25,6 +25,9 @@ provider ID. No production view contains fixture fleet entries.
 - **This Mac** — the only row with a verified unique-identity collector
   association; direct local observations appear here, while other rows carry
   coordinator reports only.
+- **Local evidence** — this Mac's own direct observations. Providers outside your
+  account reports are not listed in the fleet view, and other hosts are not
+  observed directly.
 
 ## Graphical operation
 

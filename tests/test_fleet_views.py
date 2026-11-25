@@ -391,6 +391,17 @@ class FleetLayoutTests(unittest.TestCase):
         self.assertNotIn("no fresh read, so the value stays unknown", page)
         self.assertNotIn(" s) and the session", page)
 
+    def test_local_evidence_link_describes_only_this_mac(self):
+        page = self.page()
+        self.assertIn('<a href="gargoyl-view://evidence/">Local evidence</a>', page)
+        self.assertIn("this Mac’s own direct observations", page)
+        self.assertNotIn("network hosts outside", page)
+        self.assertNotIn("(public loopback dashboard)", page)
+
+    def test_coordinator_report_is_defined_once_in_the_head_and_once_in_the_guide(self):
+        self.assertEqual(self.page().count("<strong>coordinator report</strong>"), 1)
+        self.assertEqual(self.page().count("<em>coordinator report</em>"), 1)
+
     def test_inventory_table_keeps_the_scroll_container_native_layout_measures(self):
         # The compiled native self-test measures .fleet-inventory inside its .scroll wrapper.
         self.assertIn('<div class="scroll" tabindex="0" role="region" aria-label="Account provider inventory">'

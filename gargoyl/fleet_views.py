@@ -186,8 +186,8 @@ def render_fleet(
         "freshness cannot be judged. "
         "A <em>provider ID</em> is the opaque identifier your account assigns to a machine; it is not a host name. "
         "<em>This Mac</em> is the only row with direct local observations; other rows carry coordinator reports only. "
-        "Providers outside your account reports are not listed here; see <a href=\"gargoyl-view://evidence/\">Local evidence</a> "
-        "for directly observed local hosts, including network hosts outside the account reports.</p>"
+        "Providers outside your account reports are not listed here. <a href=\"gargoyl-view://evidence/\">Local evidence</a> "
+        "shows this Mac’s own direct observations; other hosts are not observed directly.</p>"
     )
     if not aliases_available:
         body += '<div class="callout"><p>Local aliases unavailable. Actual provider IDs and source labels remain visible.</p></div>'
@@ -512,12 +512,9 @@ def render_fleet(
         '<section id="needs-attention" aria-labelledby="limits-title"><div class="section-head">'
         '<h2 id="limits-title">Coverage and limits</h2></div>'
         '<p class="muted">This screen shows your <strong>owned provider inventory</strong>: the providers your '
-        'Darkbloom account reports. It is different from the <a href="gargoyl-view://evidence/">Local evidence</a> screen '
-        '(public loopback dashboard), which shows direct telemetry from hosts Gargoyl can observe locally, '
-        'including network hosts outside your account reports. The two stay separate: this screen is account-side '
-        'reporting, not independent remote health. A <strong>coordinator report</strong> is the status and heartbeat '
-        'time your Darkbloom account reports for a provider; it is not an independent observation of that remote '
-        'machine. No repair is inferred from these records. Account metadata is private to the Mac app: the public '
+        'Darkbloom account reports. It is different from the <a href="gargoyl-view://evidence/">Local evidence</a> screen, '
+        'which shows this Mac’s own direct observations. The two stay separate: this screen is account-side '
+        'reporting, not independent remote health. No repair is inferred from these records. Account metadata is private to the Mac app: the public '
         'loopback dashboard and existing export remain local-telemetry-only, and fleet reads use no financial, '
         'model-name or provider-control endpoints.</p></section>'
     )
