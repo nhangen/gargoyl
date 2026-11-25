@@ -185,9 +185,10 @@ def render_fleet(
         "disconnected, or the reader stopped; <em>unknown</em> — the read time is ahead of this Mac’s clock, so its "
         "freshness cannot be judged. "
         "A <em>provider ID</em> is the opaque identifier your account assigns to a machine; it is not a host name. "
-        "<em>This Mac</em> is the only row with direct local observations; other rows carry coordinator reports only. "
+        "<em>This Mac</em> is the only row with direct local collector observations; other rows carry coordinator reports, "
+        "plus live telemetry only where a row is marked Tailscale peer. "
         "Providers outside your account reports are not listed here. <a href=\"gargoyl-view://evidence/\">Local evidence</a> "
-        "shows this Mac’s own direct observations; other hosts are not observed directly.</p>"
+        "shows this Mac’s own direct observations.</p>"
     )
     if not aliases_available:
         body += '<div class="callout"><p>Local aliases unavailable. Actual provider IDs and source labels remain visible.</p></div>'

@@ -23,11 +23,11 @@ provider ID. No production view contains fixture fleet entries.
 - **Provider ID** — the opaque identifier your account assigns to a machine; it
   is not a host name or a real machine name.
 - **This Mac** — the only row with a verified unique-identity collector
-  association; direct local observations appear here, while other rows carry
-  coordinator reports only.
+  association and direct local collector observations. Other rows carry
+  coordinator reports, plus live telemetry only where a row is marked Tailscale
+  peer.
 - **Local evidence** — this Mac's own direct observations. Providers outside your
-  account reports are not listed in the fleet view, and other hosts are not
-  observed directly.
+  account reports are not listed in the fleet view.
 
 ## Graphical operation
 

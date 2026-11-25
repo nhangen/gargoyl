@@ -387,7 +387,8 @@ class FleetLayoutTests(unittest.TestCase):
                       "and the account reader is running", page)
         self.assertIn("<em>stale</em> — any other read: older than that, disconnected, or the reader stopped", page)
         self.assertIn("<em>unknown</em> — the read time is ahead of this Mac’s clock", page)
-        self.assertIn("<em>This Mac</em> is the only row with direct local observations", page)
+        self.assertIn("<em>This Mac</em> is the only row with direct local collector observations", page)
+        self.assertIn("plus live telemetry only where a row is marked Tailscale peer", page)
         self.assertNotIn("no fresh read, so the value stays unknown", page)
         self.assertNotIn(" s) and the session", page)
 
