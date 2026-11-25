@@ -36,6 +36,12 @@ class RestorePipeTests(unittest.TestCase):
             stack.enter_context(
                 patch("gargoyl.gui_runtime.owner_home", return_value=Path("/owner"))
             )
+            stack.enter_context(
+                patch(
+                    "gargoyl.gui_runtime.load_pilot_configuration",
+                    return_value=Mock(require_local=lambda: Mock(permits=lambda name: name == "account_read_only")),
+                )
+            )
             stack.enter_context(patch("gargoyl.fleet_session.run_session", run))
             result = main()
         with os.fdopen(outgoing, "rb") as reader:

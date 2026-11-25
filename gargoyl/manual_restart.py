@@ -431,6 +431,8 @@ def installation_preflight(executable, source, uid):
 
     home = owner_home()
     policy = load_pilot_configuration(home=home).require_local(uid)
+    if not policy.permits("restart"):
+        raise ValueError("restart permission not granted")
     _require(sys.platform == "darwin")
     _require(
         executable == policy.provider_executable
