@@ -101,12 +101,15 @@ def _heartbeat_cell(row, heartbeat, now):
     shown = compact_time(row["heartbeat_at"])
     if shown is None:
         reason = HEARTBEAT_REASONS.get(row.get("heartbeat_reason"), "Unknown cached evidence")
-        return '<span class="ev ev-unknown">' + e(reason) + '</span><span class="fleet-sub">unknown</span>'
+        return ('<span class="ev ev-unknown">' + e(reason)
+                + '</span><span class="fleet-sub">unknown — no usable heartbeat time</span>')
     sub = heartbeat
     # Age is measured against now, the same reference recency uses; recent rows need no age.
     gap = (timestamp(now) - timestamp(row["heartbeat_at"])).total_seconds()
     if heartbeat == "older" and gap >= 0:
-        sub += " · " + _age(gap) + " ago"
+        sub += " · " + _age(gap) + " ago (older than " + str(TTL // 60) + " min; account-reported, not live)"
+    elif heartbeat == "unknown":
+        sub += " · no usable heartbeat time"
     return ('<span class="ev ' + GLYPH[heartbeat] + ' mono">' + e(shown) + '</span><span class="fleet-sub">'
             + e(sub) + "</span>")
 
@@ -157,16 +160,31 @@ def render_fleet(
         validate_inventory(inventory)
     matched = matching_provider(inventory, local, now, lifecycle=lifecycle)
     body = (
-        '<div class="page-head"><div><h1>Your fleet</h1><p>Provider records reported by your Darkbloom '
-        "account. Coordinator reports and this Mac’s own observations stay separate. Nothing here controls "
-        "remote machines or repairs anything.</p></div>"
+        '<div class="page-head"><div><h1>Your fleet</h1>'
+        "<p>Provider records reported by your Darkbloom account. A <strong>coordinator report</strong> is "
+        "what your Darkbloom account says about each provider (reported status, last heartbeat time); it is "
+        "account-side reporting, not an independent observation of that remote machine. This Mac’s own "
+        "observations stay separate below. Nothing here controls remote machines or repairs anything.</p>"
+        "</div>"
         '<div class="fleet-keys" role="group" aria-label="Legend">'
-        '<div><b>Report</b><span class="ev ev-observed">current</span><span class="ev ev-stale">stale</span>'
+        '<div><b>Report</b>'
+        '<span class="ev ev-observed">current</span><span class="ev ev-stale">stale</span>'
         '<span class="ev ev-unknown">unknown</span></div>'
         '<div><b>Heartbeat</b><span class="ev ev-observed">recent (≤ ' + str(TTL // 60) + ' min)</span>'
         '<span class="ev ev-stale">older</span><span class="ev ev-unknown">unknown</span></div>'
         '<div><b>Value</b><span><span class="fleet-adv-key">outlined</span> = adverse reported value</span></div>'
         "</div></div>"
+    )
+    body += (
+        '<p class="muted"><strong>Word guide:</strong> <em>coordinator report</em> — status and heartbeat time as reported by your '
+        "Darkbloom account for a remote provider; not an independent check of that machine. <em>Heartbeat</em> — the last "
+        "time the account reported the provider active; <em>recent</em> means within " + str(TTL // 60) + " minutes of now, "
+        "<em>older</em> means older than that (age shown beside it) and <em>unknown</em> means no usable heartbeat time. "
+        "<em>Current</em> — the account read is fresh (≤ " + str(TTL) + " s) and the session is connected; <em>stale</em> — "
+        "that read is older, so it is shown but no longer fresh; <em>unknown</em> — no fresh read, so the value stays unknown. "
+        "A <em>provider ID</em> is the opaque identifier your account assigns to a machine; it is not a host name. "
+        "Providers outside your account reports are not listed here; see <a href=\"gargoyl-view://evidence/\">Local evidence</a> "
+        "for directly observed local hosts, including network hosts outside the account reports.</p>"
     )
     if not aliases_available:
         body += '<div class="callout"><p>Local aliases unavailable. Actual provider IDs and source labels remain visible.</p></div>'
@@ -330,6 +348,7 @@ def render_fleet(
                 peer_info = peer_telemetry.get(row["id"]) if peer_telemetry else None
                 node_facts = [
                     ("Actual provider ID", row["id"]),
+                    ("Provider ID note", "opaque account-assigned identifier; not a host name or a real machine name"),
                     ("Local friendly alias", aliases.get(row["id"], "not set")),
                     ("Source label", row["name"]),
                     ("Label source", LABEL_KINDS[row["name_kind"]]),
@@ -463,7 +482,8 @@ def render_fleet(
                                   + e(peer_h) + " · live telemetry</span>")
                 body += (
                     '<tr><th scope="row"><a href="gargoyl-view://fleet-node-' + provider_key(row["id"]) + '/">'
-                    + e(label) + '</a><span class="fleet-id">' + e(row["id"]) + '</span><span class="fleet-src">'
+                    + e(label) + '</a><span class="fleet-id">' + e(row["id"])
+                    + '</span><span class="fleet-src">'
                     + e(source) + "</span>"
                     + ('<span class="fleet-dup">Same label as another record · use Aliases…</span>'
                        if label in duplicated else "")
@@ -487,10 +507,16 @@ def render_fleet(
     body += local_body
     body += (
         '<section id="needs-attention" aria-labelledby="limits-title"><div class="section-head">'
-        '<h2 id="limits-title">Coverage and limits</h2></div><p class="muted">Missing or older reports need fresh evidence; no health is inferred from them. Account status '
-        "is a coordinator report, not independent remote health. No repair is inferred. Account metadata is private "
-        "to the Mac app: the public loopback dashboard and existing export remain local-telemetry-only, and fleet "
-        "reads use no financial, model-name or provider-control endpoints.</p></section>"
+        '<h2 id="limits-title">Coverage and limits</h2></div>'
+        '<p class="muted">This screen shows your <strong>owned provider inventory</strong>: the providers your '
+        'Darkbloom account reports. It is different from the <a href="gargoyl-view://evidence/">Local evidence</a> screen '
+        '(public loopback dashboard), which shows direct telemetry from hosts Gargoyl can observe locally, '
+        'including network hosts outside your account reports. The two stay separate: this screen is account-side '
+        'reporting, not independent remote health. A <strong>coordinator report</strong> is the status and heartbeat '
+        'time your Darkbloom account reports for a provider; it is not an independent observation of that remote '
+        'machine. No repair is inferred from these records. Account metadata is private to the Mac app: the public '
+        'loopback dashboard and existing export remain local-telemetry-only, and fleet reads use no financial, '
+        'model-name or provider-control endpoints.</p></section>'
     )
     html = (
         page_start(
