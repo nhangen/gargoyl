@@ -1,5 +1,6 @@
 """Only temporary owner-local policy/installation fixtures
 no live actions."""
+import io
 import json
 import os
 import plistlib
@@ -9,8 +10,15 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from gargoyl.darkbloom_compatibility import SUPPORTED_VERSIONS
-from gargoyl.gui_runtime import monitor_configuration
-from gargoyl.pilot_configuration import defaults, load_pilot_configuration
+from gargoyl.gui_runtime import monitor_configuration, set_grants
+from gargoyl.pilot_configuration import (
+    SCHEMA,
+    defaults,
+    grant_flags,
+    load_pilot_configuration,
+    save_pilot_grants,
+    validate_grants,
+)
 
 
 class PilotConfigurationTests(unittest.TestCase):
@@ -273,3 +281,141 @@ class PilotConfigurationTests(unittest.TestCase):
         consent.assert_called_once_with('Type RECONCILE synthetic-local to record: ')
         reconcile.assert_not_called()
         self.assertEqual(read_operation(journal_path)['state'], 'unknown')
+
+    def test_grant_flags_and_validation_sequence(self):
+        self.assertEqual(validate_grants(None), ())
+        self.assertEqual(validate_grants([]), ())
+        self.assertEqual(validate_grants(['provider_executable']), ('provider_executable',))
+        self.assertEqual(
+            validate_grants(['provider_executable', 'operator_tools', 'restart', 'account_read_only']),
+            ('provider_executable', 'operator_tools', 'restart', 'account_read_only'),
+        )
+        for invalid in [
+            'not-a-list',
+            [123],
+            ['unknown_grant'],
+            ['restart'],  # requires operator_tools
+            ['operator_tools'],  # requires provider_executable
+            ['restart', 'operator_tools'],  # invalid order
+        ]:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                validate_grants(invalid)
+
+        flags = list(grant_flags(('provider_executable',), self.base.provider_executable))
+        self.assertEqual(flags, ['--provider-executable', self.base.provider_executable, '--coordinator-errors'])
+        all_flags = list(grant_flags(
+            ('provider_executable', 'operator_tools', 'restart', 'account_read_only'),
+            self.base.provider_executable,
+        ))
+        self.assertEqual(
+            all_flags,
+            ['--provider-executable', self.base.provider_executable, '--coordinator-errors',
+             '--operator-tools', '--enable-restart'],
+        )
+        self.assertNotIn('account_read_only', all_flags)
+
+    def test_grants_persistence_round_trip_and_activation_state(self):
+        grants = ('provider_executable', 'operator_tools', 'restart')
+        request = json.dumps(dict(grants=list(grants), confirm='provider_executable operator_tools restart')).encode() + b'\n'
+        r, w = os.pipe()
+        os.write(w, request)
+        os.close(w)
+        stream = os.fdopen(r, 'rb')
+        try:
+            with patch('gargoyl.gui_runtime.owner_home', return_value=self.home), \
+                 patch('sys.executable', self.python), \
+                 patch('os.uname', return_value=Mock(nodename='synthetic-local')):
+                state = set_grants(stream=stream, home=self.home, python=self.python)
+                self.assertEqual(state['kind'], 'activation')
+                self.assertEqual(state['grants'], list(grants))
+                self.assertIn('--enable-restart', state['command'])
+                self.assertIn('--operator-tools', state['command'])
+                self.assertIn('--coordinator-errors', state['command'])
+
+                policy = self.load()
+                self.assertEqual(policy.grants, grants)
+                # Schema 2 written to pilot.json
+                content = json.loads(self.path.read_text())
+                self.assertEqual(content['schema'], SCHEMA)
+                self.assertEqual(content['grants'], list(grants))
+
+                # dev.gargoyl.monitor.plist updated and immediately validated
+                agent = monitor_configuration()
+                self.assertTrue(agent.exists())
+        finally:
+            stream.close()
+
+    def test_grants_revocation_path(self):
+        # First save grants
+        with patch('os.uname', return_value=Mock(nodename='synthetic-local')):
+            save_pilot_grants(home=self.home, python=self.python,
+                              grants=('provider_executable', 'operator_tools'))
+        policy = self.load()
+        self.assertEqual(policy.grants, ('provider_executable', 'operator_tools'))
+
+        # Revocation requires explicit "REVOKE ALL" confirmation
+        bad_confirm = json.dumps(dict(grants=[], confirm='WRONG CONFIRM')).encode() + b'\n'
+        r, w = os.pipe()
+        os.write(w, bad_confirm)
+        os.close(w)
+        stream = os.fdopen(r, 'rb')
+        try:
+            with patch('gargoyl.gui_runtime.owner_home', return_value=self.home), \
+                 patch('sys.executable', self.python), \
+                 patch('os.uname', return_value=Mock(nodename='synthetic-local')):
+                with self.assertRaises(ValueError) as error:
+                    set_grants(stream=stream, home=self.home, python=self.python)
+                self.assertIn('grant consent unavailable', str(error.exception))
+        finally:
+            stream.close()
+
+        # Valid revocation
+        revoke_request = json.dumps(dict(grants=[], confirm='REVOKE ALL')).encode() + b'\n'
+        r, w = os.pipe()
+        os.write(w, revoke_request)
+        os.close(w)
+        stream = os.fdopen(r, 'rb')
+        try:
+            with patch('gargoyl.gui_runtime.owner_home', return_value=self.home), \
+                 patch('sys.executable', self.python), \
+                 patch('os.uname', return_value=Mock(nodename='synthetic-local')):
+                state = set_grants(stream=stream, home=self.home, python=self.python)
+                self.assertEqual(state['grants'], [])
+                self.assertNotIn('--enable-restart', state['command'])
+                self.assertNotIn('--operator-tools', state['command'])
+                self.assertNotIn('--provider-executable', state['command'])
+
+                revoked_policy = self.load()
+                self.assertEqual(revoked_policy.grants, ())
+                agent = monitor_configuration()
+                self.assertTrue(agent.exists())
+        finally:
+            stream.close()
+
+    def test_code_level_gates_enforce_grants(self):
+        from gargoyl.gui_runtime import main as gui_main
+        # Start with no grants
+        with patch('os.uname', return_value=Mock(nodename='synthetic-local')):
+            save_pilot_grants(home=self.home, python=self.python, grants=())
+        fifo_in_r, fifo_in_w = os.pipe()
+        fifo_out_r, fifo_out_w = os.pipe()
+        in_file = os.fdopen(fifo_in_r, 'rb', buffering=0)
+        out_file = os.fdopen(fifo_out_w, 'wb', buffering=0)
+        in_text = io.TextIOWrapper(in_file)
+        out_text = io.TextIOWrapper(out_file)
+        try:
+            with patch('gargoyl.gui_runtime.owner_home', return_value=self.home), \
+                 patch('gargoyl.gui_runtime.console_owner', return_value=True), \
+                 patch('sys.executable', self.python), \
+                 patch('os.uname', return_value=Mock(nodename='synthetic-local')), \
+                 patch('sys.argv', ['gui_runtime.py', 'restart']), \
+                 patch('sys.stdin', in_text), \
+                 patch('sys.stdout', out_text), \
+                 patch('os.getuid', return_value=501):
+                # restart should fail because restart grant is missing
+                self.assertEqual(gui_main(), 1)
+        finally:
+            in_text.close()
+            out_text.close()
+            os.close(fifo_in_w)
+            os.close(fifo_out_r)

@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 
 from gargoyl.collector_coordinator_log import validate_log_report
 from gargoyl.dashboard import build_dashboard
@@ -32,7 +33,12 @@ from gargoyl.manual_restart import (
     restart_gate_allows,
 )
 from gargoyl.manual_restart import run_restart as execute_restart
-from gargoyl.pilot_configuration import load_pilot_configuration
+from gargoyl.pilot_configuration import (
+    grant_flags,
+    load_pilot_configuration,
+    save_pilot_grants,
+    validate_grants,
+)
 from gargoyl.telemetry import timestamp, validate_snapshot
 
 HOST = "00000000-0000-4000-8000-000000000001"
@@ -267,16 +273,121 @@ def monitor_configuration():
         "5",
         "--port",
         "8766",
-        "--provider-executable",
-        str(home / ".darkbloom/Darkbloom.app/Contents/MacOS/darkbloom"),
-        "--coordinator-errors",
     ]
+    # Granted capabilities map 1:1 to their CLI flags; revocation is the empty tuple.
+    from gargoyl.pilot_configuration import grant_flags
+
+    expected += list(grant_flags(policy.grants, policy.provider_executable))
     if (
         value.get("Label") != "dev.gargoyl.monitor"
         or value.get("ProgramArguments") != expected
     ):
         raise ValueError("monitor configuration differs")
     return path
+
+
+def update_monitor_plist(*, home, policy):
+    """Ensure dev.gargoyl.monitor.plist matches the configured grants."""
+    import plistlib
+    import tempfile
+
+    from gargoyl.pilot_configuration import grant_flags
+
+    agents_dir = Path(home) / "Library/LaunchAgents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    plist_path = agents_dir / "dev.gargoyl.monitor.plist"
+    flags = list(grant_flags(policy.grants, policy.provider_executable))
+    args = [
+        policy.monitor_executable,
+        "monitor",
+        "--input",
+        str(Path(home) / ".darkbloom/daemon-state.json"),
+        "--owner-uid",
+        str(policy.owner_uid),
+        "--host",
+        policy.host_id,
+        "--interval",
+        "5",
+        "--port",
+        "8766",
+    ] + flags
+    payload = plistlib.dumps(
+        dict(
+            Label="dev.gargoyl.monitor",
+            ProgramArguments=args,
+            RunAtLoad=False,
+            KeepAlive=False,
+        )
+    )
+    handle, temp = tempfile.mkstemp(
+        prefix="monitor-", suffix=".plist", dir=str(agents_dir)
+    )
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, str(plist_path))
+    except Exception:
+        if os.path.exists(temp):
+            os.unlink(temp)
+        raise
+
+
+def activation_state(*, home=None, python=None):
+    """Return the persisted grants and the exact monitor CLI line they imply."""
+    home = home or owner_home()
+    policy = load_pilot_configuration(home=home).require_local()
+    flags = list(grant_flags(policy.grants, policy.provider_executable))
+    command = [
+        policy.monitor_executable,
+        "monitor",
+        "--input",
+        str(home / ".darkbloom/daemon-state.json"),
+        "--owner-uid",
+        str(policy.owner_uid),
+        "--host",
+        policy.host_id,
+        "--interval",
+        "5",
+        "--port",
+        "8766",
+    ] + flags
+    return dict(
+        kind="activation",
+        grants=list(policy.grants),
+        command=command,
+        line=" ".join(command),
+    )
+
+
+def set_grants(*, stream, home=None, python=None, timeout=90):
+    """Persist one explicit per-capability grant set after a typed confirmation.
+
+    Each capability is an independent, explicit choice: the typed phrase must
+    name the exact grant set being stored. Revocation is a fresh empty set
+    ("REVOKE ALL"), not a silent drop of any single grant.
+    """
+    home = home or owner_home()
+    request = read_confirmation(stream, timeout=timeout)
+    if type(request) is not dict or set(request) != {"grants", "confirm"}:
+        raise ValueError("grant request unavailable")
+    confirm = request["confirm"]
+    if type(confirm) is not str:
+        raise ValueError("grant consent unavailable")
+    grants = tuple(request["grants"])
+    validate_grants(grants)
+    expected = " ".join(grants) if grants else "REVOKE ALL"
+    if confirm != expected:
+        raise ValueError("grant consent unavailable")
+    policy = save_pilot_grants(
+        home=home,
+        python=sys.executable if python is None else python,
+        grants=grants,
+    )
+    update_monitor_plist(home=home, policy=policy)
+    return activation_state(home=home, python=python)
 
 
 def control_monitor(action, *, run=subprocess.run, validate=monitor_configuration):
@@ -444,6 +555,18 @@ def main():
             sys.stdout.flush()
         elif mode in {"start-monitor", "stop-monitor"}:
             emit(dict(kind="status", text=control_monitor(mode)))
+        elif mode == "activation":
+            # Read-only: list the persisted grants and the exact CLI line they imply.
+            sys.stdout.write(json.dumps(activation_state()) + "\n")
+            sys.stdout.flush()
+        elif mode == "set-grants":
+            # One explicit per-capability grant set, bound to a typed confirmation.
+            if (
+                not stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode)
+                or not stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode)
+            ):
+                raise ValueError("private pipes required")
+            emit(set_grants(stream=sys.stdin.buffer))
         elif mode == "status":
             record = read_operation(str(owner_home() / ".gargoyl-manual-restart"))
             emit(
@@ -557,6 +680,8 @@ def main():
             os.set_blocking(sys.stdout.fileno(), False)
             home = owner_home()
             policy = load_pilot_configuration(home=home).require_local()
+            if "restart" not in policy.grants:
+                raise ValueError("restart permission not granted")
             executable, source = policy.provider_executable, policy.source
             target, stamp = installation_preflight(executable, source, policy.owner_uid)
 
