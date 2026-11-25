@@ -370,8 +370,44 @@ class FleetLayoutTests(unittest.TestCase):
 
     def test_older_heartbeat_age_is_measured_from_now(self):
         page = render_view("fleet", None, None, inventory=self.inventory(), now="2026-11-01T03:00:00Z")
-        self.assertIn("older · 3 h ago", page)
+        self.assertIn("older · 3 h ago (older than 2 min; account-reported, not live)", page)
         self.assertIn("(3 h ago)", page)
+
+    def test_unusable_heartbeat_time_is_named_as_such(self):
+        self.assertIn('<span class="fleet-sub">unknown · no usable heartbeat time</span>', self.page())
+
+    def test_future_heartbeat_names_clock_skew_not_a_missing_time(self):
+        page = render_view("fleet", None, None, inventory=self.inventory(), now="2026-10-31T23:55:00Z")
+        self.assertIn("unknown · heartbeat time is ahead of this Mac’s clock", page)
+        self.assertEqual(page.count("unknown · no usable heartbeat time"), 1)
+
+    def test_word_guide_matches_the_report_state_classifier(self):
+        page = self.page()
+        self.assertIn("<em>current</em> — the account read is at most 2 min old, the session is connected "
+                      "and the account reader is running", page)
+        self.assertIn("<em>stale</em> — any other read: older than that, disconnected, or the reader stopped", page)
+        self.assertIn("<em>unknown</em> — the read time is ahead of this Mac’s clock", page)
+        self.assertIn("<em>This Mac</em> is the only row with direct local collector observations", page)
+        self.assertIn("plus live telemetry only where a row is marked Tailscale peer", page)
+        self.assertNotIn("no fresh read, so the value stays unknown", page)
+        self.assertNotIn(" s) and the session", page)
+
+    def test_local_evidence_link_describes_only_this_mac(self):
+        page = self.page()
+        self.assertIn('<a href="gargoyl-view://evidence/">Local evidence</a>', page)
+        self.assertIn("this Mac’s own direct observations", page)
+        self.assertNotIn("network hosts outside", page)
+        self.assertNotIn("(public loopback dashboard)", page)
+
+    def test_coordinator_report_is_defined_once_in_the_head_and_once_in_the_guide(self):
+        self.assertEqual(self.page().count("<strong>coordinator report</strong>"), 1)
+        self.assertEqual(self.page().count("<em>coordinator report</em>"), 1)
+
+    def test_detail_view_explains_the_provider_id(self):
+        value = self.inventory()
+        detail = "fleet-node-" + provider_key(value["providers"][0]["id"])
+        self.assertIn("opaque account-assigned identifier; not a host name",
+                      render_view(detail, None, None, inventory=value, now=NOW))
 
     def test_inventory_table_keeps_the_scroll_container_native_layout_measures(self):
         # The compiled native self-test measures .fleet-inventory inside its .scroll wrapper.
