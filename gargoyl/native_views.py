@@ -129,8 +129,8 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
         body += card("Manual provider restart", "Use Restart local… in the native toolbar to review the exact installation and interruption, then confirm with your Mac. No action begins from these links. Preconditions are checked when you review; availability is not assumed.", view="operation", state="Changes service state · Mac confirmation required")
         body += card("Local details", "Inspect collection boundaries and which capabilities are unavailable.", view="details")
         body += '</ul></section><section><h2>Not available in this app</h2><ul class="tool-list">'
-        body += card("Provider status / doctor commands", "Not run here: upstream commands may load configuration or use network/helpers. Existing normalized evidence is available instead.", state="Unavailable")
-        body += card("Automatic repair, force, clear guard and provider updates", "Disabled. No automatic retry, force, credential setup or provider lifecycle action is inferred from diagnostic warnings.", state="Unavailable")
+        body += card("Provider status / doctor commands", "Not run here: upstream commands may load configuration or use network/helpers. Existing normalized evidence is available instead. Enablement path: none by design — these remain excluded so no command or configuration load happens in this app.", state="Unavailable")
+        body += card("Automatic repair, force, clear guard and provider updates", "Disabled. No automatic retry, force, credential setup or provider lifecycle action is inferred from diagnostic warnings. Enablement path: none by design — only the manual Restart local… flow above can change service state, and only with Mac confirmation.", state="Unavailable")
         body += '</ul></section>'
     elif view == "history" and evidence is not None:
         from gargoyl.monitor import traffic_window
@@ -164,7 +164,12 @@ def render_view(view, evidence, record, *, journal_available=True, now=None, inv
             body += '<p>Unknown — no retained counter observations.</p>'
         body += '</section>'
     elif view == "operation":
-        body += '<section><h2>Shared manual-operation record</h2>'
+        body += ('<section><h2>Shared manual-operation record</h2>'
+                 '<p class="muted"><strong>Terms:</strong> the <strong>journal</strong> is the one durable '
+                 'record of the last manual restart attempt; the <strong>gate</strong> is the rule that '
+                 'blocks a new attempt while a journal record is unresolved; <strong>reconciliation</strong> '
+                 'is a read-only review that records what is now observed without changing the record; '
+                 '<strong>unverified</strong> means the attempt’s outcome is not yet proven by observation.</p>')
         if not journal_available:
             body += '<div class="callout warn"><p>Operation record unavailable. Outcome is unknown; this view cannot authorize a retry.</p></div>'
         elif record is None:
